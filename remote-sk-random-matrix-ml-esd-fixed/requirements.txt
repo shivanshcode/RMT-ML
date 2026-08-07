@@ -1,0 +1,11 @@
+torch
+transformers
+accelerate
+datasets
+weightwatcher
+powerlaw
+numpy
+pandas
+scipy
+matplotlib
+seaborn

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rmt"
+version = "1.0.0"
+description = "Random Matrix Theory analysis of LLM weight matrices"
+requires-python = ">=3.9"
+dependencies = ["numpy", "scipy"]
+
+[project.optional-dependencies]
+torch = ["torch>=2.0", "transformers", "datasets"]
+plots = ["matplotlib", "pandas"]
+baselines = ["weightwatcher", "powerlaw"]
+dev = ["pytest"]
+
+[project.scripts]
+rmt = "rmt.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["rmt*"]
+
+[tool.pytest.ini_options]
+markers = ["torch: requires torch / a tiny in-process model"]

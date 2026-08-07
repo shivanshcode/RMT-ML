@@ -1,0 +1,3 @@
+Loading weights:   0%|          | 0/148 [00:00<?, ?it/s]Loading weights:   1%|          | 1/148 [00:01<03:02,  1.24s/it]Loading weights:   1%|▏         | 2/148 [00:01<01:23,  1.75it/s]Loading weights: 100%|██████████| 148/148 [00:01<00:00, 103.36it/s]
+perplexity text file './wikitext-2-raw/wiki.test.raw' not found — using the offline fallback corpus; perplexity numbers are NOT wikitext (tagged text_source=fallback)
+[15:13:02] rmt.cli INFO: wrote ./RMT_Local_Outputs/._models_pythia-160m/._models_pythia-160m_matrix_metrics.csv (18 rows)
