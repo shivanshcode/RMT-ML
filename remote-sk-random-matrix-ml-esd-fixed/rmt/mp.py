@@ -86,14 +86,21 @@ def mp_cdf(x, n, m, sigma):
     return float(out[0]) if scalar else out
 
 
-def mp_median(n, m, sigma=1.0) -> float:
-    """Median ν_med of the MP singular-value distribution (root-find on CDF=0.5)."""
+def mp_quantile(n, m, q, sigma=1.0) -> float:
+    """q-quantile of the MP singular-value law (root-find on CDF = q)."""
+    q = float(q)
+    if not (0.0 < q < 1.0):
+        raise ValueError("q must lie strictly inside (0, 1)")
     nu_minus, nu_plus = _edges(n, m, sigma)
-    f = lambda t: float(mp_cdf(t, n, m, sigma)) - 0.5
-    # Bracket strictly inside the open support.
-    lo = nu_minus + 1e-9 * (nu_plus - nu_minus)
-    hi = nu_plus - 1e-9 * (nu_plus - nu_minus)
-    return float(optimize.brentq(f, lo, hi, xtol=1e-10, rtol=1e-12))
+    f = lambda t: float(mp_cdf(t, n, m, sigma)) - q
+    lo = nu_minus + 1e-12 * (nu_plus - nu_minus)
+    hi = nu_plus - 1e-12 * (nu_plus - nu_minus)
+    return float(optimize.brentq(f, lo, hi, xtol=1e-12, rtol=1e-13))
+
+
+def mp_median(n, m, sigma=1.0) -> float:
+    """Median nu_med of the MP singular-value distribution (root-find on CDF=0.5)."""
+    return mp_quantile(n, m, 0.5, sigma)
 
 
 # --------------------------------------------------------------------------- #
@@ -164,33 +171,122 @@ def estimate_sigma_gd_median(weight=None, *, s=None, n=None, m=None,
 estimate_sigma_med = estimate_sigma_gd_median
 
 
-def estimate_sigma_med_refined(weight=None, *, s=None, n=None, m=None,
-                               max_iter=3) -> Tuple[float, float, int]:
-    """Iterative: estimate σ → drop ν>ν₊ outliers → re-estimate, until stable.
+def estimate_sigma_empirical(weight=None, *, s=None, n=None, m=None) -> float:
+    """sigma from the matrix's empirical variance: sigma = ||W||_F / sqrt(n*m).
 
-    Returns (sigma, sigma_refined, n_iter).
+    DIAGNOSTIC ONLY -- this is *not* the estimator used by the reference work.
+
+    The text of Staats, Thamm & Rosenow (arXiv:2410.17770) says the MP curve is
+    drawn using "each matrix's empirical variance ... because some Llama matrices
+    are strongly regularized".  Their released code (Zenodo 10.5281/zenodo.14764226)
+    shows what that sentence actually means: the contrast is between estimating
+    sigma *from the matrix* and assuming the initialisation value 1/sqrt(max(n,m)).
+    Both branches appear in their `analyzeLayer`, and the live one calls their
+    `estimate_sigma_med`; `np.std(weight)` is commented out at every site.  So
+    "empirical" there means empirically estimated, not a moment estimator.
+
+    Kept because the ratio sigma_emp / sigma_med is a useful regime discriminator
+    (two independent statistics -- a moment and a quantile -- that agree only when
+    the spectrum is MP-like).  It must not be used to draw the MP support: it is
+    not robust, and on a 1024x1024 Wishart with 20 planted spikes at 8x it returns
+    2.36 against a true sigma of 1.0.
+
+    Computed from the singular values via sum(s**2) = ||W||_F**2.
+    """
+    s, n, m = _resolve_s_n_m(weight, s, n, m)
+    s = np.asarray(s, dtype=np.float64)
+    return float(np.sqrt(float(np.sum(s * s)) / (float(n) * float(m))))
+
+
+_MIN_KEEP_FRAC = 0.10
+
+
+def refine_sigma(weight=None, *, s=None, n=None, m=None, max_iter=50,
+                 rtol=1e-4, min_keep_frac=_MIN_KEEP_FRAC) -> dict:
+    """Outlier-trimmed sigma, with the truncation bias corrected.
+
+    The previous scheme was: estimate sigma -> drop nu > nu_plus -> re-estimate
+    by matching the median of the *kept* set to the full MP median -> repeat.
+    That matching step is only valid if everything discarded is a genuine spike,
+    i.e. if the kept set is itself a complete MP sample.  When the discarded
+    part is instead the upper body of a broad spectrum, the median of the kept
+    set is the (keep_frac / 2) quantile of the original sample, not its median,
+    so it sits well below the MP median.  sigma shrinks, nu_plus shrinks, more
+    of the body is cut, and the recursion runs away with no fixed point; the
+    reported number is then set by ``max_iter`` rather than by the data.
+
+    The correction is to match the quantile that is actually being observed.
+    If ``k`` of the ``N0`` singular values survive the cut, the kept set is the
+    bottom-``k`` order statistics, so its median estimates the MP quantile at
+    level ``k / (2 * N0)`` -- not at 0.5.  With that level the iteration has the
+    right fixed point under the pure-MP null (``k = N0`` reproduces
+    :func:`estimate_sigma_gd_median` exactly), stays a contraction on broad
+    spectra, and converges in a handful of steps instead of ratcheting.
+
+    Convergence is now an actual test (stable kept count *and* a relative change
+    below ``rtol``) rather than exact float equality, and non-convergence is
+    reported instead of being silently absorbed:
+
+    * ``converged=False`` -> ``sigma_refined`` falls back to ``sigma0``, so a
+      refined value is never an artifact of the iteration cap.
+    * ``keep_frac < min_keep_frac`` -> the discarded set is no longer a tail and
+      refinement is not meaningful; bail out to ``sigma0``.
+
+    Returns a dict with keys ``sigma0``, ``sigma_last``, ``sigma_refined``,
+    ``n_iter``, ``converged``, ``keep_frac``, ``n_discarded``.
     """
     s, n, m = _resolve_s_n_m(weight, s, n, m)
     s = np.sort(np.asarray(s, dtype=np.float64))[::-1]
+    N0 = int(s.size)
     sigma0 = estimate_sigma_gd_median(s=s, n=n, m=m)
+
     sigma = sigma0
-    kept = s.copy()
-    prev_count = len(kept)
+    k_prev = N0
+    keep_frac = 1.0
+    converged = False
     n_iter = 0
+
     for _ in range(int(max_iter)):
         n_iter += 1
         _, nu_plus = _edges(n, m, sigma)
         kept = s[s <= nu_plus]
-        if len(kept) < max(10, 0.05 * len(s)):
-            kept = s            # safety: never discard the whole spectrum
+        k = int(kept.size)
+        keep_frac = k / N0
+        if k < 10 or keep_frac < float(min_keep_frac):
+            converged = False
             break
-        new_sigma = estimate_sigma_gd_median(s=kept, n=n, m=m)
-        if len(kept) == prev_count and abs(new_sigma - sigma) < 1e-9:
+        level = 0.5 * k / N0
+        new_sigma = float(np.median(kept)) / mp_quantile(n, m, level, 1.0)
+        if k == k_prev and abs(new_sigma - sigma) <= rtol * max(abs(sigma), 1e-300):
             sigma = new_sigma
+            converged = True
             break
-        prev_count = len(kept)
+        k_prev = k
         sigma = new_sigma
-    return float(sigma0), float(sigma), int(n_iter)
+
+    sigma_refined = sigma if converged else sigma0
+    return {
+        "sigma0": float(sigma0),
+        "sigma_last": float(sigma),
+        "sigma_refined": float(sigma_refined),
+        "n_iter": int(n_iter),
+        "converged": bool(converged),
+        "keep_frac": float(keep_frac),
+        "n_discarded": int(round((1.0 - keep_frac) * N0)),
+    }
+
+
+def estimate_sigma_med_refined(weight=None, *, s=None, n=None, m=None,
+                               max_iter=50) -> Tuple[float, float, int]:
+    """Backward-compatible wrapper over :func:`refine_sigma`.
+
+    Returns (sigma, sigma_refined, n_iter).  Prefer ``refine_sigma`` in new code:
+    it also reports whether the iteration converged and what fraction of the
+    spectrum survived the cut, both of which are needed to know whether the
+    refined value means anything.
+    """
+    r = refine_sigma(weight, s=s, n=n, m=m, max_iter=max_iter)
+    return float(r["sigma0"]), float(r["sigma_refined"]), int(r["n_iter"])
 
 
 def usvt_hard_threshold(n, m, sigma, *, square_optimal=True) -> float:

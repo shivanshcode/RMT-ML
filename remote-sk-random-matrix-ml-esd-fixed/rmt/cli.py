@@ -30,6 +30,7 @@ _CHOICES = {
     # 'median_raw'/'usvt_threshold' choices had no implementation, so advertising
     # them in the CLI silently misled about what ran.
     "sigma_estimator": ["gd_median"],
+    "mp_sigma_source": ["emp", "med", "refined"],
 }
 
 

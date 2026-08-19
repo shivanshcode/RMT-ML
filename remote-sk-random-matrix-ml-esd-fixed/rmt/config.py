@@ -50,6 +50,18 @@ class RunConfig:
     gpu_svd_min_dim: int = 1024
     # MP / sigma / eigenvalue domain
     sigma_estimator: str = "gd_median"                 # gd_median|median_raw|usvt_threshold
+    # Which σ defines the MP support everywhere (CSV bounds, outlier counts,
+    # small-SV metrics, IPR and the plotted overlay).
+    #   "med"     — Gavish–Donoho median matching. DEFAULT. Verified to agree
+    #               to 0.1% with `estimate_sigma_med` in the released code of
+    #               Staats/Thamm/Rosenow (arXiv:2410.17770, Zenodo
+    #               10.5281/zenodo.14764226), which is the reference method for
+    #               these same models. Do not change without re-checking that.
+    #   "emp"     — ‖W‖_F/√(nm). Diagnostic only. NOT what the reference uses;
+    #               `np.std(weight)` is commented out throughout their code.
+    #   "refined" — the outlier-trimmed iterate, used only where it converged;
+    #               falls back to "med" per matrix otherwise.
+    mp_sigma_source: str = "med"                       # med|emp|refined
     N_cov_mode: str = "cols"                           # cols|max|rows
     # activations / FM
     do_overlap: bool = True
