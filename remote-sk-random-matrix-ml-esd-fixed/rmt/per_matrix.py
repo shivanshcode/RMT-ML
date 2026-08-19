@@ -61,14 +61,45 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     }
 
     # --- MP bulk + sigma --------------------------------------------------- #
+    # ONE sigma drives everything downstream. `sigma_used` is the single value
+    # from which mp_minus/mp_plus, the outlier counts, the small-SV deviation
+    # metrics and the plotted MP overlay are all derived, so the CSV and the
+    # figures can no longer disagree about where the MP support is. Previously
+    # the table used sigma_med while pipeline.py fed sigma_med_refined to
+    # plot_esd. Which estimator fills `sigma_used` is set by
+    # cfg.mp_sigma_source ("med" default, or "refined").
     sigma_med = MP.estimate_sigma_gd_median(s=s, n=n, m=m)
-    sig0, sig_ref, n_iter = MP.estimate_sigma_med_refined(s=s, n=n, m=m)
-    mp_minus, mp_plus = MP.mp_bounds(n, m, sigma_med)
-    mp_minus_eig, mp_plus_eig = MP.mp_bounds_eig(n, m, sigma_med, N_cov)
+    sigma_emp = MP.estimate_sigma_empirical(s=s, n=n, m=m)
+    ref = MP.refine_sigma(s=s, n=n, m=m)
+    sig_ref, n_iter = ref["sigma_refined"], ref["n_iter"]
+
+    # sigma_ratio is a regime discriminator, not just a diagnostic: the two
+    # estimators are derived from independent statistics (a moment vs a
+    # quantile) and agree only when the spectrum really is MP-like.
+    sigma_ratio = (sigma_emp / sigma_med) if sigma_med > 0 else float("nan")
+
+    sigma_source = str(getattr(cfg, "mp_sigma_source", "med"))
+    if sigma_source == "emp":
+        sigma_used, sigma_source_used = float(sigma_emp), "emp"
+    elif sigma_source == "med":
+        sigma_used, sigma_source_used = float(sigma_med), "med"
+    elif sigma_source == "refined" and ref["converged"] and np.isfinite(sig_ref) and sig_ref > 0:
+        sigma_used, sigma_source_used = float(sig_ref), "refined"
+    elif sigma_source == "refined":
+        sigma_used, sigma_source_used = float(sigma_med), "med"
+    else:
+        sigma_used, sigma_source_used = float(sigma_med), "med"
+
+    mp_minus, mp_plus = MP.mp_bounds(n, m, sigma_used)
+    mp_minus_eig, mp_plus_eig = MP.mp_bounds_eig(n, m, sigma_used, N_cov)
     n_right = int(np.sum(s > mp_plus))
     n_left = int(np.sum(s < mp_minus))
     row.update({
-        "sigma_med": sigma_med, "sigma_med_refined": sig_ref, "n_iter_sigma": n_iter,
+        "sigma_med": sigma_med, "sigma_emp": sigma_emp, "sigma_ratio": sigma_ratio,
+        "sigma_med_refined": sig_ref, "n_iter_sigma": n_iter,
+        "sigma_refine_converged": int(bool(ref["converged"])),
+        "sigma_refine_keep_frac": float(ref["keep_frac"]),
+        "sigma_used": sigma_used, "sigma_source": sigma_source_used,
         "mp_minus": mp_minus, "mp_plus": mp_plus,
         "mp_minus_eig": mp_minus_eig, "mp_plus_eig": mp_plus_eig,
         "n_right_outliers": n_right, "n_left_outliers": n_left,
@@ -77,7 +108,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
 
     # --- small-SV deviation ------------------------------------------------ #
     # small_sv_deviation re-sorts internally; pass s directly (no extra sort).
-    dev = MP.small_sv_deviation(s, n, m, sigma_med)
+    dev = MP.small_sv_deviation(s, n, m, sigma_used)
     row.update(dev)
 
     # --- tail exponents (labelled) — gated on cfg.do_powerlaw (REPORT §2) --- #
@@ -137,7 +168,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     })
     # --- IPR — gated on cfg.do_ipr (REPORT §2) ----------------------------- #
     if cfg.do_ipr:
-        ipr = SC.ipr_summary(Vh, s, n, m, sigma_med)
+        ipr = SC.ipr_summary(Vh, s, n, m, sigma_used)
         row.update(ipr)
     else:
         row["ipr_top10_mean"] = _nan(); row["ipr_bulk_mean"] = _nan()
@@ -210,7 +241,9 @@ def _set_overlap_nans(row):
 # canonical column order (plan.md §5)
 CSV_COLUMNS = (
     ["name", "short", "layer_idx", "n", "m", "is_square", "N_cov",
-     "sigma_med", "sigma_med_refined", "n_iter_sigma", "mp_minus", "mp_plus",
+     "sigma_med", "sigma_emp", "sigma_ratio", "sigma_med_refined", "n_iter_sigma",
+     "sigma_refine_converged", "sigma_refine_keep_frac",
+     "sigma_used", "sigma_source", "mp_minus", "mp_plus",
      "mp_minus_eig", "mp_plus_eig", "n_right_outliers", "n_left_outliers",
      "frac_right_outliers", "frac_left_outliers",
      "ks_lower", "n_below_minus", "frac_mass_below_minus", "excess_small_sv",

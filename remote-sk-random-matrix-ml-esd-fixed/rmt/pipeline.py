@@ -229,11 +229,13 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
         stem = _safe_plot_name(name)
         n = int(r.get("n", len(s)))
         m = int(r.get("m", len(s)))
-        # Secondary fix: feed the outlier-trimmed σ to the overlay so the right
-        # edge ν₊ is fit to the noise bulk, not to a spectrum that includes the
-        # large outliers. Fall back to sigma_med if the refined value is absent
-        # or non-finite.
-        sigma = r.get("sigma_med_refined", float("nan"))
+        # Use the SAME σ that produced mp_minus/mp_plus in the CSV. Previously
+        # this read sigma_med_refined while per_matrix tabulated the bounds from
+        # sigma_med, so the table and the figures disagreed about the location
+        # of the MP support. per_matrix now resolves the choice once and exports
+        # it as `sigma_used`; the older columns are kept as fallbacks so this
+        # still works against a CSV written by the previous version.
+        sigma = r.get("sigma_used", float("nan"))
         if not _isfinite(sigma):
             sigma = r.get("sigma_med", float("nan"))
         N_cov = r.get("N_cov", m)
