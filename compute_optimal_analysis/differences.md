@@ -259,6 +259,7 @@ Implementation decision: `lanczos_stieltjes.py` implements adaptive double-reort
 | CLI option | Runtime method | Provenance and caveat |
 |---|---|---|
 | `--mp-fit-method analytic_mp` | Robust MP quantile scale fit | Phase I corrected baseline |
+| `--mp-fit-method thamm_modified_singular` | Adaptive-Gaussian singular ESD with empirical lower edge and fitted amplitude/upper edge | Faithful codebase2 curve fit; fitted edges are converted to canonical covariance units for bulk selection |
 | `--mp-fit-method kde_bulk_fit` | Triangular-KDE residual fit of MP scale | Faithful to codebase3's automated notebook, implemented without sklearn |
 | `--mp-fit-method lanczos_stieltjes` | Lanczos-Cholesky support estimate | 2025 paper; requires matrix/operator input, not only eigenvalues |
 | `--mp-fit-method farms_unbiased` | Analytic MP fit on FARMS pooled fixed-ratio spectra | Hu et al. subsampling plus Phase I MP fitting |

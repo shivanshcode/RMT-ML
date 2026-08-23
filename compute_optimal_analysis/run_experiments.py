@@ -291,7 +291,11 @@ def analyze_model(
         hill = hill_alpha_at(eigenvalues, hill_k)
         plateau = hill_plateau(eigenvalues, window=max(3, min(20, eigenvalues.size // 4)))
         spacing_eigenvalues = svd.covariance_eigenvalues
-        spacing_mp_fit = fit_marchenko_pastur(spacing_eigenvalues, svd.aspect_ratio)
+        spacing_mp_fit = (
+            mp_fit
+            if method_config.mp_fit_method == "thamm_modified_singular"
+            else fit_marchenko_pastur(spacing_eigenvalues, svd.aspect_ratio)
+        )
         if method_config.mp_fit_method == "farms_unbiased":
             mp_soft_spectrum = np.asarray([float(mp_fit.diagnostics["spectral_max"])])
         elif method_config.mp_fit_method == "lanczos_stieltjes":

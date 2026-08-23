@@ -69,7 +69,7 @@ def test_all_four_production_track_argument_sets_parse() -> None:
         [
             "--experiment-mode", "reproduce_paper2",
             "--aspect-ratio-mode", "raw",
-            "--mp-fit-method", "analytic_mp",
+            "--mp-fit-method", "thamm_modified_singular",
             "--spike-detector", "tracy_widom_95",
             "--unfolding-strategy", "polynomial_chebyshev",
             "--unfolding-degree", "15",

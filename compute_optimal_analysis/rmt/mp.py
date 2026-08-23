@@ -404,6 +404,88 @@ def fit_modified_mp_singular(
     )
 
 
+def fit_marchenko_pastur_thamm(
+    weight: np.ndarray,
+    *,
+    lower_index: int = 0,
+    x_min: float = 0.0,
+    fit_peak_fraction: float = 0.7,
+    kernel_window: int = 15,
+    grid_size: int = 512,
+) -> MPFitResult:
+    """Fit the empirical singular-domain MP curve used by Thamm et al.
+
+    The reference fit leaves the amplitude and upper singular edge free while
+    fixing the lower edge to an observed order statistic.  This adapter keeps
+    that unconstrained fit intact, then converts its singular edges to the
+    repository's canonical ``s**2 / max(shape)`` domain.  ``variance`` is only
+    an upper-edge-matched compatibility scale; the fitted support itself is
+    authoritative and need not obey the one-parameter analytic MP relation.
+    """
+
+    matrix = np.asarray(weight, dtype=np.float64)
+    if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
+        raise ValueError("weight must be a finite matrix with both dimensions at least two")
+    singular_values = np.linalg.svd(matrix, compute_uv=False)
+    curve = fit_modified_mp_singular(
+        singular_values,
+        lower_index=lower_index,
+        x_min=x_min,
+        fit_peak_fraction=fit_peak_fraction,
+        kernel_window=kernel_window,
+        grid_size=grid_size,
+    )
+    large = max(matrix.shape)
+    q = min(matrix.shape) / large
+    eigenvalues = np.square(singular_values) / large
+    lower = curve.nu_min**2 / large
+    upper = curve.nu_max**2 / large
+    effective_variance = upper / (1.0 + np.sqrt(q)) ** 2
+
+    cdf_grid = np.linspace(curve.nu_min, curve.nu_max, max(1024, int(grid_size)))
+    curve_density = modified_mp_singular_density(
+        cdf_grid,
+        curve.amplitude,
+        curve.nu_min,
+        curve.nu_max,
+    )
+    increments = 0.5 * (curve_density[1:] + curve_density[:-1]) * np.diff(cdf_grid)
+    cumulative = np.concatenate((np.asarray([0.0]), np.cumsum(increments)))
+    total = float(cumulative[-1])
+    if total > 0.0 and np.isfinite(total):
+        cumulative /= total
+        ordered_singular = np.sort(singular_values)
+        model_cdf = np.interp(ordered_singular, cdf_grid, cumulative, left=0.0, right=1.0)
+        empirical_cdf = (np.arange(ordered_singular.size, dtype=np.float64) + 0.5) / ordered_singular.size
+        ks_distance = float(np.max(np.abs(empirical_cdf - model_cdf)))
+    else:
+        ks_distance = float("nan")
+
+    return MPFitResult(
+        aspect_ratio=float(q),
+        variance=float(effective_variance),
+        sigma=float(np.sqrt(effective_variance)),
+        lambda_minus=float(lower),
+        lambda_plus=float(upper),
+        ks_distance=ks_distance,
+        bulk_fraction=float(np.mean((eigenvalues >= lower) & (eigenvalues <= upper))),
+        n_lower_outliers=int(np.count_nonzero(eigenvalues < lower)),
+        n_upper_outliers=int(np.count_nonzero(eigenvalues > upper)),
+        method="thamm_modified_singular",
+        diagnostics={
+            "amplitude": curve.amplitude,
+            "nu_min_raw": curve.nu_min,
+            "nu_max_raw": curve.nu_max,
+            "curve_rmse": curve.rmse,
+            "optimizer_success": curve.success,
+            "bandwidth_window": curve.bandwidth_window,
+            "normalization_denominator": int(large),
+            "variance_semantics": "analytic upper-edge projection only",
+            **curve.diagnostics,
+        },
+    )
+
+
 def fit_marchenko_pastur_kde(
     eigenvalues: np.ndarray,
     aspect_ratio: float,
@@ -1021,6 +1103,7 @@ __all__ = [
     "fit_marchenko_pastur_farms",
     "fit_marchenko_pastur_kde",
     "fit_marchenko_pastur_lanczos",
+    "fit_marchenko_pastur_thamm",
     "fit_modified_mp_singular",
     "marchenko_pastur_bounds",
     "marchenko_pastur_cdf",

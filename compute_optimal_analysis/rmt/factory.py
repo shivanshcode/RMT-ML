@@ -19,6 +19,7 @@ from .mp import (
     fit_marchenko_pastur_farms,
     fit_marchenko_pastur_kde,
     fit_marchenko_pastur_lanczos,
+    fit_marchenko_pastur_thamm,
     mp_eigenvalues,
 )
 from .overlap import evaluate_overlap_metric
@@ -28,6 +29,7 @@ from .tail import select_tail_estimator
 
 MP_FIT_METHODS = (
     "analytic_mp",
+    "thamm_modified_singular",
     "kde_bulk_fit",
     "lanczos_stieltjes",
     "farms_unbiased",
@@ -322,6 +324,11 @@ def dispatch_mp_fit(
             orient_tall=config.farms_orient_tall,
             seed=config.seed,
             trim_upper=config.mp_trim_upper,
+        )
+    if method == "thamm_modified_singular":
+        return fit_marchenko_pastur_thamm(
+            matrix,
+            kernel_window=config.gaussian_kernel_window,
         )
     prepared = prepare_spectrum(matrix, config, variance=1.0 if variance is None else variance)
     if method == "kde_bulk_fit":

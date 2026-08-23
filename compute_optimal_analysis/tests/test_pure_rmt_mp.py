@@ -13,6 +13,7 @@ from rmt.mp import (
     estimate_sigma_gd_median,
     fit_marchenko_pastur,
     fit_marchenko_pastur_kde,
+    fit_marchenko_pastur_thamm,
     fit_modified_mp_singular,
     marchenko_pastur_bounds,
     marchenko_pastur_density,
@@ -99,3 +100,19 @@ def test_modified_singular_mp_curve_returns_ordered_empirical_edges() -> None:
     assert fit.amplitude > 0.0
     assert 0.0 <= fit.nu_min < fit.nu_max
     assert np.isfinite(fit.rmse)
+
+
+def test_thamm_mp_adapter_preserves_empirical_singular_edges() -> None:
+    matrix = wishart_factor(96, 192, rng=79)
+    fit = fit_marchenko_pastur_thamm(
+        matrix,
+        kernel_window=8,
+        grid_size=256,
+    )
+    denominator = max(matrix.shape)
+    assert fit.method == "thamm_modified_singular"
+    assert np.isclose(fit.lambda_minus, fit.diagnostics["nu_min_raw"] ** 2 / denominator)
+    assert np.isclose(fit.lambda_plus, fit.diagnostics["nu_max_raw"] ** 2 / denominator)
+    assert 0.0 <= fit.lambda_minus < fit.lambda_plus
+    assert np.isfinite(fit.variance)
+    assert np.isfinite(fit.ks_distance)

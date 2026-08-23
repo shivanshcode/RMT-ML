@@ -41,6 +41,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `modified_mp_singular_density(x, amplitude, nu_min, nu_max) -> np.ndarray`
 - `adaptive_gaussian_spectral_density(singular_values, grid, *, window=15) -> np.ndarray`
 - `fit_modified_mp_singular(singular_values, *, lower_index=0, x_min=0.0, fit_peak_fraction=0.7, kernel_window=15, grid_size=512) -> ModifiedMPFitResult`
+- `fit_marchenko_pastur_thamm(weight, *, lower_index=0, x_min=0.0, fit_peak_fraction=0.7, kernel_window=15, grid_size=512) -> MPFitResult`; preserves the empirical singular-domain fit, converts its edges by `s**2/max(shape)`, and marks `variance` as an upper-edge compatibility scale.
 - `tracy_widom_edge_scale(n, m, variance=1.0, *, edge="upper") -> float`
 - `tracy_widom_quantile(confidence=0.95) -> float`
 - `tracy_widom_upper_threshold(n, m, variance=1.0, *, confidence=0.95) -> float`

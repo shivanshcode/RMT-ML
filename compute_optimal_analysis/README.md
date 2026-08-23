@@ -103,7 +103,7 @@ python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-r
 Thamm et al. unfolding, NNSD, Brody, number variance, and rigidity:
 
 ```bash
-python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-raw-v1_gpt2.npy --experiment-mode reproduce_paper2 --model-type causal_transformer --aspect-ratio-mode raw --mp-fit-method analytic_mp --spike-detector tracy_widom_95 --unfolding-strategy polynomial_chebyshev --unfolding-degree 15 --compute-spacing-distribution --compute-number-variance --compute-delta3 --device cuda --output-dir results/paper2
+python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-raw-v1_gpt2.npy --experiment-mode reproduce_paper2 --model-type causal_transformer --aspect-ratio-mode raw --mp-fit-method thamm_modified_singular --spike-detector tracy_widom_95 --unfolding-strategy polynomial_chebyshev --unfolding-degree 15 --compute-spacing-distribution --compute-number-variance --compute-delta3 --device cuda --output-dir results/paper2
 ```
 
 Martin and Mahoney heavy-tail and empirical MP diagnostics:
@@ -192,7 +192,7 @@ Boolean flags use paired `--flag` and `--no-flag` forms. Defaults shown are pars
 
 | Flag | Allowed values | Default | Purpose |
 |---|---|---|---|
-| `--mp-fit-method` | `analytic_mp`, `kde_bulk_fit`, `lanczos_stieltjes`, `farms_unbiased` | `lanczos_stieltjes` | Bulk support and scale method |
+| `--mp-fit-method` | `analytic_mp`, `thamm_modified_singular`, `kde_bulk_fit`, `lanczos_stieltjes`, `farms_unbiased` | `lanczos_stieltjes` | Bulk support and scale method; the Thamm option fits free amplitude/upper singular edge with an empirical lower edge |
 | `--unfolding-strategy` | `polynomial_chebyshev`, `spline_monotone`, `gaussian_kernel`, `raw_rank_order` | `spline_monotone` | Smooth staircase method |
 | `--tail-solver` | `clauset_mle`, `hill_estimator`, `fixed_cutoff_mle`, `rank_ordered_mle` | `clauset_mle` | Heavy-tail estimator |
 | `--overlap-metric` | `staats_dual_end`, `subspace_principal_angles`, `frobenius_projection` | `staats_dual_end` | Subspace alignment |
@@ -251,7 +251,7 @@ The released reference convention is `Q = sampled_columns / sampled_rows`.
 
 | Analysis family | Implementation | CLI control |
 |---|---|---|
-| Analytic, KDE, FARMS, and Lanczos MP fits | `rmt/mp.py` | `--mp-fit-method` plus tuning flags |
+| Analytic, Thamm empirical-singular, KDE, FARMS, and Lanczos MP fits | `rmt/mp.py` | `--mp-fit-method` plus tuning flags |
 | Fixed-ratio pooled spectra | `rmt/farms_aspect_ratio.py` | `--aspect-ratio-mode`, `--farms-*` |
 | Lanczos support, VEST density, and spikes | `rmt/lanczos_stieltjes.py` | `--spike-detector`, `--lanczos-*` |
 | CSN, Hill, fixed-cutoff, and rank tails | `rmt/tail.py` | `--tail-solver`, `--tail-*` |

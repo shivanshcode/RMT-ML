@@ -83,6 +83,7 @@ Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/supp
 - Parsing no method flags produces exactly `RMTMethodConfig()`.
 - Every declared value in each of the six primary choice tuples constructs successfully, both alone and in the full Cartesian configuration set.
 - Each MP fit, unfolding, tail, overlap, and spike method is dispatched on a small seeded calibration input and returns its declared result label.
+- The Thamm adapter must preserve the modified curve's raw singular edges under the exact `s**2/max(shape)` conversion and return finite compatibility scale and KS diagnostics.
 - `--boundary-detector lanczos_stieltjes` resolves to MP method `lanczos_stieltjes` and spike detector `lanczos_poles`.
 - Pipeline defaults resolve to the Golden method set and BF16/CUDA accelerator intent. Argument sets for all four SLURM tracks parse through the centralized schema.
 - Static SLURM checks require all four track functions and the three strict offline environment exports.

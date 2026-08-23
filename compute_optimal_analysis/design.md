@@ -32,7 +32,7 @@ For a source matrix, preserve its orientation by default; transpose only when th
 
 The FARMS spectrum is the concatenation of these equal-length series. Because each window contributes the same number of levels, its empirical measure is the arithmetic mean of the window ESDs. Results record source/oriented/window shape, starts, the reference ratio `m'/n'`, canonical `q_F=min(m',n')/max(m',n')`, normalization, transpose state, number of windows, and estimated source coverage. Overlapping windows are correlated; pooled level spacings must therefore not be interpreted as one matrix's NNSD.
 
-Accordingly, the experiment runner performs NNSD, Brody, gap-ratio, and number-variance calculations on the full matrix's canonical spectrum and uses a separate raw analytic MP fit only to select that spacing bulk. FARMS remains available for ESD, MP, and tail comparisons without contaminating level statistics with duplicated overlapping-window levels.
+Accordingly, the experiment runner performs NNSD, Brody, gap-ratio, and number-variance calculations on the full matrix's canonical spectrum. The Paper 2 track selects that spacing bulk with codebase2's modified singular-domain curve fit after converting its empirical edges to canonical covariance units; other tracks retain the corrected analytic selector. FARMS remains available for ESD, MP, and tail comparisons without contaminating level statistics with duplicated overlapping-window levels.
 
 `shape_normalized` instead applies the explicit analytic baseline
 
@@ -76,7 +76,7 @@ Population and sample thresholds are never conflated in result fields.
 
 - `analytic_mp` is the corrected one-parameter quantile fit.
 - `kde_bulk_fit` fits MP density to a pure NumPy triangular KDE, reproducing the WeightWatcher archive's scientific structure.
-- `fit_modified_mp_singular` separately reproduces codebase2's unconstrained singular-domain curve with fixed empirical lower edge and free amplitude/upper edge; it is not reported as an analytic MP variance.
+- `fit_modified_mp_singular` reproduces codebase2's unconstrained singular-domain curve with fixed empirical lower edge and free amplitude/upper edge. `thamm_modified_singular` dispatches that curve for the Paper 2 track, converts its fitted support to canonical covariance units, and labels the reported variance as an upper-edge compatibility projection rather than an analytic MP fit.
 - `polynomial_chebyshev`, `spline_monotone`, and `gaussian_kernel` estimate a smooth staircase. `raw_rank_order` is a diagnostic that intentionally removes spacing fluctuations.
 - Brody MLE and CDF least squares are both bounded to `[0,1]`; optional seeded bootstrap estimates CDF-fit uncertainty.
 - Deterministic sliding and seeded Monte Carlo number variance coexist. `Delta_3` uses exact interval integration of the empirical staircase.
