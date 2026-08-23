@@ -1,0 +1,19 @@
+# Contract reconciliation record
+
+This file records how the supplied legacy RMT planning bundle was reconciled with the current Spectral-Chinchilla request.
+
+1. The supplied planning bundle targets an offline Hugging Face checkpoint analyzer. The current repository targets a trainable decoder-only transformer family with `models/` and `pipelines/`. Legacy pure-science signatures were retained where they fit. Phase II ports the relevant WeightWatcher numerical formulations without importing its notebook/runtime stack; Phase III adds an explicit local-asset staging flow and a production SLURM harness without introducing runtime network access.
+2. The current zero-import guardrail is stricter than the supplied optional GPU-SVD design. `rmt.linalg.cached_svd` is NumPy-only, and torch SVD surgery lives in `pipelines.spectral_lesioning`.
+3. `SVDResult` exposes raw Gram eigenvalues `s^2` and separately exposes normalized covariance eigenvalues. This resolves the wording difference between the requested dataclass and the MP covariance law.
+4. The supplied correction to use centered activation covariance is the default. The current request's uncentered `X^T X/n` quantity remains available as `second_moments()` or `centered=False`.
+5. Singular-value tranches are represented directly as top, bulk, and bottom names. Internally, singular values remain descending. The three-tranche benchmark does not use ambiguous numeric deciles; a separately named `reference_decile` path reproduces codebase1 with decile zero as the largest group.
+6. The regime multiplier is applied on a fixed-compute surface: `D=kappa D*` and `N=N*/kappa`. This preserves `C=6ND` and the intended oversized/undersized model comparison.
+7. Heavy-tailed spectra, bottom-lesion perplexity ordering, and scaling collapse are empirical hypotheses. Synthetic calibration is enforced in unit tests; trained-model claims are evaluated only in experiment outputs.
+8. Numerical execution status from the supplied project was not copied into this repository. The current source was created without running pytest or experiments, as required by the execution guardrail.
+9. Phase II corrects two shorthand statements in the request: FARMS is pooled fixed-ratio submatrix sampling rather than a pointwise map, and the BBP population threshold is `1+sqrt(q)` rather than `1+q` under identity noise.
+10. Lanczos boundary estimation follows the supplied paper's Cholesky-coefficient constant-tail construction. It reports assumptions and convergence diagnostics and is not labeled exact for arbitrary neural spectra.
+11. `rmt.factory.RMTMethodConfig` is now the sole method dispatcher. `pipelines.cli_config` exposes the same choices and serializes their resolved values before optional execution.
+12. Phase III replaces the provisional FARMS geometry with the released columns/rows ratio, row-window semantics, and reference stride schedules. Raw `s^2` pooling is available for reference reproduction; canonical covariance normalization is the production cross-shape comparison.
+13. Phase III replaces the provisional Lanczos tail averaging with the released modified-Jacobi-then-Cholesky construction, double full reorthogonalization, adaptive stopping metadata, cross-probe terminal-coefficient consensus, and reference finite-Ritz spike counting. Residue filtering and constant-tail finite sections are retained only as labeled extensions.
+14. Accelerator work remains above the pure boundary. Activation moments are reduced in device memory, reduced SVD can use the configured device driver, and only standard arrays enter the RMT engine.
+15. `requirements.txt`, `other_requirements.md`, `scripts/download_assets.py`, and `run_hpc.slurm` now define the offline deployment contract. Test and benchmark execution remains the human operator's responsibility under the no-execution guardrail.

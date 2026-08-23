@@ -1,0 +1,312 @@
+"""AdamW causal-LM trainer with warmup/cosine decay and reproducible metrics."""
+
+from __future__ import annotations
+
+from contextlib import nullcontext
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from collections.abc import Callable, Iterable, Sized
+import math
+import random
+from typing import Any
+
+import numpy as np
+import torch
+from torch import Tensor, nn
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+    epochs: int = 1
+    max_steps: int | None = None
+    learning_rate: float = 3e-4
+    min_learning_rate_ratio: float = 0.1
+    warmup_steps: int = 100
+    weight_decay: float = 0.1
+    beta1: float = 0.9
+    beta2: float = 0.95
+    gradient_clip: float = 1.0
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    amp_dtype: str = "bfloat16"
+    compile_model: bool = False
+    compile_mode: str = "default"
+    allow_tf32: bool = True
+    non_blocking_transfers: bool = True
+    log_every: int = 50
+    seed: int = 0
+
+    def __post_init__(self) -> None:
+        if self.epochs < 1 or (self.max_steps is not None and self.max_steps < 1):
+            raise ValueError("epochs and max_steps must be positive")
+        if self.learning_rate <= 0.0 or not 0.0 <= self.min_learning_rate_ratio <= 1.0:
+            raise ValueError("learning-rate settings are invalid")
+        if self.warmup_steps < 0 or self.weight_decay < 0.0 or self.gradient_clip <= 0.0:
+            raise ValueError("warmup, weight decay, and gradient clip are invalid")
+        if not 0.0 < self.beta1 < 1.0 or not 0.0 < self.beta2 < 1.0:
+            raise ValueError("Adam beta values must lie in (0, 1)")
+        if self.amp_dtype not in {"float32", "float16", "bfloat16"}:
+            raise ValueError("amp_dtype must be float32, float16, or bfloat16")
+        if self.compile_mode not in {"default", "reduce-overhead", "max-autotune"}:
+            raise ValueError("unsupported compile_mode")
+        if self.log_every < 1:
+            raise ValueError("log_every must be positive")
+
+
+def seed_everything(seed: int) -> None:
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def cosine_warmup_multiplier(
+    step: int,
+    total_steps: int,
+    warmup_steps: int,
+    minimum_ratio: float,
+) -> float:
+    """Return a continuous linear-warmup, cosine-decay LR multiplier."""
+
+    if total_steps < 1 or warmup_steps < 0 or not 0.0 <= minimum_ratio <= 1.0:
+        raise ValueError("scheduler arguments are invalid")
+    step = max(0, int(step))
+    if warmup_steps > 0 and step < warmup_steps:
+        return max(np.finfo(float).eps, (step + 1) / warmup_steps)
+    decay_steps = max(1, total_steps - warmup_steps)
+    progress = min(1.0, max(0.0, (step - warmup_steps) / decay_steps))
+    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return float(minimum_ratio + (1.0 - minimum_ratio) * cosine)
+
+
+def _loss_from_output(output: object) -> Tensor:
+    loss = getattr(output, "loss", None)
+    if isinstance(loss, Tensor):
+        return loss
+    if isinstance(output, tuple) and output and isinstance(output[0], Tensor) and output[0].ndim == 0:
+        return output[0]
+    raise ValueError("model output does not contain a scalar loss")
+
+
+def evaluate_language_model(
+    model: nn.Module,
+    dataloader: Iterable[dict[str, Tensor]],
+    device: str | torch.device,
+    *,
+    max_batches: int | None = None,
+    amp_dtype: str = "float32",
+    non_blocking_transfers: bool = True,
+) -> dict[str, float]:
+    """Return token-weighted validation loss and perplexity."""
+
+    target = torch.device(device)
+    if amp_dtype not in {"float32", "float16", "bfloat16"}:
+        raise ValueError("amp_dtype must be float32, float16, or bfloat16")
+    selected_dtype = {
+        "float32": torch.float32,
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }[amp_dtype]
+    use_amp = target.type == "cuda" and selected_dtype != torch.float32
+    was_training = model.training
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    try:
+        with torch.no_grad():
+            for batch_index, batch in enumerate(dataloader):
+                if max_batches is not None and batch_index >= int(max_batches):
+                    break
+                moved = {
+                    key: value.to(
+                        target,
+                        non_blocking=bool(non_blocking_transfers and target.type == "cuda"),
+                    )
+                    for key, value in batch.items()
+                }
+                context = (
+                    torch.autocast(device_type="cuda", dtype=selected_dtype)
+                    if use_amp
+                    else nullcontext()
+                )
+                with context:
+                    output = model(**moved)
+                loss = _loss_from_output(output)
+                labels = moved.get("labels")
+                if labels is None:
+                    raise ValueError("evaluation batches must contain labels")
+                valid = labels[:, 1:] != -100
+                if "attention_mask" in moved:
+                    valid = valid & moved["attention_mask"][:, 1:].to(dtype=torch.bool)
+                count = int(torch.count_nonzero(valid).item())
+                if count > 0:
+                    total_loss += float(loss.detach().cpu()) * count
+                    total_tokens += count
+    finally:
+        model.train(was_training)
+    if total_tokens == 0:
+        return {"loss": float("nan"), "perplexity": float("nan"), "tokens": 0.0}
+    mean_loss = total_loss / total_tokens
+    return {
+        "loss": float(mean_loss),
+        "perplexity": float(math.exp(min(mean_loss, 80.0))),
+        "tokens": float(total_tokens),
+    }
+
+
+class LanguageModelTrainer:
+    def __init__(self, model: nn.Module, config: TrainConfig) -> None:
+        self.model = model
+        self.config = config
+        self.device = torch.device(config.device)
+        if self.device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested but is unavailable")
+        seed_everything(config.seed)
+        if self.device.type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = bool(config.allow_tf32)
+            torch.backends.cudnn.allow_tf32 = bool(config.allow_tf32)
+            torch.set_float32_matmul_precision("high" if config.allow_tf32 else "highest")
+        self.model.to(self.device)
+        decay: list[nn.Parameter] = []
+        no_decay: list[nn.Parameter] = []
+        for parameter in self.model.parameters():
+            if not parameter.requires_grad:
+                continue
+            (decay if parameter.ndim >= 2 else no_decay).append(parameter)
+        self.optimizer = torch.optim.AdamW(
+            [
+                {"params": decay, "weight_decay": config.weight_decay},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
+            lr=config.learning_rate,
+            betas=(config.beta1, config.beta2),
+        )
+        self.use_amp = self.device.type == "cuda" and config.amp_dtype != "float32"
+        self.amp_torch_dtype = {
+            "float32": torch.float32,
+            "float16": torch.float16,
+            "bfloat16": torch.bfloat16,
+        }[config.amp_dtype]
+        self.scaler = torch.cuda.amp.GradScaler(
+            enabled=self.use_amp and self.amp_torch_dtype == torch.float16
+        )
+        self.execution_model: nn.Module = self.model
+        if config.compile_model:
+            if self.device.type != "cuda":
+                raise ValueError("compile_model is supported only for CUDA training in this pipeline")
+            self.execution_model = torch.compile(self.model, mode=config.compile_mode)
+        self.global_step = 0
+        self.history: list[dict[str, float | int]] = []
+        self.scheduler: torch.optim.lr_scheduler.LambdaLR | None = None
+
+    def _autocast(self):
+        if not self.use_amp:
+            return nullcontext()
+        return torch.autocast(device_type=self.device.type, dtype=self.amp_torch_dtype)
+
+    def fit(
+        self,
+        train_dataloader: Iterable[dict[str, Tensor]],
+        validation_dataloader: Iterable[dict[str, Tensor]] | None = None,
+        *,
+        callback: Callable[[dict[str, float | int]], None] | None = None,
+    ) -> list[dict[str, float | int]]:
+        """Train until the epoch or max-step boundary and return step metrics."""
+
+        if not isinstance(train_dataloader, Sized):
+            raise ValueError("train_dataloader must expose its finite length")
+        available_steps = len(train_dataloader) * self.config.epochs
+        total_steps = min(available_steps, self.config.max_steps or available_steps)
+        if total_steps < 1:
+            raise ValueError("train_dataloader contains no batches")
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer,
+            lambda step: cosine_warmup_multiplier(
+                step,
+                total_steps,
+                self.config.warmup_steps,
+                self.config.min_learning_rate_ratio,
+            ),
+        )
+        self.model.train()
+        self.execution_model.train()
+        stop = False
+        for epoch in range(self.config.epochs):
+            for batch in train_dataloader:
+                if self.global_step >= total_steps:
+                    stop = True
+                    break
+                moved = {
+                    key: value.to(
+                        self.device,
+                        non_blocking=bool(
+                            self.config.non_blocking_transfers and self.device.type == "cuda"
+                        ),
+                    )
+                    for key, value in batch.items()
+                }
+                self.optimizer.zero_grad(set_to_none=True)
+                with self._autocast():
+                    output = self.execution_model(**moved)
+                    loss = _loss_from_output(output)
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(f"non-finite training loss at step {self.global_step}")
+                self.scaler.scale(loss).backward()
+                self.scaler.unscale_(self.optimizer)
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self.config.gradient_clip
+                )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.scheduler.step()
+                self.global_step += 1
+                record: dict[str, float | int] = {
+                    "step": self.global_step,
+                    "epoch": epoch,
+                    "train_loss": float(loss.detach().cpu()),
+                    "learning_rate": float(self.optimizer.param_groups[0]["lr"]),
+                    "gradient_norm": float(torch.as_tensor(gradient_norm).detach().cpu()),
+                }
+                should_log = self.global_step % self.config.log_every == 0 or self.global_step == total_steps
+                if validation_dataloader is not None and should_log:
+                    validation = evaluate_language_model(
+                        self.execution_model,
+                        validation_dataloader,
+                        self.device,
+                        amp_dtype=self.config.amp_dtype,
+                        non_blocking_transfers=self.config.non_blocking_transfers,
+                    )
+                    record["validation_loss"] = validation["loss"]
+                    record["validation_perplexity"] = validation["perplexity"]
+                    self.model.train()
+                self.history.append(record)
+                if callback is not None:
+                    callback(dict(record))
+            if stop:
+                break
+        return [dict(record) for record in self.history]
+
+    def save_checkpoint(self, path: str | Path, *, metadata: dict[str, Any] | None = None) -> None:
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model": self.model.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "scheduler": None if self.scheduler is None else self.scheduler.state_dict(),
+                "global_step": self.global_step,
+                "train_config": asdict(self.config),
+                "metadata": dict(metadata or {}),
+            },
+            destination,
+        )
+
+
+__all__ = [
+    "LanguageModelTrainer",
+    "TrainConfig",
+    "cosine_warmup_multiplier",
+    "evaluate_language_model",
+    "seed_everything",
+]

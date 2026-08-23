@@ -1,0 +1,103 @@
+# Unit-test contract
+
+All stochastic tests use fixed seeds. Pure tests import only NumPy, SciPy, pytest, and `rmt`. Torch tests use tiny in-process models and no network or package installation.
+
+Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/support/reference-Ritz calibration, `test_farms_aspect_ratio.py` owns reference geometry/sampling and fixed-ratio invariance, `test_activation_hooks.py` owns device reduction and the tensor-to-pure SVD bridge, and `test_cli_dispatch.py` owns source isolation, four-track parsing, and SLURM/offline static contracts. Existing `test_pure_rmt_*` files own alternative MP, tail, spacing, scalar, and overlap methods. Model, allocator, and lesion tests remain separated from pure numerical tests.
+
+## MP calibration
+
+- The analytical density integrates to one within `1e-3` for aspect ratios `0.25`, `0.5`, and `1.0`.
+- Density is zero outside support and both bounds are nonnegative and ordered.
+- A Gaussian factor's empirical nonzero covariance spectrum lies near the analytical support; edge tests allow finite-size Tracy-Widom fluctuations rather than requiring a deterministic one-percent edge match.
+- The median estimator recovers entry standard deviation within `2 percent` on seeded matrices large enough for asymptotics.
+- Eigenvalue and singular-value compatibility APIs agree exactly under the declared normalization.
+- Triangular-KDE fitting returns a positive ordered support and recovers seeded Gaussian entry scale within the documented finite-sample tolerance.
+- TW95 lies above the asymptotic null edge for the calibration size. BBP tests distinguish the population threshold `1+sqrt(q)` from the sample edge `(1+sqrt(q))^2`.
+
+## Lanczos–Stieltjes calibration
+
+- Full-dimension, full-reorthogonalized Lanczos VEST agrees with a direct dense resolvent quadratic form within `1e-9` on a seeded positive matrix.
+- Full reorthogonalization performs the released two-pass projection cleanup; normalized Gaussian probes and recurrence metadata are deterministic under a fixed seed.
+- Constant Cholesky entries `alpha=1`, `beta=0.5` produce support `[0.25,2.25]` exactly to floating precision.
+- Finite VEST poles are the eigenvalues of the realized Jacobi matrix above threshold, and reported residues are squared first Ritz-vector components.
+- The reference modified tail begins at `used - check_interval - sequence_length - 1` after convergence, replaces the suffix in Jacobi coordinates before Cholesky factorization, and records its selection mode.
+- A seeded `240 x 960` factor with three population spikes above `1+sqrt(q)` is analyzed matrix-free with 96 Lanczos steps and three probes.
+- The detector returns exactly three separated right poles, positive residues, and an upper support edge within `2.5 percent` of `(1+sqrt(q))^2`.
+- The result labels the `reference_ritz` rule, stores one convergence flag per probe, and returns a finite nonnegative probe-averaged density on the estimated support.
+- After modal spike counting, reference spike locations and residues come from the longest realized recurrence, matching the released source.
+- Tests do not substitute the incorrect `(1+q)^2` expression.
+
+## FARMS calibration
+
+- Reference floor-stride starts, reference fixed-step starts, grid starts, pooled spectra, and metadata are deterministic for a fixed source and configuration.
+- The reference ratio is sampled columns divided by sampled rows; `target_aspect_ratio=2` and `window_size=3` therefore produce a `3 x 6` window.
+- Every sampled window has the declared fixed shape; pooled level count equals windows times reduced window dimension.
+- Gaussian matrices with source row/column ratios `{0.1,0.25,0.5,1.0,2.0,4.0}` are sampled through square `256 x 256` windows. Analytically fitted pooled upper edges remain within `2 percent` of the common null value four.
+- `shape_normalize_eigenvalues` maps the analytic raw edge to the requested target exactly and remains separately labeled from FARMS.
+- Raw and canonical pooled spectra from identical windows differ exactly by `max(window_shape)`.
+
+## Tail calibration
+
+- A continuous Pareto density exponent `3.0` is recovered by CSN within `2 percent` for a sufficiently large seeded sample.
+- The Hill survival exponent is near `2.0`, and squaring observations halves that exponent.
+- Too-short or degenerate tails return structured non-finite estimates without raising an unrelated exception.
+- Fixed-cutoff MLE recovers a Pareto density exponent `3.0` within `2 percent`; rank regression is allowed `5 percent` and must report `R^2>0.98` on the seeded large sample.
+- CSN semiparametric bootstrap returns a probability in `[0,1]`, preserves the observed fit fields, and is reproducible for a fixed seed.
+
+## Spacing calibration
+
+- Unfolded mean spacing is one to numerical tolerance.
+- Poisson levels fit Brody beta near zero; GOE bulk levels fit closer to one than Poisson levels.
+- Every fitted beta remains in `[0,1]`.
+- Mean adjacent-gap ratio is ordered GOE above Poisson.
+- Number variance is finite and nonnegative for supported windows.
+- Chebyshev and monotone-spline unfolding each map the same central GOE spectrum to mean spacing `1.00 +/- 0.01`; the large seeded calibration requires Brody beta in `[0.90,1.00]`.
+- Adaptive Gaussian unfolding has strictly increasing finite output when its local window fits the spectrum.
+- Bounded CDF least squares and bounded MLE always return beta in `[0,1]`; seeded bootstrap uncertainty is nonnegative when requested.
+
+## Scalar and overlap calibration
+
+- Identity stable rank is its dimension; rank-one stable rank is one.
+- Entropy of equal singular energy is `log(rank)` and rank-one entropy is zero.
+- Condition number is infinite for an exactly singular matrix.
+- Projection entries lie in `[0,1]`; aligned bases produce an identity overlap matrix.
+- Top, bulk, and bottom tranche indices are disjoint and cover the spectrum.
+- Identical subspaces have zero principal angles and unit principal-angle/projector scores after arbitrary basis rotation.
+- The archived signed maximum-cosine convention is tested separately from sign-invariant alternatives.
+- Archive localization and participation ratios reproduce their declared norm ratios.
+- Finite-dimensional Porter–Thomas Monte Carlo returns per-vector distances and probabilities with deterministic seed plumbing.
+
+## Model and pipeline calibration
+
+- Causal-LM logits have shape `(batch, sequence, vocabulary)` and labeled forward returns finite cross-entropy.
+- Changing a future token cannot change earlier logits while dropout is disabled.
+- Allocation conserves `C=c_fND`; target-ratio mode satisfies `D/N=20`; fixed-compute regimes satisfy `N=N*/kappa`, `D=kappa D*`.
+- Captured covariance is symmetric positive semidefinite and has feature dimension equal to module input width.
+- Explicit float32 accumulation allocates both moment buffers on the requested device. The CPU calibration checks exact second moments; CUDA execution is an operator hardware gate.
+- `compute_tensor_svd(matrix, backend="cpu")` returns a reconstructing pure `SVDResult`; CUDA driver behavior is an operator hardware gate.
+- Lesion contexts restore every parameter exactly, including when evaluation raises.
+- Reference descending-decile lesions map decile zero to the largest singular group and the last decile to the smallest group, then restore exact parameters on context exit.
+
+## CLI and isolation calibration
+
+- Parsing no method flags produces exactly `RMTMethodConfig()`.
+- Every declared value in each of the six primary choice tuples constructs successfully, both alone and in the full Cartesian configuration set.
+- Each MP fit, unfolding, tail, overlap, and spike method is dispatched on a small seeded calibration input and returns its declared result label.
+- `--boundary-detector lanczos_stieltjes` resolves to MP method `lanczos_stieltjes` and spike detector `lanczos_poles`.
+- Pipeline defaults resolve to the Golden method set and BF16/CUDA accelerator intent. Argument sets for all four SLURM tracks parse through the centralized schema.
+- Static SLURM checks require all four track functions and the three strict offline environment exports.
+- Every maintained `rmt/*.py` source is scanned case-insensitively; the framework name prohibited by the isolation contract must have zero occurrences, including comments and docstrings.
+- Placeholder scanning applies to maintained project source/specifications/SLURM files and excludes all read-only reference archives.
+
+## Offline deployment calibration
+
+- The staging source pins exactly one canonical dataset/config and tokenizer identifier, resolves immutable upstream commit SHAs, requires explicit network acknowledgement for remote acquisition, and emits revision plus SHA-256 file metadata.
+- Runtime code has no remote fallback: a missing local token array raises before model training.
+- `requirements.txt` uses exact direct pins only; the wheelhouse and platform-lock procedure in `other_requirements.md` is an operator prerequisite.
+- The SLURM harness checks the virtual environment, token array, and asset manifest before launching a track and sets local cache roots.
+- The SLURM harness invokes the local-only manifest verifier, which checks path containment, byte sizes, and SHA-256 values before launching a track.
+- No unit test downloads an asset, imports a remote dataset, starts a job, or assumes an accelerator exists.
+
+## Operator-only empirical checks
+
+Heavy-tail ranges in trained deep layers, dual-end information localization, lesion perplexity ordering, and spectral scaling collapse require completed training runs. They are report assertions, not unit tests against untrained random weights.
