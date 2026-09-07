@@ -16,13 +16,17 @@ GAMMA = 0.5772156649015329       # Euler–Mascheroni
 # r-statistic (Atas 2013, no unfolding)                                        #
 # --------------------------------------------------------------------------- #
 def r_statistic(levels) -> float:
-    """⟨ rᵢ ⟩, rᵢ = min(δᵢ, δᵢ₊₁)/max(δᵢ, δᵢ₊₁).  GOE 0.5307, Poisson 0.3863."""
+    """Mean adjacent-gap ratio, preserving physical zero-gap degeneracies."""
     x = np.sort(np.asarray(levels, dtype=np.float64))
+    x = x[np.isfinite(x)]
     d = np.diff(x)
-    d = d[d > 0]
     if d.size < 2:
         return float("nan")
-    r = np.minimum(d[:-1], d[1:]) / np.maximum(d[:-1], d[1:])
+    denominator = np.maximum(d[:-1], d[1:])
+    valid = denominator > 0.0  # only 0/0 is undefined; 0/positive contributes 0
+    if not np.any(valid):
+        return float("nan")
+    r = np.minimum(d[:-1][valid], d[1:][valid]) / denominator[valid]
     return float(np.mean(r))
 
 
@@ -35,11 +39,26 @@ def unfold(levels, deg=7) -> np.ndarray:
     Returns the unfolded levels ξ = N̄(λ); mean NN spacing ≈ 1.
     """
     x = np.sort(np.asarray(levels, dtype=np.float64))
+    x = x[np.isfinite(x)]
     N = x.size
-    stair = np.arange(1, N + 1)                  # empirical cumulative count
-    coeffs = np.polyfit(x, stair, deg)
-    xi = np.polyval(coeffs, x)
-    return xi
+    if N < 3:
+        raise ValueError("at least three finite levels are required")
+    stair = np.arange(1, N + 1, dtype=np.float64)
+    unique, first, counts = np.unique(x, return_index=True, return_counts=True)
+    if unique.size < 2:
+        raise ValueError("unfolding requires at least two distinct levels")
+    # Fit in scaled coordinates.  If the unconstrained polynomial folds, use a
+    # monotone multiplicity-aware staircase interpolation instead.
+    center, scale = float(np.mean(unique)), max(float(np.ptp(unique)), 1.0)
+    fitted_deg = min(max(1, int(deg)), unique.size - 1)
+    coeffs = np.polyfit((unique - center) / scale,
+                        first + 0.5 * (counts + 1), fitted_deg)
+    smooth_unique = np.polyval(coeffs, (unique - center) / scale)
+    if np.any(np.diff(smooth_unique) <= 0.0) or not np.all(np.isfinite(smooth_unique)):
+        smooth_unique = first + 0.5 * (counts + 1)
+    xi = np.interp(x, unique, smooth_unique)
+    mean_positive = np.mean(np.diff(xi)[np.diff(xi) > 0.0])
+    return (xi - xi[0]) / mean_positive
 
 
 def nn_spacing(levels, deg=7) -> np.ndarray:
@@ -47,10 +66,11 @@ def nn_spacing(levels, deg=7) -> np.ndarray:
     xi = unfold(levels, deg=deg)
     s = np.diff(xi)
     s = s[np.isfinite(s)]
-    mean = np.mean(s)
-    if mean <= 0:
+    positive = s[s > 0.0]
+    if positive.size == 0:
         return s
-    return s / mean
+    # Keep zero gaps while normalizing the ordinary (positive) local scale.
+    return s / np.mean(positive)
 
 
 def wigner_goe_cdf(s) -> np.ndarray:
@@ -130,7 +150,10 @@ def delta3(levels, L, deg=7) -> float:
         A = np.vstack([np.ones_like(t), t]).T
         coef, *_ = np.linalg.lstsq(A, Nt, rcond=None)
         resid = Nt - A @ coef
-        d3 = np.trapezoid(resid**2, t) / L
+        integrate = getattr(np, "trapezoid", None)
+        if integrate is None:  # NumPy < 2.0
+            integrate = getattr(np, "trapz")
+        d3 = integrate(resid**2, t) / L
         vals.append(d3)
     return float(np.mean(vals))
 

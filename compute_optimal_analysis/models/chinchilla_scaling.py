@@ -207,14 +207,19 @@ def estimate_transformer_parameters(config: Mapping[str, Any] | object) -> int:
     max_seq_len = int(get("max_seq_len", 0))
     tied = bool(get("tie_embeddings", True))
     bias = bool(get("bias", False))
-    if min(vocab, width, layers, heads, kv_heads) < 1 or width % heads != 0:
+    norm_type = str(get("norm_type", "rmsnorm")).lower()
+    if (min(vocab, width, layers, heads, kv_heads) < 1
+            or width % heads != 0 or heads % kv_heads != 0):
         raise ValueError("config dimensions are inconsistent")
+    if mlp_type not in {"swiglu", "gelu"} or norm_type not in {"rmsnorm", "layernorm"}:
+        raise ValueError("unsupported MLP or normalization type")
     head_dim = width // heads
     kv_width = kv_heads * head_dim
     attention = width * width * 2 + width * kv_width * 2
-    hidden = int(round(ratio * width))
+    hidden = max(1, int(round(ratio * width)))
     mlp = width * hidden * (3 if mlp_type == "swiglu" else 2)
-    norm = 2 * width
+    norm_parameters = 2 if norm_type == "layernorm" else 1
+    norm = 2 * width * norm_parameters
     per_layer = attention + mlp + norm
     if bias:
         per_layer += width + 2 * kv_width + width
@@ -222,7 +227,7 @@ def estimate_transformer_parameters(config: Mapping[str, Any] | object) -> int:
     embeddings = vocab * width
     output = 0 if tied else vocab * width
     positions = max_seq_len * width if learned_positions else 0
-    final_norm = width
+    final_norm = width * norm_parameters
     return int(embeddings + output + positions + layers * per_layer + final_norm)
 
 
@@ -232,6 +237,7 @@ def suggest_architecture(
     vocab_size: int = 512,
     max_layers: int = 24,
     width_multiple: int = 64,
+    max_parameters: float | None = None,
 ) -> dict[str, Any]:
     """Search a compact decoder configuration nearest a target parameter count."""
 
@@ -263,11 +269,14 @@ def suggest_architecture(
                 "bias": False,
             }
             realized = estimate_transformer_parameters(candidate)
+            if max_parameters is not None and realized > float(max_parameters):
+                continue
             error = abs(realized - target) / target
             if best is None or error < best[0]:
                 best = (error, {**candidate, "estimated_parameters": realized, "relative_error": error})
     if best is None:
-        raise ValueError("no valid architecture found for the requested bounds")
+        qualifier = " under the hard parameter cap" if max_parameters is not None else ""
+        raise ValueError(f"no valid architecture found for the requested bounds{qualifier}")
     return best[1]
 
 

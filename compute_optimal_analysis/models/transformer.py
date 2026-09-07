@@ -147,10 +147,16 @@ class CausalTransformer(nn.Module):
             raise ValueError("sequence length is outside the configured range")
         if input_ids.dtype not in (torch.int32, torch.int64):
             raise ValueError("input_ids must use an integer tensor dtype")
-        positions = torch.arange(sequence, device=input_ids.device)
+        if attention_mask is not None:
+            if attention_mask.shape != (batch, sequence):
+                raise ValueError("attention_mask must have the same batch/sequence shape as input_ids")
+            positions = attention_mask.to(torch.long).cumsum(dim=-1).sub(1).clamp_min(0)
+        else:
+            positions = torch.arange(sequence, device=input_ids.device)
         hidden_states = self.token_embedding(input_ids)
         if self.position_embedding is not None:
-            hidden_states = hidden_states + self.position_embedding(positions)[None, :, :]
+            position_values = self.position_embedding(positions)
+            hidden_states = hidden_states + (position_values[None, :, :] if positions.ndim == 1 else position_values)
         hidden_states = self.embedding_dropout(hidden_states)
         for layer in self.layers:
             hidden_states = layer(
@@ -168,7 +174,11 @@ class CausalTransformer(nn.Module):
             shifted_labels = labels[:, 1:].contiguous()
             if attention_mask is not None:
                 shifted_labels = shifted_labels.clone()
-                shifted_labels[~attention_mask[:, 1:].to(dtype=torch.bool)] = -100
+                valid_prediction = (
+                    attention_mask[:, 1:].to(dtype=torch.bool)
+                    & attention_mask[:, :-1].to(dtype=torch.bool)
+                )
+                shifted_labels[~valid_prediction] = -100
             loss = F.cross_entropy(
                 logits[:, :-1, :].contiguous().view(-1, self.config.vocab_size),
                 shifted_labels.view(-1),

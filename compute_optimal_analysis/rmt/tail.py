@@ -74,10 +74,12 @@ def fit_powerlaw_csn(
         return _empty_fit()
 
     last_start = data.size - required
-    possible = np.arange(last_start + 1, dtype=int)
+    # Candidate cutoffs are distinct values represented by their first index;
+    # a selected tail therefore always contains every observation equal to xmin.
+    possible = np.unique(data[:last_start + 1], return_index=True)[1]
     if possible.size > max_candidates:
-        sampled = np.linspace(0, last_start, max_candidates, dtype=int)
-        possible = np.unique(np.concatenate(([0], sampled, [last_start])))
+        sampled = np.linspace(0, possible.size - 1, max_candidates, dtype=int)
+        possible = np.unique(possible[sampled])
 
     best: PowerLawFit | None = None
     for index in possible:
@@ -90,9 +92,11 @@ def fit_powerlaw_csn(
         alpha = 1.0 + tail.size / denominator
         if not np.isfinite(alpha) or alpha <= 1.0:
             continue
-        empirical = (np.arange(tail.size, dtype=np.float64) + 0.5) / tail.size
+        empirical_hi = np.arange(1, tail.size + 1, dtype=np.float64) / tail.size
+        empirical_lo = np.arange(0, tail.size, dtype=np.float64) / tail.size
         model = 1.0 - np.power(tail / xmin, 1.0 - alpha)
-        ks_distance = float(np.max(np.abs(empirical - model)))
+        ks_distance = float(max(np.max(np.abs(empirical_hi - model)),
+                                np.max(np.abs(model - empirical_lo))))
         standard_error = float((alpha - 1.0) / np.sqrt(tail.size))
         log_likelihood = float(
             tail.size * np.log(alpha - 1.0)
@@ -248,9 +252,11 @@ def fixed_cutoff_mle(
     if denominator <= 0.0 or not np.isfinite(denominator):
         return _empty_fit()
     alpha = float(1.0 + tail.size / denominator)
-    empirical = (np.arange(tail.size, dtype=np.float64) + 0.5) / tail.size
+    empirical_hi = np.arange(1, tail.size + 1, dtype=np.float64) / tail.size
+    empirical_lo = np.arange(0, tail.size, dtype=np.float64) / tail.size
     model = 1.0 - np.power(tail / cutoff, 1.0 - alpha)
-    ks_distance = float(np.max(np.abs(empirical - model)))
+    ks_distance = float(max(np.max(np.abs(empirical_hi - model)),
+                            np.max(np.abs(model - empirical_lo))))
     log_likelihood = float(
         tail.size * np.log(alpha - 1.0)
         - tail.size * np.log(cutoff)
@@ -456,8 +462,15 @@ def select_tail_estimator(
     )
     if name == "hill_estimator":
         selected, kind = hill, "survival"
+        clean = _clean_positive(values)[::-1]
+        if 1 <= k < clean.size:
+            csn = {**_empty_fit(), "xmin": float(clean[k]), "n_tail": int(k)}
     elif name == "hill_windowed":
         selected, kind = plateau["hill_plateau_alpha"], "survival"
+        clean = _clean_positive(values)[::-1]
+        width = int(plateau["hill_plateau_width"])
+        if width > 0 and width < clean.size:
+            csn = {**_empty_fit(), "xmin": float(clean[width]), "n_tail": width}
     elif name == "fixed_cutoff_mle":
         selected, kind = fixed["alpha"], "density"
         csn = fixed

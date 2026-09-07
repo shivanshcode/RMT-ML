@@ -48,7 +48,9 @@ def test_fused_qkv_split_contiguous_thirds():
     d = 16
     W = np.zeros((3 * d, d), dtype=np.float32)
     W[:d] = 1.0; W[d:2 * d] = 2.0; W[2 * d:] = 3.0
-    recs = D.split_fused_qkv(W, "blk.query_key_value.weight", 0, spec)
+    recs = D.split_fused_qkv(
+        W, "blk.query_key_value.weight", 0, spec, interleaved=False
+    )
     assert [r.short for r in recs] == ["Q", "K", "V"]
     assert np.allclose(recs[0].weight, 1.0)
     assert np.allclose(recs[1].weight, 2.0)

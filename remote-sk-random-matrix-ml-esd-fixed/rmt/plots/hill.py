@@ -17,6 +17,8 @@ def plot_hill(svals, out_path, *, window=20):
     ax[0].set_xlabel("k"); ax[0].set_ylabel("α_hill")
     ax[1].plot(kw, aw, "."); ax[1].set_title("windowed Hill")
     ax[1].set_xlabel("k"); ax[1].set_ylabel("α_local")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    parent = os.path.dirname(out_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     fig.savefig(out_path); plt.close(fig)
     return out_path

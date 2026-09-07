@@ -235,6 +235,11 @@ def porter_thomas_monte_carlo(
     pool = int(pooling_window)
     if references < 32 or pool < 1:
         raise ValueError("n_reference must be at least 32 and pooling_window positive")
+    if pool != 1:
+        raise ValueError(
+            "single-vector calibration requires pooling_window=1; "
+            "use porter_thomas_monte_carlo_pooled for pooled observations"
+        )
     generator = rng if isinstance(rng, np.random.Generator) else np.random.default_rng(rng)
     dimension = array.shape[1]
     reference_vectors = generator.normal(size=(references, dimension))

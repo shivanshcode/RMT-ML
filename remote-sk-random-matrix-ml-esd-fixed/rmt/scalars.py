@@ -154,13 +154,16 @@ def per_decile(s, n_deciles=10) -> dict:
     k = sv.size
     ranges = decile_index_ranges(k, n_deciles, ascending=True)
     out = {}
+    energy = np.square(sv)
+    total = float(np.sum(energy))
+    global_max = float(np.max(energy)) if energy.size else 0.0
+    probabilities = energy / total if total > 0.0 else np.zeros_like(energy)
     for d, (lo, hi) in enumerate(ranges, start=1):
-        seg = sv[lo:hi]
-        if seg.size == 0:
-            out[f"entropy_decile_{d}"] = 0.0
-            out[f"srk_decile_{d}"] = 0.0
-            continue
-        out[f"entropy_decile_{d}"] = spectral_entropy(seg)
-        smax = float(np.max(seg))
-        out[f"srk_decile_{d}"] = float(np.sum(seg**2) / smax**2) if smax > 0 else 0.0
+        p = probabilities[lo:hi]
+        positive = p[p > 0.0]
+        # Additive contributions: sums recover global entropy and stable rank.
+        out[f"entropy_decile_{d}"] = float(-np.sum(positive * np.log(positive)))
+        out[f"srk_decile_{d}"] = (
+            float(np.sum(energy[lo:hi]) / global_max) if global_max > 0.0 else 0.0
+        )
     return out

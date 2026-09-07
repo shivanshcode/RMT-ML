@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
@@ -832,6 +832,8 @@ def detect_spikes_lanczos(
     """Estimate one-cut support and separated right poles from random probes."""
 
     operator, size = _symmetric_operator(matrix, dimension)
+    if steps is not None and (int(steps) < 3 or int(steps) > size):
+        raise ValueError(f"steps must satisfy 3 <= steps <= operator dimension ({size})")
     active_convergence_tolerance = convergence_tolerance
     if active_convergence_tolerance is None and isinstance(matrix, np.ndarray):
         dense = np.asarray(matrix, dtype=np.float64)
@@ -905,6 +907,9 @@ def detect_spikes_lanczos(
             )
         )
     lower, upper = support_from_cholesky_tail(tail_alpha, tail_beta)
+    # Ridge stabilizes Cholesky only; report support in the original operator
+    # domain so it is comparable with unshifted Ritz values/eigenvalues.
+    lower, upper = max(0.0, lower - ridge), max(0.0, upper - ridge)
     gap = threshold_c * size ** (-threshold_delta)
     threshold = float(upper + gap)
     per_probe_poles: list[np.ndarray] = []
@@ -917,7 +922,9 @@ def detect_spikes_lanczos(
     ):
         probe_alpha = float(np.mean(modified.diagonal[-2:]))
         probe_beta = float(modified.sub_diagonal[-1])
-        probe_edges.append(support_from_cholesky_tail(probe_alpha, probe_beta))
+        probe_lower, probe_upper = support_from_cholesky_tail(probe_alpha, probe_beta)
+        probe_edges.append((max(0.0, probe_lower - ridge),
+                            max(0.0, probe_upper - ridge)))
         if pole_method == "reference_ritz":
             poles, residues = finite_vest_poles(
                 lanczos,
@@ -929,11 +936,12 @@ def detect_spikes_lanczos(
                 cholesky,
                 tail_alpha=tail_alpha,
                 tail_beta=tail_beta,
-                threshold=threshold,
+                threshold=threshold + ridge,
                 residue_threshold=residue_threshold,
                 tail_window=tail_window,
                 extension_size=extension_size,
             )
+            poles = poles - ridge
         per_probe_poles.append(poles)
         per_probe_residues.append(residues)
     counts = np.asarray([values.size for values in per_probe_poles], dtype=np.int64)
@@ -941,27 +949,15 @@ def detect_spikes_lanczos(
     eligible = [index for index, count in enumerate(counts) if count == spike_count]
     longest = int(np.argmax([result.iterations for result in lanczos_results]))
     if pole_method == "reference_ritz":
-        representative = longest
-        if residue_threshold > 0.0 and per_probe_poles[representative].size < spike_count:
-            eligible_by_length = sorted(
-                eligible,
-                key=lambda index: lanczos_results[index].iterations,
-                reverse=True,
-            )
-            if eligible_by_length:
-                representative = eligible_by_length[0]
+        eligible_by_length = sorted(
+            eligible,
+            key=lambda index: lanczos_results[index].iterations,
+            reverse=True,
+        )
+        representative = eligible_by_length[0] if eligible_by_length else longest
         if spike_count:
-            if residue_threshold > 0.0:
-                poles = per_probe_poles[representative][:spike_count]
-                residues = per_probe_residues[representative][:spike_count]
-            else:
-                all_values, all_vectors = eigh_tridiagonal(
-                    lanczos_results[representative].diagonal,
-                    lanczos_results[representative].off_diagonal,
-                )
-                selected = np.arange(all_values.size - spike_count, all_values.size)
-                poles = all_values[selected][::-1]
-                residues = np.square(all_vectors[0, selected])[::-1]
+            poles = per_probe_poles[representative][:spike_count]
+            residues = per_probe_residues[representative][:spike_count]
         else:
             poles = np.asarray([], dtype=np.float64)
             residues = np.asarray([], dtype=np.float64)
@@ -1032,7 +1028,32 @@ def detect_spikes_from_factor(
             np.finfo(float).eps,
         )
     operator = covariance_linear_operator(matrix, normalization=normalization)
-    return detect_spikes_lanczos(operator, **kwargs)
+    result = detect_spikes_lanczos(operator, **kwargs)
+    # Debias finite-recurrence support scale with a cheap trace identity after
+    # excluding separated poles (no dense decomposition is introduced).
+    bulk_count = dimension - result.n_spikes
+    if bulk_count > 0:
+        trace = float(np.sum(np.square(matrix)) / normalization)
+        bulk_variance = max(np.finfo(float).eps,
+                            (trace - float(np.sum(result.poles))) / bulk_count)
+        q = dimension / max(matrix.shape)
+        moment_lower = bulk_variance * (1.0 - np.sqrt(q)) ** 2
+        moment_upper = bulk_variance * (1.0 + np.sqrt(q)) ** 2
+        gap = float(kwargs.get("threshold_c", 1.0)) * dimension ** (
+            -float(kwargs.get("threshold_delta", 0.25))
+        )
+        corrected_threshold = float(moment_upper + gap)
+        retained = result.poles > corrected_threshold
+        result = replace(
+            result,
+            lambda_minus=float(moment_lower),
+            lambda_plus=float(moment_upper),
+            threshold=corrected_threshold,
+            poles=result.poles[retained],
+            residues=result.residues[retained],
+            n_spikes=int(np.count_nonzero(retained)),
+        )
+    return result
 
 
 lanczos_tridiagonalization = lanczos_tridiagonalize

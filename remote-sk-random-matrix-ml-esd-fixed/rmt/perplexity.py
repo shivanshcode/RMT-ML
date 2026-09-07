@@ -5,6 +5,7 @@ and computes a sliding-window perplexity.  Returns NaN if no tokens are usable.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import numpy as np
@@ -12,7 +13,8 @@ import numpy as np
 
 def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
                         text_path="./wikitext-2-raw/wiki.test.raw",
-                        max_length=1024) -> float:
+                        max_length=1024, allow_fallback=False,
+                        return_details=False):
     """Sliding-window perplexity over the first ~n_tokens tokens of a local file.
 
     If ``tokenizer`` is None (tiny test models), a trivial whitespace/byte
@@ -21,9 +23,16 @@ def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
     """
     import torch
 
-    text = _read_text(text_path)
+    def result(value, count=0):
+        return ({"perplexity": float(value), "scored_tokens": int(count)}
+                if return_details else float(value))
+
+    n_tokens, stride, max_length = int(n_tokens), int(stride), int(max_length)
+    if n_tokens < 2 or stride < 1 or max_length < 2 or stride > max_length:
+        raise ValueError("require n_tokens/max_length >= 2 and 1 <= stride <= max_length")
+    text = _read_text(text_path, allow_fallback=allow_fallback)
     if not text:
-        return float("nan")
+        return result(float("nan"))
 
     # only tokenize the portion we need (avoids the "sequence too long" warning)
     text = text[: (n_tokens + 8) * 8]
@@ -34,46 +43,64 @@ def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
     else:
         vocab = int(getattr(model, "vocab", getattr(getattr(model, "config", None),
                                                      "vocab_size", 50)))
-        toks = [(abs(hash(w)) % vocab) for w in text.split()]
+        toks = [int.from_bytes(hashlib.sha256(w.encode("utf-8")).digest()[:8], "big") % vocab
+                for w in text.split()]
         input_ids = torch.tensor(toks, dtype=torch.long)
 
     input_ids = input_ids[:n_tokens]
     if input_ids.numel() < 2:
-        return float("nan")
+        return result(float("nan"))
     # always place inputs on the model's actual device
     try:
         device = next(model.parameters()).device
     except StopIteration:
         pass
     input_ids = input_ids.to(device)
+    was_training = model.training
     model.eval()
 
     nll_sum = 0.0
     n_tok = 0
     seq_len = input_ids.size(0)
-    with torch.no_grad():
-        for begin in range(0, seq_len, stride):
-            end = min(begin + max_length, seq_len)
-            ids = input_ids[begin:end].unsqueeze(0)
-            if ids.size(1) < 2:
-                break
-            out = model(input_ids=ids, labels=ids)
-            loss = getattr(out, "loss", None)
-            if loss is None:
-                return float("nan")
-            ntok = ids.size(1) - 1
-            nll_sum += float(loss) * ntok
-            n_tok += ntok
-            if end == seq_len:
-                break
+    previous_end = 0
+    try:
+        with torch.no_grad():
+            # Each iteration adds at most ``stride`` new targets, retaining up
+            # to max_length-stride context tokens.  Prefix labels are ignored.
+            for end in range(min(stride, seq_len), seq_len + stride, stride):
+                end = min(end, seq_len)
+                begin = max(0, end - max_length)
+                ids = input_ids[begin:end].unsqueeze(0)
+                if ids.size(1) < 2:
+                    if end == seq_len:
+                        break
+                    continue
+                labels = ids.clone()
+                target_start = max(previous_end, begin + 1)
+                ignore_count = max(0, target_start - begin)
+                labels[:, :ignore_count] = -100
+                valid = int(torch.count_nonzero(labels[:, 1:] != -100).item())
+                if valid:
+                    out = model(input_ids=ids, labels=labels)
+                    loss = getattr(out, "loss", None)
+                    if loss is None:
+                        return result(float("nan"), n_tok)
+                    nll_sum += float(loss) * valid
+                    n_tok += valid
+                previous_end = end
+                if end == seq_len:
+                    break
+    finally:
+        model.train(was_training)
     if n_tok == 0:
-        return float("nan")
-    return float(math.exp(nll_sum / n_tok))
+        return result(float("nan"))
+    return result(math.exp(nll_sum / n_tok), n_tok)
 
 
-def _read_text(text_path) -> str:
+def _read_text(text_path, *, allow_fallback=False) -> str:
     if text_path and os.path.exists(text_path):
         with open(text_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
-    # deterministic fallback so the offline smoke path still runs without assets
+    if not allow_fallback:
+        raise FileNotFoundError(f"local perplexity text is missing: {text_path}")
     return ("the quick brown fox jumps over the lazy dog . " * 200).strip()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from importlib import metadata
 from datetime import datetime, timezone
 import json
@@ -35,7 +36,8 @@ from pipelines.activation_extractor import compute_activation_covariances, compu
 from pipelines.cli_config import add_pipeline_cli_arguments, rmt_config_from_namespace
 from pipelines.dataset import TokenSequenceDataset, load_token_array, split_tokens
 from pipelines.spectral_lesioning import independent_lesion_benchmark, spectral_parameter_names
-from pipelines.trainer import LanguageModelTrainer, TrainConfig, evaluate_language_model
+from pipelines.trainer import (LanguageModelTrainer, TrainConfig,
+                               evaluate_language_model, seed_everything)
 from rmt.factory import (
     RMTMethodConfig,
     dispatch_mp_fit,
@@ -44,7 +46,7 @@ from rmt.factory import (
     dispatch_unfolding,
     prepare_spectrum,
 )
-from rmt.mp import fit_marchenko_pastur, mp_soft_rank
+from rmt.mp import SpikeDetectionResult, fit_marchenko_pastur, mp_soft_rank
 from rmt.overlap import dual_end_alignment
 from rmt.scalars import (
     condition_number,
@@ -91,8 +93,12 @@ def _sanitize_json(value: Any) -> Any:
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
         json.dump(_sanitize_json(payload), handle, indent=2, allow_nan=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(path)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -103,11 +109,43 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         for key in row:
             if key not in fields:
                 fields.append(key)
-    with path.open("w", encoding="utf-8", newline="") as handle:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
             writer.writerow({key: _json_value(row.get(key)) for key in fields})
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(path)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _verify_dataset_asset(dataset_path: str | Path) -> dict[str, Any]:
+    target = Path(dataset_path).resolve()
+    manifest_path = Path("data/asset_manifest.json").resolve()
+    if not manifest_path.is_file():
+        raise FileNotFoundError("data/asset_manifest.json is required for execution")
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    for record in manifest.get("files", []):
+        candidate = (Path.cwd() / str(record.get("path", ""))).resolve()
+        if candidate != target:
+            continue
+        actual_size = target.stat().st_size
+        actual_digest = _sha256(target)
+        if actual_size != int(record.get("bytes", -1)) or actual_digest != record.get("sha256"):
+            raise ValueError("selected dataset does not match its staged manifest record")
+        return {"verified": True, "bytes": actual_size, "sha256": actual_digest,
+                "manifest": str(manifest_path)}
+    raise ValueError("selected dataset is not covered by the staged asset manifest")
 
 
 def _runtime_environment(args: argparse.Namespace) -> dict[str, Any]:
@@ -197,9 +235,17 @@ def build_manifest(
         architecture_target = allocation.parameters
         if parameter_cap is not None:
             architecture_target = min(architecture_target, float(parameter_cap))
-        architecture = suggest_architecture(architecture_target, vocab_size=vocab_size)
-        realized_tokens = allocation.tokens if token_cap is None else min(allocation.tokens, float(token_cap))
+        architecture = suggest_architecture(
+            architecture_target,
+            vocab_size=vocab_size,
+            max_parameters=parameter_cap,
+        )
         realized_parameters = float(architecture["estimated_parameters"])
+        # Conserve the requested IsoFLOP budget after discretizing architecture.
+        isoflop_tokens = allocation.compute_budget / (
+            law.flops_per_parameter_token * realized_parameters
+        )
+        realized_tokens = isoflop_tokens if token_cap is None else min(isoflop_tokens, float(token_cap))
         manifest.append(
             {
                 "cell_index": cell_index,
@@ -213,7 +259,8 @@ def build_manifest(
                     law.flops_per_parameter_token * realized_parameters * realized_tokens
                 ),
                 "parameter_cap_applied": bool(parameter_cap is not None and allocation.parameters > parameter_cap),
-                "token_cap_applied": bool(token_cap is not None and allocation.tokens > token_cap),
+                "token_cap_applied": bool(token_cap is not None and isoflop_tokens > token_cap),
+                "isoflop_tokens_for_realized_architecture": float(isoflop_tokens),
                 "architecture": architecture,
             }
         )
@@ -272,24 +319,42 @@ def analyze_model(
             backend=svd_backend,
             driver=svd_driver,
         )
-        weight = parameter.detach().float().cpu().numpy()
-        prepared = prepare_spectrum(weight, method_config)
+        analysis_dtype = torch.float64 if parameter.dtype == torch.float64 else torch.float32
+        weight = parameter.detach().to(dtype=analysis_dtype).cpu().numpy()
+        prepared = prepare_spectrum(weight, method_config, svd=svd)
         eigenvalues = prepared.eigenvalues
-        mp_fit = dispatch_mp_fit(weight, method_config)
-        spike_fit = dispatch_spike_detector(
-            weight,
-            method_config,
-            variance=mp_fit.variance,
-        )
-        tail_minimum = max(8, min(method_config.tail_minimum, eigenvalues.size // 3))
+        mp_fit = dispatch_mp_fit(weight, method_config, svd=svd, prepared=prepared)
+        if (method_config.mp_fit_method == "lanczos_stieltjes"
+                and method_config.spike_detector == "lanczos_poles"):
+            diagnostics = mp_fit.diagnostics
+            poles = np.asarray(diagnostics.get("poles", []), dtype=np.float64)
+            spike_fit = SpikeDetectionResult(
+                method="lanczos_poles",
+                threshold=float(diagnostics["threshold"]),
+                bulk_edge=float(diagnostics["lambda_plus"]),
+                spikes=poles,
+                indices=np.arange(poles.size, dtype=np.int64),
+                diagnostics=diagnostics,
+            )
+        else:
+            spike_fit = dispatch_spike_detector(
+                weight,
+                method_config,
+                variance=mp_fit.variance,
+            )
         tail = dispatch_tail_solver(
             eigenvalues,
             method_config,
-            min_tail=tail_minimum,
+            min_tail=method_config.tail_minimum,
         )
         hill_k = max(2, min(eigenvalues.size - 1, int(round(np.sqrt(eigenvalues.size)))))
-        hill = hill_alpha_at(eigenvalues, hill_k)
-        plateau = hill_plateau(eigenvalues, window=max(3, min(20, eigenvalues.size // 4)))
+        try:
+            hill = hill_alpha_at(eigenvalues, hill_k)
+            plateau = hill_plateau(eigenvalues, window=max(3, min(20, eigenvalues.size // 4)))
+        except ValueError:
+            hill = float("nan")
+            plateau = {"hill_plateau_alpha": float("nan"),
+                       "hill_plateau_width": 0, "hill_is_powerlaw": False}
         spacing_eigenvalues = svd.covariance_eigenvalues
         spacing_mp_fit = (
             mp_fit
@@ -320,19 +385,21 @@ def analyze_model(
         needs_spacing = bool(
             compute_spacing_distribution or compute_number_variance or compute_delta3
         )
-        if needs_spacing and bulk_levels.size >= minimum_bulk:
+        if (needs_spacing and bulk_levels.size >= minimum_bulk
+                and float(np.ptp(bulk_levels)) > 0.0):
             unfolded = dispatch_unfolding(bulk_levels, method_config)
-            spacings = np.diff(unfolded)
-            spacings = spacings[np.isfinite(spacings) & (spacings > 0.0)]
-            if spacings.size:
-                spacings = spacings / np.mean(spacings)
-            if spacings.size >= 8:
-                beta = (
-                    fit_brody_cdf_nls(spacings).beta
-                    if brody_fit_method == "cdf_nls"
-                    else fit_brody(spacings).beta
-                )
-            ratio = r_statistic(bulk_levels)
+            if compute_spacing_distribution:
+                spacings = np.diff(unfolded)
+                spacings = spacings[np.isfinite(spacings) & (spacings > 0.0)]
+                if spacings.size:
+                    spacings = spacings / np.mean(spacings)
+                if spacings.size >= 8:
+                    beta = (
+                        fit_brody_cdf_nls(spacings).beta
+                        if brody_fit_method == "cdf_nls"
+                        else fit_brody(spacings).beta
+                    )
+                ratio = r_statistic(bulk_levels)
             if compute_number_variance:
                 variance_10 = number_variance(
                     unfolded,
@@ -390,6 +457,9 @@ def analyze_model(
             "realized_parameters": cell["realized_parameters"],
             "requested_tokens": cell["requested_tokens"],
             "realized_tokens": cell["realized_tokens"],
+            "realized_training_compute": cell["realized_training_compute"],
+            "optimizer_updates": cell.get("optimizer_updates"),
+            "attempted_steps": cell.get("attempted_steps"),
             "parameter_name": parameter_name,
             "role": role,
             "layer": layer,
@@ -397,6 +467,11 @@ def analyze_model(
             "m": svd.m,
             "normalization": svd.normalization,
             "aspect_ratio": prepared.aspect_ratio,
+            "mp_aspect_ratio": mp_fit.aspect_ratio,
+            "mp_spectrum_domain": (
+                "full_covariance" if method_config.mp_fit_method == "lanczos_stieltjes"
+                else prepared.mode
+            ),
             "aspect_ratio_mode": method_config.aspect_ratio_mode,
             "spectrum_mode": prepared.mode,
             "mp_fit_method": method_config.mp_fit_method,
@@ -405,11 +480,18 @@ def analyze_model(
             "mp_lambda_plus": mp_fit.lambda_plus,
             "mp_ks": mp_fit.ks_distance,
             "mp_bulk_fraction": mp_fit.bulk_fraction,
+            "mp_fit_converged": mp_fit.diagnostics.get(
+                "converged", mp_fit.diagnostics.get("optimizer_success", True)
+            ),
+            "mp_fit_method_status": mp_fit.diagnostics.get(
+                "optimizer_message", "available"
+            ),
             "lower_outliers": mp_fit.n_lower_outliers,
             "upper_outliers": mp_fit.n_upper_outliers,
             "spike_detector": method_config.spike_detector,
             "spike_threshold": spike_fit.threshold,
             "detected_spikes": spike_fit.n_spikes,
+            "spike_detector_converged": spike_fit.diagnostics.get("converged", True),
             "mp_soft_rank": mp_soft_rank(
                 mp_soft_spectrum,
                 mp_fit.lambda_plus,
@@ -471,8 +553,17 @@ def _plot_esd(artifacts: list[dict[str, Any]], output: Path) -> None:
         axis.set_visible(True)
         row = artifact["row"]
         values = np.asarray(artifact["eigenvalues"])
-        positive = values[values > 0.0]
-        bins = np.geomspace(positive.min(), positive.max(), min(60, max(12, positive.size)))
+        positive = values[np.isfinite(values) & (values > 0.0)]
+        if positive.size == 0:
+            axis.text(0.5, 0.5, "No positive eigenvalues", ha="center", va="center")
+            axis.set_title(f"{row['regime']} L{row['layer']} {row['role']}")
+            continue
+        lower, upper = float(positive.min()), float(positive.max())
+        if np.isclose(lower, upper):
+            lower, upper = lower * 0.9, upper * 1.1
+            if lower <= 0.0:
+                lower = max(np.finfo(float).tiny, upper * 0.5)
+        bins = np.geomspace(lower, upper, min(60, max(12, positive.size)) + 1)
         density, edges = np.histogram(positive, bins=bins, density=True)
         centers = np.sqrt(edges[:-1] * edges[1:])
         axis.loglog(centers, np.maximum(density, np.finfo(float).tiny), marker="o", linestyle="none", ms=3)
@@ -484,8 +575,9 @@ def _plot_esd(artifacts: list[dict[str, Any]], output: Path) -> None:
                 anchor_index = int(np.argmin(np.abs(centers - xmin)))
                 anchor = max(float(density[anchor_index]), np.finfo(float).tiny)
                 axis.loglog(tail_x, anchor * (tail_x / xmin) ** (-density_alpha), linewidth=1.5)
-        axis.axvline(row["mp_lambda_minus"], color="tab:green", linestyle="--", linewidth=1)
-        axis.axvline(row["mp_lambda_plus"], color="tab:red", linestyle="--", linewidth=1)
+        if row.get("mp_spectrum_domain") == row.get("spectrum_mode"):
+            axis.axvline(row["mp_lambda_minus"], color="tab:green", linestyle="--", linewidth=1)
+            axis.axvline(row["mp_lambda_plus"], color="tab:red", linestyle="--", linewidth=1)
         axis.set_title(f"{row['regime']} L{row['layer']} {row['role']}")
         axis.set_xlabel("lambda")
         axis.set_ylabel("density")
@@ -546,15 +638,18 @@ def _plot_overlap(artifacts: list[dict[str, Any]], output: Path) -> None:
 def _plot_lesions(rows: list[dict[str, Any]], output: Path) -> None:
     figure, axis = plt.subplots(figsize=(12, 6))
     cells = sorted(set(int(row["cell_index"]) for row in rows))
-    tranches = ("top", "bulk", "bottom")
-    width = 0.24
+    canonical = ("top", "bulk", "bottom")
+    tranches = [name for name in canonical if any(row.get("tranche") == name for row in rows)]
+    width = min(0.8 / max(len(tranches), 1), 0.24)
     x = np.arange(len(cells), dtype=np.float64)
+    center = 0.5 * (len(tranches) - 1)
     for offset, tranche in enumerate(tranches):
-        values = [
-            next(float(row["delta"]) for row in rows if int(row["cell_index"]) == cell and row["tranche"] == tranche)
-            for cell in cells
-        ]
-        axis.bar(x + (offset - 1) * width, values, width=width, label=tranche)
+        values = []
+        for cell in cells:
+            matches = [float(row["delta"]) for row in rows
+                       if int(row["cell_index"]) == cell and row["tranche"] == tranche]
+            values.append(matches[0] if matches else float("nan"))
+        axis.bar(x + (offset - center) * width, values, width=width, label=tranche)
     axis.set_xticks(x, [str(cell) for cell in cells])
     axis.set_xlabel("manifest cell index")
     axis.set_ylabel("perplexity change")
@@ -567,7 +662,8 @@ def _plot_lesions(rows: list[dict[str, Any]], output: Path) -> None:
 def _plot_scaling(rows: list[dict[str, Any]], output: Path) -> None:
     grouped: dict[tuple[float, float], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[(float(row["compute_budget"]), float(row["kappa"]))].append(row)
+        grouped[(float(row.get("realized_training_compute", row["compute_budget"])),
+                 float(row["kappa"]))].append(row)
     figure, axes = plt.subplots(1, 2, figsize=(12, 5))
     for kappa in sorted({float(row["kappa"]) for row in rows}):
         points = sorted((key, values) for key, values in grouped.items() if math.isclose(key[1], kappa))
@@ -584,7 +680,7 @@ def _plot_scaling(rows: list[dict[str, Any]], output: Path) -> None:
         axes[1].plot(budgets, beta, marker="o", label=f"kappa={kappa:g}")
     for axis, ylabel in zip(axes, ("mean selected tail exponent", "mean Brody beta")):
         axis.set_xscale("log")
-        axis.set_xlabel("requested training FLOPs")
+        axis.set_xlabel("measured training FLOPs")
         axis.set_ylabel(ylabel)
         axis.legend()
     figure.tight_layout()
@@ -601,8 +697,20 @@ def execute_cell(
     """Train, capture, analyze, and lesion one manifest cell."""
 
     seed = int(args.seed + cell["cell_index"])
+    seed_everything(seed)
+    cell["resolved_seed"] = seed
     config = _config_from_manifest(cell, args.sequence_length)
     model = CausalTransformer(config)
+    actual_parameters = float(model.num_parameters())
+    if args.parameter_cap is not None and actual_parameters > float(args.parameter_cap):
+        raise ValueError("realized architecture exceeds the hard parameter cap")
+    if actual_parameters != float(cell["realized_parameters"]):
+        cell["realized_parameters"] = actual_parameters
+        isoflop_tokens = float(cell["compute_budget"]) / (6.0 * actual_parameters)
+        cell["realized_tokens"] = (
+            isoflop_tokens if args.max_train_tokens is None
+            else min(isoflop_tokens, float(args.max_train_tokens))
+        )
     train_dataset = TokenSequenceDataset(train_tokens, args.sequence_length, stride=args.sequence_length)
     validation_dataset = TokenSequenceDataset(
         validation_tokens,
@@ -645,25 +753,58 @@ def execute_cell(
         compile_mode=args.compile_mode,
         allow_tf32=args.allow_tf32,
         log_every=max(1, args.log_every),
+        validation_max_batches=args.validation_batches,
+        max_train_tokens=max(1, int(math.floor(float(cell["realized_tokens"])))),
         seed=seed,
     )
     trainer = LanguageModelTrainer(model, train_config)
-    history = trainer.fit(train_loader, validation_loader)
+    training_path = Path(args.output_dir) / "training_metrics.jsonl"
+
+    def stream_record(record: dict[str, float | int]) -> None:
+        enriched = {**record, "cell_index": cell["cell_index"],
+                    "regime": cell["regime"], "kappa": cell["kappa"]}
+        with training_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_sanitize_json(enriched), allow_nan=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if (args.save_checkpoints and int(record.get("optimizer_update", 0))
+                and int(record.get("step", 0)) % max(1, args.log_every) == 0):
+            trainer.save_checkpoint(
+                Path(args.output_dir) / "checkpoints" / f"cell_{cell['cell_index']}_latest.pt",
+                metadata={"manifest_cell": cell},
+            )
+
+    history = trainer.fit(train_loader, validation_loader, callback=stream_record)
     for record in history:
         record.update({"cell_index": cell["cell_index"], "regime": cell["regime"], "kappa": cell["kappa"]})
-    covariances = compute_activation_covariances(
-        model,
-        validation_loader,
-        device=args.device,
-        module_filter=lambda name, module: isinstance(module, torch.nn.Linear) and name != "lm_head",
-        max_batches=args.activation_batches,
-        centered=args.activation_centered,
-        accumulation_device=(
-            args.device if args.covariance_device == "auto" else args.covariance_device
-        ),
-        accumulation_dtype=args.covariance_dtype,
-        amp_dtype=args.amp_dtype,
+    cell["planned_realized_tokens"] = cell["realized_tokens"]
+    cell["realized_tokens"] = float(trainer.processed_train_tokens)
+    cell["optimizer_updates"] = trainer.global_step
+    cell["attempted_steps"] = trainer.attempted_steps
+    cell["skipped_steps"] = trainer.skipped_steps
+    cell["realized_training_compute"] = float(
+        6.0 * cell["realized_parameters"] * trainer.processed_train_tokens
     )
+    if args.save_checkpoints:
+        trainer.save_checkpoint(
+            Path(args.output_dir) / "checkpoints" / f"cell_{cell['cell_index']}.pt",
+            metadata={"manifest_cell": cell},
+        )
+    covariances = {}
+    if args.compute_activation_overlap:
+        covariances = compute_activation_covariances(
+            model,
+            validation_loader,
+            device=args.device,
+            module_filter=lambda name, module: isinstance(module, torch.nn.Linear) and name != "lm_head",
+            max_batches=args.activation_batches,
+            centered=args.activation_centered,
+            accumulation_device=(
+                args.device if args.covariance_device == "auto" else args.covariance_device
+            ),
+            accumulation_dtype=args.covariance_dtype,
+            amp_dtype=args.amp_dtype,
+        )
     spectral_rows, artifacts = analyze_model(
         model,
         covariances,
@@ -731,18 +872,20 @@ def execute_cell(
                 ),
             }
         )
-    if args.save_checkpoints:
-        trainer.save_checkpoint(
-            Path(args.output_dir) / "checkpoints" / f"cell_{cell['cell_index']}.pt",
-            metadata={"manifest_cell": cell},
-        )
     return spectral_rows, lesion_rows, history, artifacts
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     add_pipeline_cli_arguments(parser)
-    return parser.parse_args(None if argv is None else list(argv))
+    raw = None if argv is None else list(argv)
+    namespace = parser.parse_args(raw)
+    import sys
+    tokens = sys.argv[1:] if raw is None else raw
+    namespace._explicit_options = sorted({
+        token.split("=", 1)[0] for token in tokens if token.startswith("--")
+    })
+    return namespace
 
 
 def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
@@ -770,14 +913,22 @@ def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
         raise ValueError("activation and validation batch limits must be positive")
     if not 0.0 < args.lesion_fraction <= 1.0:
         raise ValueError("lesion-fraction must lie in (0, 1]")
+    explicit = getattr(args, "_explicit_options", set())
+    def preset(attribute: str, value: Any) -> None:
+        positive = "--" + attribute.replace("_", "-")
+        negative = "--no-" + attribute.replace("_", "-")
+        if positive not in explicit and negative not in explicit:
+            setattr(args, attribute, value)
+
     if args.experiment_mode in {"reproduce_paper1", "compute_optimal_rmt"}:
-        args.run_spectral_lesioning = True
-        args.compute_activation_overlap = True
+        preset("run_spectral_lesioning", True)
+        preset("compute_activation_overlap", True)
     if args.experiment_mode == "reproduce_paper2":
-        args.compute_spacing_distribution = True
-        args.compute_number_variance = True
+        preset("compute_spacing_distribution", True)
+        preset("compute_number_variance", True)
+        preset("compute_delta3", True)
     if args.experiment_mode == "reproduce_paper3":
-        args.compute_stable_rank = True
+        preset("compute_stable_rank", True)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -809,6 +960,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         raise FileNotFoundError(
             f"offline token array not found: {args.dataset_path}; run the asset prefetch step first"
         )
+    verification = _verify_dataset_asset(args.dataset_path)
+    environment_record["dataset"].update(verification)
+    _write_json(output / "runtime_environment.json", environment_record)
     tokens = load_token_array(args.dataset_path)
     if int(np.max(tokens)) >= args.vocab_size:
         raise ValueError("vocab-size must exceed every token id in the local array")
@@ -825,24 +979,37 @@ def main(argv: Iterable[str] | None = None) -> int:
     lesion_rows: list[dict[str, Any]] = []
     training_rows: list[dict[str, Any]] = []
     artifacts: list[dict[str, Any]] = []
+    # Records are appended and flushed by the trainer callback.
+    (output / "training_metrics.jsonl").write_text("", encoding="utf-8")
+    cell_status: list[dict[str, Any]] = []
     for cell in manifest:
         if int(cell["cell_index"]) not in selected_indices:
             continue
-        cell_spectral, cell_lesions, cell_history, cell_artifacts = execute_cell(
-            cell,
-            train_tokens,
-            validation_tokens,
-            args,
-        )
-        spectral_rows.extend(cell_spectral)
-        lesion_rows.extend(cell_lesions)
-        training_rows.extend(cell_history)
-        artifacts.extend(cell_artifacts)
-    _write_csv(output / "spectral_metrics.csv", spectral_rows)
-    _write_csv(output / "lesion_metrics.csv", lesion_rows)
-    with (output / "training_metrics.jsonl").open("w", encoding="utf-8") as handle:
-        for row in training_rows:
-            handle.write(json.dumps(_sanitize_json(row), allow_nan=False) + "\n")
+        try:
+            cell_spectral, cell_lesions, cell_history, cell_artifacts = execute_cell(
+                cell,
+                train_tokens,
+                validation_tokens,
+                args,
+            )
+            spectral_rows.extend(cell_spectral)
+            lesion_rows.extend(cell_lesions)
+            training_rows.extend(cell_history)
+            artifacts.extend(cell_artifacts)
+            cell_status.append({"cell_index": cell["cell_index"], "status": "complete"})
+            # Persist every completed cell atomically before starting the next.
+            _write_csv(output / "spectral_metrics.csv", spectral_rows)
+            _write_csv(output / "lesion_metrics.csv", lesion_rows)
+            _write_json(output / "allocation_manifest.json", manifest)
+            _write_json(output / "cell_status.json", cell_status)
+        except Exception as exc:
+            cell_status.append({"cell_index": cell["cell_index"], "status": "failed",
+                                "error": repr(exc)})
+            _write_json(output / "cell_status.json", cell_status)
+            environment_record["status"] = "failed"
+            environment_record["error"] = repr(exc)
+            _write_json(output / "runtime_environment.json", environment_record)
+            raise
     if artifacts:
         _plot_esd(artifacts, output)
         _plot_spacing(artifacts, output)

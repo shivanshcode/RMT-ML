@@ -23,7 +23,6 @@ torch is imported lazily inside functions so importing this module is cheap.
 from __future__ import annotations
 
 import re
-import warnings
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -76,7 +75,7 @@ _LLAMA = ModelSpec(
         "G": ["gate_proj"], "U": ["up_proj"], "D": ["down_proj"],
     },
     fused_qkv_substrings=[],
-    layer_index_regexes=[r"\.layers\.(\d+)\."],
+    layer_index_regexes=[r"(?:^|\.)layers\.(\d+)(?:\.|$)"],
 )
 
 _PYTHIA = ModelSpec(
@@ -86,7 +85,7 @@ _PYTHIA = ModelSpec(
         "U": ["dense_h_to_4h"], "D": ["dense_4h_to_h"],
     },
     fused_qkv_substrings=["query_key_value"],
-    layer_index_regexes=[r"\.layers\.(\d+)\."],
+    layer_index_regexes=[r"(?:^|\.)layers\.(\d+)(?:\.|$)"],
     qkv_interleaved=True,
 )
 
@@ -96,7 +95,7 @@ _QWEN = ModelSpec(
         "Q": ["q_proj"], "K": ["k_proj"], "V": ["v_proj"], "O": ["o_proj"],
         "G": ["gate_proj"], "U": ["up_proj"], "D": ["down_proj"],
     },
-    layer_index_regexes=[r"\.layers\.(\d+)\."],
+    layer_index_regexes=[r"(?:^|\.)layers\.(\d+)(?:\.|$)"],
 )
 
 _BERT = ModelSpec(
@@ -106,7 +105,7 @@ _BERT = ModelSpec(
         "V": ["attention.self.value"], "O": ["attention.output.dense"],
         "U": ["intermediate.dense"], "D": ["output.dense"],
     },
-    layer_index_regexes=[r"\.layer\.(\d+)\."],
+    layer_index_regexes=[r"(?:^|\.)layer\.(\d+)(?:\.|$)"],
 )
 
 _GPT2 = ModelSpec(
@@ -116,7 +115,7 @@ _GPT2 = ModelSpec(
         "U": ["mlp.c_fc"], "D": ["mlp.c_proj"],
     },
     fused_qkv_substrings=["c_attn"],
-    layer_index_regexes=[r"\.h\.(\d+)\."],
+    layer_index_regexes=[r"(?:^|\.)h\.(\d+)(?:\.|$)"],
     qkv_interleaved=False,
 )
 
@@ -124,8 +123,10 @@ _GENERIC = ModelSpec(
     name="generic",
     patterns=MATRIX_PATTERNS,
     fused_qkv_substrings=["query_key_value", "qkv", "Wqkv", "c_attn"],
-    layer_index_regexes=[r"\.layers?\.(\d+)\.", r"\.layer\.(\d+)\.", r"\.h\.(\d+)\.",
-                         r"\.(\d+)\."],
+    layer_index_regexes=[r"(?:^|\.)layers?\.(\d+)(?:\.|$)",
+                         r"(?:^|\.)layer\.(\d+)(?:\.|$)",
+                         r"(?:^|\.)h\.(\d+)(?:\.|$)",
+                         r"(?:^|\.)(\d+)(?:\.|$)"],
     qkv_interleaved=True,
 )
 
@@ -175,14 +176,18 @@ def classify(name: str, spec: ModelSpec) -> Optional[str]:
         if sub in name:
             return "QKV"
     # order matters: most-specific keys first
-    order = ["QKV", "Q", "K", "V", "G", "U", "D", "O"]
+    # Prefer context-specific attention output patterns over BERT's broad
+    # MLP ``output.dense`` pattern.
+    order = ["QKV", "Q", "K", "V", "G", "U", "O", "D"]
     keys = [k for k in order if k in spec.patterns] + \
            [k for k in spec.patterns if k not in order]
-    for short in keys:
-        for pat in spec.patterns[short]:
-            if pat in name:
-                return short
-    return None
+    matches = [
+        (len(pat), -keys.index(short), short)
+        for short in keys
+        for pat in spec.patterns[short]
+        if pat in name
+    ]
+    return max(matches)[2] if matches else None
 
 
 def extract_layer_index(name: str, spec: ModelSpec) -> int:
@@ -265,9 +270,8 @@ def split_fused_qkv(weight, name, layer_idx, spec, *, num_heads=None,
     """Split a fused QKV weight (rows = 3·d) into Q/K/V records.
 
     ``interleaved`` defaults to ``qkv_is_interleaved(name, spec)``.  If an
-    interleaved layout is indicated but ``num_heads`` is not supplied, the split
-    falls back to contiguous thirds and warns — that fallback is wrong for
-    GPT-NeoX, so pass ``num_heads``.
+    interleaved layout is indicated, ``num_heads`` is mandatory; unknown layouts
+    are rejected rather than silently relabeled.
     """
     W = np.asarray(weight)
     n_rows = W.shape[0]
@@ -276,11 +280,10 @@ def split_fused_qkv(weight, name, layer_idx, spec, *, num_heads=None,
     if interleaved is None:
         interleaved = qkv_is_interleaved(name, spec)
     if interleaved and num_heads is None:
-        warnings.warn(
-            f"{name}: head-interleaved QKV expected but num_heads is unknown; "
-            "falling back to contiguous thirds, which mislabels Q/K/V for "
-            "GPT-NeoX-style models.", RuntimeWarning, stacklevel=2)
-        interleaved = False
+        raise ValueError(
+            f"{name}: num_heads is required to split a head-interleaved fused QKV; "
+            "refusing to guess an incompatible layout"
+        )
 
     recs = []
     for i, tag in enumerate(spec.fused_qkv_order):

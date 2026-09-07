@@ -50,12 +50,13 @@ def test_fused_qkv_writes_only_its_block():
     recs = D.discover_weight_matrices(m)
     qrec = [r for r in recs if r.short == "Q"]
     mod = m.get_submodule("gpt_neox.layers.0.attention.query_key_value")
-    W0 = mod.weight.detach().numpy().copy()         # (3d, d)
-    d = W0.shape[0] // 3
+    W0 = mod.weight.detach().numpy().copy()         # head-interleaved (3d, d)
     DEC.set_layer_svd_decile(m, qrec, decile=3, n_deciles=10)
     W1 = mod.weight.detach().numpy()
-    assert not np.allclose(W0[:d], W1[:d])          # Q block changed
-    assert np.allclose(W0[d:], W1[d:])              # K, V untouched
+    for index, tag in enumerate(("Q", "K", "V")):
+        before = D.extract_qkv_block(W0, index, num_heads=4, interleaved=True)
+        after = D.extract_qkv_block(W1, index, num_heads=4, interleaved=True)
+        assert (not np.allclose(before, after)) if tag == "Q" else np.allclose(before, after)
 
 
 def test_top_decile_preserves_small_svs():
@@ -91,7 +92,8 @@ def test_decile_scope_all_vs_analyzed(monkeypatch):
         return lambda: tiny_causal_lm(n_layers=2, d=16)
 
     def fake_ppl(model, tokenizer, device, **kw):
-        return 1.0
+        return ({"perplexity": 1.0, "scored_tokens": 7}
+                if kw.get("return_details") else 1.0)
 
     monkeypatch.setattr("rmt.perplexity.perplexity_wikitext", fake_ppl, raising=False)
 

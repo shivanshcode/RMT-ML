@@ -15,21 +15,13 @@ Spectral-Chinchilla trains compute-allocation-controlled causal Transformers and
 
 ## Guide to run
 
-### 1. Stage the exact environment
+### 1. Select and inventory the cluster environment
 
-Use CPython 3.10 and the exact package versions in `requirements.txt`. On an internet-connected Linux staging machine matching the cluster ABI:
+The existing ESD jobs use `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`. `run_hpc.slurm` calls that interpreter directly by default; set `RMT_PYTHON` only to select a separately validated prefix or clone. It does not activate a project `.venv`, purge modules, load a Python module, or assume a CUDA module version. Set `RMT_CUDA_MODULE` only when the live environment inventory proves that a site module is required.
 
-```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-python -m pip download --dest wheelhouse --requirement requirements.txt
-python -m pip install --no-index --find-links wheelhouse --requirement requirements.txt
-python -m pip check
-python -m pip freeze --all > wheelhouse/resolved-environment.txt
-sha256sum wheelhouse/*.whl > wheelhouse/SHA256SUMS
-```
+Before changing packages, capture `pip freeze --all`, `pip check`, Conda's explicit package list, loaded modules, OS/architecture, compiler, driver, Torch CUDA build, GPU capability, BF16 support, and package versions as described in `other_requirements.md`. The live ESD stack must not be downgraded to the standalone pins: notably, this project's `numpy==1.26.4` conflicts with ESD's `np.trapezoid` path, which requires NumPy 2.0 or newer.
 
-For an A100 or H100, place the CUDA 12.1 build of `torch==2.4.1` and all dependency wheels in `wheelhouse/`.
+`requirements.txt` remains the original **standalone environment** contract. If the live inventory is incompatible, create a separate environment and an inventory-derived, reviewed `requirements-cluster.txt`; never invent that lock from the unpinned ESD requirements or install the standalone pins into `rmt_ml_env` in place. Build any wheelhouse on a connected Linux host matching the cluster's Python ABI, architecture, glibc/libstdc++, and selected Torch/CUDA build. See `other_requirements.md` for the optional standalone and wheelhouse procedures.
 
 ### 2. Prefetch assets on a connected node
 
@@ -57,30 +49,37 @@ Synthetic-only generation performs no network access:
 python scripts/download_assets.py --assets synthetic --synthetic-tokens 1000000
 ```
 
-### 3. Install and submit on the air-gapped cluster
+### 3. Validate and submit on the air-gapped cluster
+
+Run these commands from the deployed `compute_optimal_analysis` directory with the selected interpreter. Create `logs/` **before** `sbatch`, because SLURM opens its log files before the script starts.
 
 ```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-python -m pip install --no-index --find-links wheelhouse --requirement requirements.txt
-mkdir -p logs results
-python -m pytest -q
+cd /absolute/deployed/path/to/compute_optimal_analysis
+PY=/home/shivansh/.conda/envs/rmt_ml_env/bin/python
+mkdir -p logs results cache/torch cache/huggingface
+export PYTHONPATH="$PWD"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
+
+"$PY" -m pip check
+"$PY" scripts/download_assets.py --root "$PWD" --verify-only
+"$PY" -m pytest -q
 bash -n run_hpc.slurm
-sbatch run_hpc.slurm
+if LC_ALL=C grep -q $'\r' run_hpc.slurm; then echo "run_hpc.slurm is not LF" >&2; exit 2; fi
 ```
 
-The validation commands are operator-run preflight steps. Source generation does not execute them.
+Also confirm that `rmt.__file__` resolves to this directory, then perform a short allocated-GPU smoke run covering forward/backward, evaluation, covariance, the requested SVD driver, and lesions. Start with `--no-compile-model`; validate compilation separately before a production launch. A login node without a GPU is not a failed GPU compatibility test.
 
-`TRACK` selects a single batch track; default `all` executes all four sequentially:
+`TRACK` selects one batch track; default `all` executes all four sequentially. The known queue is `gpulong`. Submit from this directory (or provide a validated absolute `PROJECT_ROOT`):
 
 ```bash
-sbatch --export=ALL,TRACK=paper1 run_hpc.slurm
-sbatch --export=ALL,TRACK=paper2 run_hpc.slurm
-sbatch --export=ALL,TRACK=paper3 run_hpc.slurm
-sbatch --export=ALL,TRACK=golden run_hpc.slurm
+sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=paper1 run_hpc.slurm
+sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=paper2 run_hpc.slurm
+sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=paper3 run_hpc.slurm
+sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=golden run_hpc.slurm
 ```
 
-The supplied batch header requests one accelerator, matching the portable cluster contract. Sites may override the resource directive, but the current runner assigns one process to one accelerator and does not claim data-parallel scaling. Before launching a track, the batch script verifies every staged asset against `data/asset_manifest.json`.
+The launcher requests one process and one GPU; it implements no DDP/FSDP. It validates the interpreter, Python version, local `rmt` import, CUDA/BF16 availability, and staged assets before work. Outputs go to the fresh per-job directory `results/jobs/$SLURM_JOB_ID`; setting `OUTPUT_ROOT` is allowed, but an existing target is rejected. `COMPILE_MODEL=0` disables compilation for calibration. Set `RMT_CUDA_MODULE` only to a module name already validated with this Conda stack. Confirm account/QoS, the 16-CPU request, 24-hour wall time, GPU model, and any longer limit with the site before production.
 
 ### 4. Manifest-only configuration
 

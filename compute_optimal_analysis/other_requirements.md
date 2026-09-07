@@ -1,152 +1,245 @@
 # Offline HPC prerequisites
 
-This repository is designed so compute-node jobs perform no network access. Asset acquisition and wheel staging are separate, explicit operations performed once on an internet-connected staging machine with the same operating-system, Python, and accelerator ABI as the cluster.
+Compute-node jobs perform no network access. Asset acquisition, environment reconciliation, and any wheel staging are explicit operator tasks. The working sibling ESD environment must be preserved.
 
-## 1. Fixed platform contract
+## 1. Verified cluster facts and unresolved checks
 
-| Component | Required value |
-|---|---|
-| Operating system | 64-bit Linux on the staging machine and compute nodes |
-| Python | CPython 3.10.x; 3.10.14 is the recorded production target |
-| Shell | Bash 4.4 or newer for arrays and strict-mode batch execution |
-| Accelerator | NVIDIA A100 or H100; CPU execution remains supported |
-| CUDA runtime | CUDA 12.1-compatible runtime for the selected `torch==2.4.1` wheel |
-| NVIDIA driver | A cluster-supported driver compatible with CUDA 12.1 |
-| System ABI | glibc and `libstdc++` compatible with every staged manylinux wheel |
-| Scheduler | SLURM with `sbatch`, `srun`, and a configured GPU generic resource |
-| Host memory | At least 64 GiB for the default batch request |
-| Local storage | At least 25 GiB plus space for checkpoints and requested token limits |
+| Component | Established value | Status/action |
+|---|---|---|
+| Interpreter | `/home/shivansh/.conda/envs/rmt_ml_env/bin/python` | Recorded by the successful ESD job; default in `run_hpc.slurm` |
+| Conda environment | `rmt_ml_env` | Do not replace it with `.venv` or a guessed environment named `rmt` |
+| Scheduler partition | `gpulong` | Declared in the known ESD launcher and this launcher |
+| Resources | One GPU and 64 GiB host RAM | Shared declaration; measure this training workload independently |
+| Accelerator target | A100 | Stated by the ESD launcher, not a saved device/driver inventory |
+| Python | At least 3.10 required by this project | Bytecode suggests 3.10, but the live patch version must be recorded |
+| CUDA/module setup | Unversioned `module load cuda` appeared in ESD, with errors suppressed | Not proof that `cuda/12.1` exists or is needed; inventory first |
+| ESD package versions | No committed freeze/Conda export | Must be inventoried; do not infer versions from unpinned requirements |
+| Scheduler policy | Account, QoS, allowed CPU count and wall time are not recorded | Confirm with the site |
 
-All declared Python dependencies are exactly pinned in `requirements.txt`. The connected staging machine must build a complete wheelhouse for the target platform, including resolver-selected transitive wheels; compute nodes install only from that directory. Preserve the staging resolver report or package inventory with the wheelhouse so the full transitive environment can be audited.
+`run_hpc.slurm` calls the verified interpreter directly. It deliberately does not run `module purge`, load a Python module, or activate a guessed Conda base. Set `RMT_PYTHON` for a validated alternate prefix. Set `RMT_CUDA_MODULE` only when inventory and a GPU smoke test show that a module is required.
+
+The default header requests 16 CPUs and 24 hours. The sibling ESD launcher demonstrates that a four-day request was used, not that this workload needs or is allowed that limit. Measure one track before changing resources. The runner is single-process/single-GPU and has no DDP/FSDP path.
+
+## 2. Inventory before changing dependencies
+
+Run inventory commands on the cluster with the known interpreter. Run GPU commands in an allocated GPU job; the absence of a GPU on a login node is not a compatibility failure.
+
+```bash
+PY=/home/shivansh/.conda/envs/rmt_ml_env/bin/python
+mkdir -p environment_inventory
+"$PY" -V > environment_inventory/python.txt 2>&1
+"$PY" -m pip freeze --all > environment_inventory/pip-freeze.txt
+"$PY" -m pip check > environment_inventory/pip-check.txt
+module -t list > environment_inventory/modules.txt 2>&1
+nvidia-smi > environment_inventory/nvidia-smi.txt
+(gcc --version; g++ --version) > environment_inventory/compiler.txt 2>&1
+
+"$PY" - <<'PY' > environment_inventory/runtime.json
+import json
+import platform
+import sys
+from importlib import metadata
+import torch
+
+names = (
+    "numpy", "scipy", "torch", "matplotlib", "pytest", "datasets",
+    "transformers", "tokenizers", "huggingface-hub", "safetensors",
+    "pyarrow", "triton",
+)
+packages = {}
+for name in names:
+    try:
+        packages[name] = metadata.version(name)
+    except metadata.PackageNotFoundError:
+        packages[name] = "not-installed"
+record = {
+    "executable": sys.executable,
+    "python": sys.version,
+    "platform": platform.platform(),
+    "packages": packages,
+    "torch_cuda_build": torch.version.cuda,
+    "cuda_available": torch.cuda.is_available(),
+}
+if torch.cuda.is_available():
+    device = torch.cuda.get_device_properties(0)
+    record.update({
+        "device": device.name,
+        "capability": list(torch.cuda.get_device_capability(0)),
+        "vram_bytes": device.total_memory,
+        "bf16_supported": torch.cuda.is_bf16_supported(),
+    })
+print(json.dumps(record, indent=2))
+PY
+
+conda list -p /home/shivansh/.conda/envs/rmt_ml_env --explicit \
+    > environment_inventory/conda-explicit.txt
+```
+
+Archive the inventory with run records. A successful `pip check` only verifies declared package metadata; it does not validate numerical APIs, compilation, CUDA SVD, or scientific behavior.
+
+## 3. Dependency policy
+
+`requirements.txt` is the original standalone direct-pin contract:
+
+| Package | Standalone pin |
+|---|---:|
+| NumPy | 1.26.4 |
+| SciPy | 1.13.1 |
+| Torch | 2.4.1 |
+| Matplotlib | 3.9.2 |
+| pytest | 8.3.3 |
+| datasets | 3.0.1 |
+| transformers | 4.45.2 |
+| tokenizers | 0.20.1 |
+| huggingface-hub | 0.25.2 |
+| safetensors | 0.4.5 |
+| pyarrow | 17.0.0 |
+
+Do **not** install these pins into `rmt_ml_env` blindly. In particular, ESD's default Delta3 path calls `np.trapezoid`, which requires NumPy 2.0 or newer, while the standalone file pins NumPy 1.26.4. Preserve the ESD stack and validate the current versions first.
+
+If the live stack supplies the APIs this project needs, use it unchanged. If not, clone/create a separate approved environment, select it with `RMT_PYTHON`, and produce a reviewed `requirements-cluster.txt` from that validated environment. A different pin by itself is not evidence that source or environment changes are needed. Staging-only Hugging Face packages need not be installed on compute nodes once a complete integer token array and manifest exist, unless site policy requires one uniform environment.
+
+### Optional standalone/wheelhouse workflow
+
+The standalone workflow remains available, but it is separate from reuse of `rmt_ml_env`. Build wheels on a connected **Linux** host matching the target Python ABI, architecture, glibc/libstdc++, and selected Torch/CUDA build—not with this checkout's Windows interpreter.
 
 ```bash
 python3.10 -m venv .venv
 source .venv/bin/activate
-python -m pip download --dest wheelhouse --requirement requirements.txt
-python -m pip install --no-index --find-links wheelhouse --requirement requirements.txt
+python -m pip download --only-binary=:all: --dest wheelhouse \
+    --requirement requirements.txt
+sha256sum wheelhouse/*.whl > wheelhouse/SHA256SUMS
+python -m pip install --no-index --find-links wheelhouse \
+    --requirement requirements.txt
 python -m pip check
 python -m pip freeze --all > wheelhouse/resolved-environment.txt
-sha256sum wheelhouse/*.whl > wheelhouse/SHA256SUMS
 ```
 
-For CUDA, stage the `torch==2.4.1` wheel built for CUDA 12.1 and its matching NVIDIA dependency wheels. Do not mix a CPU-only wheelhouse with a GPU job. Preserve the complete wheelhouse rather than copying only the top-level packages, because the installer must resolve transitive dependencies without an index.
+For a cluster-specific clone, substitute the reviewed `requirements-cluster.txt`. Include all resolver-selected transitive wheels, the appropriate official Torch build and runtime dependencies, and compatible Triton when compilation is enabled. A CUDA module cannot turn a CPU Torch wheel into a CUDA build. Never perform remote pip/Conda resolution in a compute job.
 
-## 2. Mandatory offline environment
+## 4. Offline variables and writable caches
 
-The SLURM harness exports these values before invoking Python:
+The launcher exports:
 
 ```bash
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
-export TORCH_HOME="./cache/torch"
-export HF_HOME="./cache/huggingface"
-export HF_DATASETS_CACHE="./cache/huggingface/datasets"
-export HUGGINGFACE_HUB_CACHE="./cache/huggingface/hub"
 export TOKENIZERS_PARALLELISM=false
-export PYTHONPATH=".:${PYTHONPATH:-}"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export TORCH_HOME="$PROJECT_ROOT/cache/torch"
+export HF_HOME="$PROJECT_ROOT/cache/huggingface"
+export HF_DATASETS_CACHE="$PROJECT_ROOT/cache/huggingface/datasets"
+export HUGGINGFACE_HUB_CACHE="$PROJECT_ROOT/cache/huggingface/hub"
+export PYTHONPATH="$PROJECT_ROOT"
 ```
 
-Jobs must not set proxy variables or point any cache variable outside the staged project tree. `run_experiments.py` accepts only a local NPY/NPZ token array and contains no download fallback.
+`PYTHONPATH` intentionally contains only this source root, preventing the sibling ESD package—also named `rmt`—from being imported in this process. Run the two projects in separate interpreter processes.
 
-## 3. Required directory layout
+Inductor, Triton, and temporary files are placed under `${SLURM_TMPDIR}` when available, otherwise under `cache/runtime/$SLURM_JOB_ID`. Operators may set `RMT_RUNTIME_CACHE` to approved job-local scratch. Verify filesystem permissions and compiled-artifact loading before enabling compilation. The allocator setting must also be checked against the installed Torch/driver.
+
+## 5. Required assets and directory layout
+
+The project trains a new `CausalTransformer`; it does not load the sibling project's Pythia snapshot and does not accept a raw WikiText text file for `--dataset-path`. Stage this project's GPT-2 tokenizer and WikiText-103 integer stream explicitly:
+
+```bash
+# Connected staging host only
+python scripts/download_assets.py --assets all --allow-network
+
+# Deployed offline project
+/home/shivansh/.conda/envs/rmt_ml_env/bin/python \
+    scripts/download_assets.py --root "$PROJECT_ROOT" --verify-only
+```
+
+The default token stream is `data/tokenized/wikitext-103-raw-v1_gpt2.npy`, with vocabulary size 50257. Copy `data/asset_manifest.json` and every manifest-listed file; the verifier checks the complete manifest. Do not mix tokenizer identities. Custom corpora must record identity, vocabulary, split policy, sizes, and SHA-256 checksums. Synthetic data is suitable only for software calibration, not language-model claims.
+
+Required layout:
 
 ```text
 cache/
 ├── huggingface/
-│   ├── datasets/
-│   └── hub/
+├── runtime/
 └── torch/
 data/
 ├── asset_manifest.json
 ├── raw/
-│   └── wikitext-103-raw-v1/
-│       ├── train.jsonl
-│       ├── validation.jsonl
-│       └── test.jsonl
 ├── tokenized/
-│   ├── wikitext-103-raw-v1_gpt2.npy
-│   └── synthetic_zipf.npy
+│   └── wikitext-103-raw-v1_gpt2.npy
 └── tokenizers/
-    ├── gpt2/
-    │   ├── merges.txt
-    │   ├── tokenizer.json
-    │   ├── tokenizer_config.json
-    │   └── vocab.json
-    └── synthetic/
-        └── vocabulary.json
 logs/
 results/
-wheelhouse/
 ```
 
-Create `logs/` before submitting the first job because SLURM opens output files before the batch script starts:
+Create submission-time directories before `sbatch`:
 
 ```bash
-mkdir -p logs results wheelhouse
+mkdir -p logs results cache/torch cache/huggingface
 ```
 
-## 4. Asset manifest
+This is mandatory for `logs/`, because SLURM opens `#SBATCH --output` and `--error` before the batch shell can execute. Production outputs use a fresh `results/jobs/$SLURM_JOB_ID` root. A custom `OUTPUT_ROOT` is accepted only when it does not already exist.
 
-The reproducible default corpus is Hugging Face dataset `Salesforce/wikitext`, configuration `wikitext-103-raw-v1`. The tokenizer snapshot is `openai-community/gpt2`. On the connected host, the asset script resolves both moving repository names to immutable commit SHAs, downloads by those revisions, copies tokenizer configuration locally, exports each raw split as JSON Lines, writes the training token stream as an integer NPY file, and records the revisions plus SHA-256 checksums in `data/asset_manifest.json`.
+## 6. Accelerator and numerical validation
 
-No pretrained checkpoint is required: Spectral-Chinchilla constructs and trains its causal Transformer from the local configuration. If an operator adds a pretrained initialization, its complete checkpoint, tokenizer, configuration, license, source revision, byte size, and SHA-256 checksum must be placed under `data/checkpoints/<model-name>/` and added to `data/asset_manifest.json` before cluster transfer.
+ESD success in FP32 inference/SVD does not validate this project's BF16 training, compilation, covariance path, or explicit CUDA SVD driver. In a short GPU allocation, verify:
 
-The deterministic synthetic fallback requires no network and creates both a Zipf-distributed token stream and an integer-identity vocabulary. It is appropriate for software calibration, not for language-model claims.
+- the allocated model, VRAM, compute capability, driver, Torch CUDA build, and `torch.cuda.is_bf16_supported()`;
+- a forward/backward optimizer update in the requested precision;
+- evaluation and activation covariance on the requested device/dtype;
+- `torch.linalg.svd(..., driver="gesvdj")` on representative shapes;
+- all requested lesion tranches and host-memory peaks;
+- compiler/toolchain and writable Inductor/Triton caches.
 
-## 5. Connected-node prefetch
+Start calibration with `--no-compile-model` or submit with `COMPILE_MODEL=0`, then validate compilation separately. CPU SVD/covariance and another precision are explicit scientific/runtime choices, not silent fallbacks; record and recalibrate them. Match BLAS/OpenMP thread counts and data workers to the allocated CPUs.
 
-Run this only where internet access is explicitly permitted:
+## 7. Preflight and submission
 
-```bash
-source .venv/bin/activate
-python scripts/download_assets.py --assets all --allow-network
-```
-
-To cap staging size while validating the pipeline:
-
-```bash
-python scripts/download_assets.py --assets all --allow-network --max-wikitext-tokens 10000000
-```
-
-To generate only the fully local synthetic corpus:
+From the deployed `compute_optimal_analysis` directory:
 
 ```bash
-python scripts/download_assets.py --assets synthetic --synthetic-tokens 1000000
-```
+PROJECT_ROOT="$PWD"
+PY=/home/shivansh/.conda/envs/rmt_ml_env/bin/python
+mkdir -p logs results cache/torch cache/huggingface
+export PYTHONPATH="$PROJECT_ROOT"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export TOKENIZERS_PARALLELISM=false
 
-Copy the repository, `wheelhouse/`, `cache/`, and `data/` trees to the cluster without dereferencing or omitting files. Verify the copied `data/asset_manifest.json` checksums with the cluster's standard checksum utility before submission.
+"$PY" - <<'PY'
+from pathlib import Path
+import rmt
+root = Path.cwd().resolve()
+actual = Path(rmt.__file__).resolve()
+print("rmt source:", actual)
+assert actual == root / "rmt" / "__init__.py", actual
+from rmt.factory import RMTMethodConfig
+from models.transformer import CausalTransformer
+from pipelines.trainer import LanguageModelTrainer
+print("compute project imports resolved correctly")
+PY
 
-The repository's local verifier performs the same check without network access:
-
-```bash
-python scripts/download_assets.py --verify-only
-```
-
-## 6. Air-gap installation and validation
-
-On the cluster login node:
-
-```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-python -m pip install --no-index --find-links wheelhouse --requirement requirements.txt
-python -m pip check
-test -f data/asset_manifest.json
-test -f data/tokenized/wikitext-103-raw-v1_gpt2.npy
-python scripts/download_assets.py --verify-only
-mkdir -p logs results
-python -m pytest -q
+"$PY" -m pip check
+"$PY" scripts/download_assets.py --root "$PROJECT_ROOT" --verify-only
+"$PY" -m pytest -q
 bash -n run_hpc.slurm
-sbatch run_hpc.slurm
+if LC_ALL=C grep -q $'\r' run_hpc.slurm; then
+    echo "Convert run_hpc.slurm to LF before submission" >&2
+    exit 2
+fi
 ```
 
-The operator performs these commands manually. Batch jobs inherit strict offline variables and should fail immediately on missing local assets rather than attempt remote recovery.
+After the allocated-GPU smoke tests pass, submit one track first:
 
-## 7. Storage and reproducibility notes
+```bash
+sbatch --chdir="$PWD" \
+    --export=ALL,PROJECT_ROOT="$PWD",TRACK=golden \
+    run_hpc.slurm
+```
 
-- A full WikiText-103 token stream is hundreds of megabytes; raw exports and package caches require additional space.
-- Checkpoints can dominate storage. `--save-checkpoints` is disabled by default.
-- `data/asset_manifest.json`, `requirements.txt`, the SLURM job ID, `run_config.json`, and `spectral_method_config.json` together identify a run.
-- The default covariance path accumulates float32 matrices on the active accelerator and transfers only final reduced matrices to host memory.
-- FARMS and Lanczos remain host-side NumPy/SciPy algorithms. Accelerator results cross that boundary only as explicit host arrays.
+The launcher verifies its project files, exact `rmt` source, interpreter/version, CUDA/BF16 access, selected dataset, and complete asset manifest. It uses strict mode and propagates failures. Confirm account/QoS, CPU count, and wall time with the site; do not request multiple GPUs expecting unsupported parallelism.
+
+## 8. Reproducibility notes
+
+- `.gitattributes` forces LF for `*.slurm`; still check the deployed copy explicitly.
+- Preserve the environment inventory, asset manifest, source revision, SLURM job ID/logs, runtime environment record, and resolved method/run manifests.
+- A full WikiText-103 asset tree and checkpoints may require substantial storage; measure quota usage before production.
+- One successful manifest-only run does not test training, CUDA, covariance, SVD, lesions, or compilation.
+- Run test suites from this project directory only; collecting both sibling projects in one Python process risks `rmt` namespace collisions.

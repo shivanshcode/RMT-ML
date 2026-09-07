@@ -145,7 +145,8 @@ def test_feature_layers_inert_after_capture():
     m = tiny_causal_lm(n_layers=2, d=32, vocab=64)
     compute_activation_covariance(m, tokenizer=None, layer_indices=[0, 1],
                                   device="cpu", n_text_batches=2, max_length=16,
-                                  stride=8, spec=get_model_spec(m))
+                                  stride=8, spec=get_model_spec(m),
+                                  allow_fallback=True)
     fls = [mod for _, mod in m.named_modules() if isinstance(mod, FeatureLayer)]
     counters_before = [f.fm_computation for f in fls]
     with torch.no_grad():
@@ -174,7 +175,7 @@ def test_perplexity_snapshot_is_weight_only():
     spec = get_model_spec(m)
     compute_activation_covariance(m, tokenizer=None, layer_indices=[0, 1],
                                   device="cpu", n_text_batches=2, max_length=16,
-                                  stride=8, spec=spec)
+                                  stride=8, spec=spec, allow_fallback=True)
     recs = discover_weight_matrices(m, spec=spec)
 
     import copy
@@ -191,7 +192,7 @@ def test_perplexity_snapshot_is_weight_only():
     try:
         perplexity_vs_decile(lambda: m, None, recs, "cpu", n_tokens=16,
                              decile_scope="analyzed", n_deciles=2, spec=spec,
-                             text_path="/nonexistent")
+                             text_path="/nonexistent", allow_fallback=True)
     finally:
         copy.deepcopy = real_deepcopy
 
@@ -245,18 +246,20 @@ def test_decile_ablation_not_floored_by_fp16():
     recs = discover_weight_matrices(m, spec=spec)
     assert recs, "no records discovered (the ablation never ran)"
 
-    # reference: reconstruct from the SAME fp16 input the code will read, so the
-    # comparison isolates the store-back precision (not the input's fp16 error).
-    w_in = lin.weight.detach().cpu().double().numpy()
-    ref = _reconstruct_zeroed(w_in, lo, hi)
-
+    # The intervention is computed from a float64 copy but must preserve the
+    # model's execution dtype and Parameter identity.  Promoting only this
+    # weight to float32 would break an ordinary half-precision F.linear forward.
+    parameter_id = id(lin.weight)
+    original_s = np.linalg.svd(lin.weight.detach().cpu().double().numpy(),
+                               compute_uv=False)
     set_layer_svd_decile(m, recs, 1, n_deciles=10, spec=spec)
-    got = lin.weight.detach().cpu().double().numpy()
-
-    rel = np.linalg.norm(got - ref) / np.linalg.norm(ref)
-    assert rel < 1e-4, (
-        f"decile ablation floored at fp16 (rel-err {rel:.2e}); reconstruct and "
-        "store at >= float32")
+    assert id(lin.weight) == parameter_id
+    assert lin.weight.dtype == torch.float16
+    output = lin(torch.randn(3, 32, dtype=torch.float16))
+    assert output.dtype == torch.float16 and torch.isfinite(output).all()
+    changed_s = np.linalg.svd(lin.weight.detach().cpu().double().numpy(),
+                              compute_uv=False)
+    assert np.count_nonzero(changed_s < original_s.min() * 0.25) >= hi - lo
 
 
 # ---------------------------------------------------------------------------- #

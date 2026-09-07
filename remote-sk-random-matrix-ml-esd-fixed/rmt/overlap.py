@@ -80,7 +80,9 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
     evecs = evecs[:, order]
 
     k = min(Vh.shape[0], evecs.shape[0])
-    cos_matrix = np.abs(Vh[:k] @ evecs[:, :k])     # |cos| since both orthonormal
+    # Keep every activation direction for rectangular weights.  Truncating to
+    # :k columns can force a right singular vector away from its true best match.
+    cos_matrix = np.abs(Vh[:k] @ evecs)
     svals_desc = s[:k]
 
     argmax_per_sv = np.argmax(cos_matrix, axis=1)   # best eigvec for each sv
@@ -98,8 +100,8 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
         return 0.0 if not np.isfinite(rho) else float(rho)
 
     rho_top_eigenvector_vs_svals = _safe_spear(cos_matrix[:, 0], svals_desc)
-    rho_top_singular_vs_evals = _safe_spear(cos_matrix[0, :], evals_desc[:k])
-    rho_diag_vs_svals = _safe_spear(np.diag(cos_matrix), svals_desc)
+    rho_top_singular_vs_evals = _safe_spear(cos_matrix[0, :], evals_desc)
+    rho_diag_vs_svals = _safe_spear(np.diag(cos_matrix[:, :k]), svals_desc)
 
     return {
         "cos_matrix": cos_matrix, "svals_desc": svals_desc, "evals_desc": evals_desc,

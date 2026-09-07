@@ -15,8 +15,10 @@ def plot_model_summary(rows, out_path):
     alpha = [r.get("alpha", np.nan) for r in rows]
     fig, ax = plt.subplots(1, 2, figsize=(10, 4))
     ax[0].scatter(layers, srk, s=10); ax[0].set_xlabel("layer"); ax[0].set_ylabel("stable rank")
-    ax[1].scatter(layers, alpha, s=10); ax[1].set_xlabel("layer"); ax[1].set_ylabel("α (CSN, λ)")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    ax[1].scatter(layers, alpha, s=10); ax[1].set_xlabel("layer"); ax[1].set_ylabel("selected tail exponent")
+    parent = os.path.dirname(out_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     fig.savefig(out_path); plt.close(fig)
     return out_path
 
@@ -29,6 +31,8 @@ def plot_stable_rank_per_epoch(epoch_fracs, srk_by_layer, out_path):
     for layer, vals in srk_by_layer.items():
         ax.plot(epoch_fracs, vals, marker="o", label=f"layer {layer}")
     ax.set_xlabel("training fraction"); ax.set_ylabel("stable rank"); ax.legend()
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    parent = os.path.dirname(out_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     fig.savefig(out_path); plt.close(fig)
     return out_path

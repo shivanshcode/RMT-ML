@@ -12,6 +12,7 @@ torch imported lazily at module top is fine here (these are torch-only paths).
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+import hashlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -35,15 +36,16 @@ class _Counter:
 class FeatureLayer(nn.Module):
     """Wrap a Linear; capture centered input covariance while staying identity."""
 
-    def __init__(self, linear: nn.Linear, device=None):
+    def __init__(self, linear: nn.Module, device=None, *, token_weighted=True):
         super().__init__()
         self.weight = linear.weight
-        self.bias = linear.bias
-        self.kernel_dim = linear.weight.shape[1]          # in_features (d_in)
-        # Keep a handle to the original module so capture is REVERSIBLE
-        # (REPORT §1 N1). Stash it via __dict__ to bypass nn.Module.__setattr__,
-        # so it is NOT registered as a submodule (its weight must not reappear in
-        # state_dict() / discovery while wrapped).
+        self.bias = getattr(linear, "bias", None)
+        # HF Conv1D stores (in, out), unlike nn.Linear's (out, in).
+        self.kernel_dim = (linear.weight.shape[0] if type(linear).__name__ == "Conv1D"
+                           else linear.weight.shape[1])
+        # Keep a non-registered handle to the original module.  This supports
+        # both nn.Linear and transformers.pytorch_utils.Conv1D without changing
+        # their forward implementation.
         self.__dict__["_orig_linear"] = linear
         dev = device or linear.weight.device
         # mean accumulator + counter
@@ -57,6 +59,7 @@ class FeatureLayer(nn.Module):
                                                     dtype=torch.float64, device=dev))
         self.fm_computation = 0                           # FM-pass counter
         self.mode = "mean"
+        self.token_weighted = bool(token_weighted)
 
     # -- accumulation ------------------------------------------------------- #
     def _flatten(self, x):
@@ -70,6 +73,9 @@ class FeatureLayer(nn.Module):
         b = x2d.shape[0]
         if b == 0:
             return
+        if not self.token_weighted:
+            x2d = x2d.mean(dim=0, keepdim=True)
+            b = 1
         c0 = self.computation
         self.computation = c0 + b
         # new_mean = (c0*old_mean + sum(x)) / (c0 + b)
@@ -84,6 +90,9 @@ class FeatureLayer(nn.Module):
             return
         xc = x2d - self._mean                         # (b, d)
         batch_sum = xc.T @ xc                         # (d, d) sum of outer products
+        if not self.token_weighted:
+            batch_sum = batch_sum / b
+            b = 1
         f0 = self.fm_computation
         self.fm_computation = f0 + b
         self._cov = (f0 * self._cov + batch_sum) / self.fm_computation
@@ -96,7 +105,8 @@ class FeatureLayer(nn.Module):
                 self._update_mean(x2d)
             elif self.mode == "FM":
                 self._update_fm(x2d)
-        return F.linear(x, self.weight, self.bias)
+        original = self.__dict__["_orig_linear"]
+        return original(x)
 
     # -- accessors ---------------------------------------------------------- #
     @property
@@ -111,17 +121,21 @@ class FeatureLayer(nn.Module):
 _SKIP = ("embed", "lm_head", "embed_out", "embed_in", "pooler", "head", "norm")
 
 
-def replace_with_feature_layers(model, layer_indices, device, *, spec=None) -> List[str]:
-    """Replace targeted Linears with FeatureLayers; return the wrapped names."""
+def replace_with_feature_layers(model, layer_indices, device, *, spec=None,
+                                target_names=None, token_weighted=True) -> List[str]:
+    """Replace targeted projection modules transactionally; return their names."""
     if spec is None:
         spec = get_model_spec(model)
     from .discovery import extract_layer_index
     want = set(layer_indices) if layer_indices is not None else None
+    explicit = None if target_names is None else set(target_names)
     wrapped = []
     # collect first to avoid mutating during iteration
     targets = []
     for name, module in model.named_modules():
-        if not isinstance(module, nn.Linear):
+        if not (isinstance(module, nn.Linear) or type(module).__name__ == "Conv1D"):
+            continue
+        if explicit is not None and name not in explicit:
             continue
         lname = name.lower()
         if any(sk in lname for sk in _SKIP):
@@ -132,12 +146,20 @@ def replace_with_feature_layers(model, layer_indices, device, *, spec=None) -> L
         if want is not None and li not in want:
             continue
         targets.append(name)
-    for name in targets:
-        parent, _, child = name.rpartition(".")
-        pmod = model.get_submodule(parent) if parent else model
-        linear = getattr(pmod, child)
-        setattr(pmod, child, FeatureLayer(linear, device=device))
-        wrapped.append(name)
+    try:
+        for name in targets:
+            parent, _, child = name.rpartition(".")
+            pmod = model.get_submodule(parent) if parent else model
+            linear = getattr(pmod, child)
+            setattr(pmod, child, FeatureLayer(
+                linear, device=device, token_weighted=token_weighted
+            ))
+            wrapped.append(name)
+    except BaseException:
+        # Allocation can fail halfway through a large model.  Never leave a
+        # partially wrapped model behind.
+        restore_linears(model)
+        raise
     return wrapped
 
 
@@ -194,7 +216,8 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
                                   dataset_name="wikitext", split="train",
                                   n_text_batches=5, max_length=2048, stride=1024,
                                   max_oom=3, token_weighted=False, spec=None,
-                                  text_path="./wikitext-2-raw/wiki.test.raw") -> dict:
+                                  text_path="./wikitext-2-raw/wiki.test.raw",
+                                  allow_fallback=False) -> dict:
     """Two-pass (mean then centered FM) activation covariance on local text.
 
     Fully offline: text is read from ``text_path`` (the local wikitext file).
@@ -203,52 +226,103 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
     HF assets.  Returns the dict from ``collect_feature_matrices``.
     """
     spec = spec or get_model_spec(model)
-    replace_with_feature_layers(model, layer_indices, device, spec=spec)
-    model.eval()
-
+    if n_text_batches < 1 or max_length < 2 or stride < 1:
+        raise ValueError("capture counts, max_length, and stride must be positive")
+    was_training = model.training
     batches = _load_text_batches(model, tokenizer, text_path, n_text_batches,
-                                 max_length, stride, device)
+                                 max_length, stride, device,
+                                 allow_fallback=allow_fallback)
+    if not batches:
+        raise ValueError("activation text produced no usable token windows")
 
-    # pass 1: means
-    set_feature_mode(model, "mean")
-    with torch.no_grad():
-        for ids in batches:
-            _safe_forward(model, ids, max_oom)
-    # pass 2: centered covariance
-    set_feature_mode(model, "FM")
-    with torch.no_grad():
-        for ids in batches:
-            _safe_forward(model, ids, max_oom)
-    fms = collect_feature_matrices(model)
-    # REPORT §1 N1: capture is reversible — put the original Linears back so later
-    # forward passes (perplexity) don't keep accumulating the covariance and the
-    # _cov buffers don't leak into snapshots.
-    restore_linears(model)
-    return fms
+    # Capture one projection at a time.  Dense d_in² buffers for every MLP at
+    # once can exceed model memory by many GiB.
+    from .discovery import extract_layer_index
+    want = set(layer_indices) if layer_indices is not None else None
+    targets = []
+    for name, module in model.named_modules():
+        if not (isinstance(module, nn.Linear) or type(module).__name__ == "Conv1D"):
+            continue
+        if any(sk in name.lower() for sk in _SKIP) or classify(name, spec) is None:
+            continue
+        if want is None or extract_layer_index(name, spec) in want:
+            targets.append(name)
+    if not targets:
+        raise ValueError("no supported projection modules selected for activation capture")
+
+    result = {}
+    try:
+        model.eval()
+        replay_batches = list(batches)
+        for target_name in targets:
+            try:
+                replace_with_feature_layers(
+                    model, layer_indices, device, spec=spec,
+                    target_names=[target_name], token_weighted=token_weighted,
+                )
+                set_feature_mode(model, "mean")
+                successful = []
+                with torch.no_grad():
+                    for ids in replay_batches:
+                        successful.append(_safe_forward(model, ids, max_oom))
+                set_feature_mode(model, "FM")
+                with torch.no_grad():
+                    for ids in successful:
+                        # The exact successfully shortened mean-pass windows are
+                        # replayed, so covariance and mean describe identical data.
+                        _safe_forward(model, ids, 0)
+                captured = collect_feature_matrices(model)
+                for value in captured.values():
+                    if value.get("FM") is None:
+                        raise ValueError("activation covariance was not collected")
+                result.update(captured)
+                replay_batches = successful
+            finally:
+                restore_linears(model)
+    finally:
+        restore_linears(model)
+        model.train(was_training)
+    return result
 
 
 def _safe_forward(model, input_ids, max_oom):
+    """Run one complete capture forward and return the exact successful window.
+
+    Accumulator state is rolled back before an OOM retry, preventing early
+    wrapped layers from counting a failed prefix twice.
+    """
     oom = 0
     while True:
+        layers = [module for module in model.modules() if isinstance(module, FeatureLayer)]
+        snapshots = [
+            (layer, layer._mean.clone(), layer._cov.clone(),
+             layer.computation, layer.fm_computation)
+            for layer in layers
+        ]
         try:
             model(input_ids=input_ids)
-            return
+            return input_ids
         except RuntimeError as e:                          # pragma: no cover
-            if "out of memory" in str(e).lower() and oom < max_oom:
+            for layer, mean, cov, mean_count, cov_count in snapshots:
+                layer._mean.copy_(mean)
+                layer._cov.copy_(cov)
+                layer.computation = mean_count
+                layer.fm_computation = cov_count
+            if "out of memory" in str(e).lower() and oom < max_oom and input_ids.shape[1] > 2:
                 oom += 1
                 if hasattr(torch.cuda, "empty_cache"):
                     torch.cuda.empty_cache()
-                input_ids = input_ids[:, : input_ids.shape[1] // 2]
+                input_ids = input_ids[:, : max(2, input_ids.shape[1] // 2)]
                 continue
             raise
 
 
 def _load_text_batches(model, tokenizer, text_path, n_text_batches,
-                       max_length, stride, device):
+                       max_length, stride, device, *, allow_fallback=False):
     """Tokenize windows of a local text file (offline). Falls back to a
     deterministic hash tokenizer when ``tokenizer`` is None. Only the portion
     of text needed for ``n_text_batches`` windows is tokenized."""
-    text = _read_local_text(text_path)
+    text = _read_local_text(text_path, allow_fallback=allow_fallback)
     # how many tokens we actually need, plus headroom; avoids tokenizing the
     # whole file (which triggers the "sequence longer than max length" warning).
     need_tokens = (max(0, n_text_batches - 1) * stride) + max_length + 8
@@ -260,7 +334,8 @@ def _load_text_batches(model, tokenizer, text_path, n_text_batches,
     else:
         vocab = int(getattr(model, "vocab",
                             getattr(getattr(model, "config", None), "vocab_size", 50)))
-        toks = [(abs(hash(w)) % vocab) for w in text.split()]
+        toks = [int.from_bytes(hashlib.sha256(w.encode("utf-8")).digest()[:8], "big") % vocab
+                for w in text.split()]
         ids = torch.tensor(toks, dtype=torch.long)
     batches = []
     for i in range(n_text_batches):
@@ -272,10 +347,11 @@ def _load_text_batches(model, tokenizer, text_path, n_text_batches,
     return batches
 
 
-def _read_local_text(text_path) -> str:
+def _read_local_text(text_path, *, allow_fallback=False) -> str:
     import os
     if text_path and os.path.exists(text_path):
         with open(text_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
-    # deterministic offline fallback so tiny-model runs still exercise the path
+    if not allow_fallback:
+        raise FileNotFoundError(f"local activation text is missing: {text_path}")
     return ("the quick brown fox jumps over the lazy dog . " * 400).strip()

@@ -140,6 +140,18 @@ def mp_cdf_eig(x, n, m, sigma, N):
 # --------------------------------------------------------------------------- #
 # σ estimation — Gavish–Donoho median  (= USVT-cited estimator, Paper 3 §3)    #
 # --------------------------------------------------------------------------- #
+def _mp_quantile_singular(n, m, probability, sigma=1.0):
+    lower, upper = _edges(n, m, sigma)
+    p = float(probability)
+    if not 0.0 < p < 1.0:
+        raise ValueError("probability must lie in (0, 1)")
+    return float(optimize.brentq(
+        lambda value: float(mp_cdf(value, n, m, sigma)) - p,
+        lower + np.finfo(float).eps * max(1.0, upper),
+        upper - np.finfo(float).eps * max(1.0, upper),
+    ))
+
+
 def estimate_sigma_gd_median(weight=None, *, s=None, n=None, m=None,
                              discard_largest=0.0) -> float:
     """σ̂ from singular-value median matching to the MP median (Gavish–Donoho).
@@ -151,12 +163,19 @@ def estimate_sigma_gd_median(weight=None, *, s=None, n=None, m=None,
     """
     s, n, m = _resolve_s_n_m(weight, s, n, m)
     s = np.sort(np.asarray(s, dtype=np.float64))[::-1]
+    original_size = len(s)
+    k_drop = 0
     if discard_largest and discard_largest > 0:
-        k_drop = int(np.floor(discard_largest * len(s)))
+        if not 0.0 <= float(discard_largest) < 1.0:
+            raise ValueError("discard_largest must lie in [0, 1)")
+        k_drop = int(np.floor(discard_largest * original_size))
         if k_drop > 0:
             s = s[k_drop:]
     nu_med = float(np.median(s))
-    mu1 = mp_median(n, m, 1.0)           # σ=1 MP singular-value median
+    # Median of a top-truncated sample is the (retained_mass / 2) quantile
+    # of the original MP law, not its 0.5 quantile.
+    retained_mass = (original_size - k_drop) / original_size
+    mu1 = _mp_quantile_singular(n, m, 0.5 * retained_mass, 1.0)
     return nu_med / mu1
 
 
@@ -184,7 +203,10 @@ def estimate_sigma_med_refined(weight=None, *, s=None, n=None, m=None,
         if len(kept) < max(10, 0.05 * len(s)):
             kept = s            # safety: never discard the whole spectrum
             break
-        new_sigma = estimate_sigma_gd_median(s=kept, n=n, m=m)
+        retained_mass = len(kept) / len(s)
+        new_sigma = float(np.median(kept)) / _mp_quantile_singular(
+            n, m, 0.5 * retained_mass, 1.0
+        )
         if len(kept) == prev_count and abs(new_sigma - sigma) < 1e-9:
             sigma = new_sigma
             break
@@ -215,6 +237,15 @@ def small_sv_deviation(s, n, m, sigma) -> dict:
     - excess_small_sv: #{ν ≤ q10_MP} − 0.1·len(s), q10 = 10th MP percentile.
     """
     s = np.sort(np.asarray(s, dtype=np.float64))   # ascending
+    if not np.isfinite(sigma) or sigma < 0.0:
+        raise ValueError("sigma must be finite and nonnegative")
+    if sigma == 0.0:
+        return {
+            "ks_lower": float("nan"),
+            "n_below_minus": 0,
+            "frac_mass_below_minus": 0.0,
+            "excess_small_sv": float(np.count_nonzero(s == 0.0) - 0.1 * len(s)),
+        }
     nu_minus, nu_plus = _edges(n, m, sigma)
 
     n_below_minus = int(np.sum(s < nu_minus))
@@ -238,9 +269,11 @@ def small_sv_deviation(s, n, m, sigma) -> dict:
         F0 = float(mp_cdf(nu_minus, n, m, sigma))
         F1 = float(mp_cdf(nu_med, n, m, sigma))
         denom = max(F1 - F0, 1e-12)
-        emp = np.arange(1, band.size + 1) / band.size
+        emp_hi = np.arange(1, band.size + 1) / band.size
+        emp_lo = np.arange(0, band.size) / band.size
         theo = (np.asarray(mp_cdf(band, n, m, sigma)) - F0) / denom
-        ks_lower = float(np.max(np.abs(emp - theo)))
+        ks_lower = float(max(np.max(np.abs(emp_hi - theo)),
+                             np.max(np.abs(theo - emp_lo))))
     else:
         ks_lower = float("nan")
 

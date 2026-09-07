@@ -108,18 +108,33 @@ class CausalSelfAttention(nn.Module):
             key = key.repeat_interleave(repeat, dim=1)
             value = value.repeat_interleave(repeat, dim=1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        causal = torch.ones(sequence, sequence, dtype=torch.bool, device=hidden_states.device).triu(1)
-        scores = scores.masked_fill(causal[None, None, :, :], torch.finfo(scores.dtype).min)
+        allowed = ~torch.ones(sequence, sequence, dtype=torch.bool,
+                              device=hidden_states.device).triu(1)
+        allowed = allowed[None, None, :, :].expand(batch, 1, sequence, sequence)
+        valid_queries = None
         if attention_mask is not None:
             if attention_mask.shape != (batch, sequence):
                 raise ValueError("attention_mask must have shape (batch, sequence)")
             valid_keys = attention_mask.to(dtype=torch.bool, device=hidden_states.device)
-            scores = scores.masked_fill(~valid_keys[:, None, None, :], torch.finfo(scores.dtype).min)
-        probabilities = F.softmax(scores.float(), dim=-1).to(dtype=query.dtype)
+            valid_queries = valid_keys
+            allowed = allowed & valid_keys[:, None, None, :]
+        scores = scores.masked_fill(~allowed, torch.finfo(scores.dtype).min)
+        probabilities = F.softmax(scores.float(), dim=-1)
+        # A fully masked row must be exactly zero, not softmax(uniform min).
+        probabilities = probabilities * allowed.to(probabilities.dtype)
+        denominator = probabilities.sum(dim=-1, keepdim=True)
+        probabilities = torch.where(
+            denominator > 0.0,
+            probabilities / denominator.clamp_min(torch.finfo(probabilities.dtype).tiny),
+            torch.zeros_like(probabilities),
+        ).to(dtype=query.dtype)
         probabilities = F.dropout(probabilities, p=self.dropout, training=self.training)
         context = torch.matmul(probabilities, value)
         context = context.transpose(1, 2).contiguous().view(batch, sequence, self.d_model)
-        return self.o_proj(context)
+        output = self.o_proj(context)
+        if valid_queries is not None:
+            output = output * valid_queries.unsqueeze(-1).to(output.dtype)
+        return output
 
 
 class SwiGLUMLP(nn.Module):

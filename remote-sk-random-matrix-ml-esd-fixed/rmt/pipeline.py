@@ -46,6 +46,8 @@ def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
     # old hardcoded float32 which dropped the smallest singular values to noise.
     records = discover_weight_matrices(model, layer_indices=layer_filter, spec=spec)
     _log.info("[%s] discovered %d matrices", model_tag, len(records))
+    if not records:
+        raise ValueError("no analyzable matrices matched the model/layer selection")
 
     # optional activation covariance (overlap / coincidence block)
     fm_dict = None
@@ -53,6 +55,7 @@ def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
         fm_dict = _maybe_activation_cov(model, records, cfg, spec, tokenizer)
 
     rows = []
+    failures = []
     svals = {}            # name -> descending singular values (for the plots)
     ovmats = {}           # name -> overlap matrix (for the overlap heatmaps)
     for rec in records:
@@ -61,15 +64,24 @@ def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                                       svals_out=svals, ovmat_out=ovmats)
             rows.append(row)
         except Exception as e:                                  # pragma: no cover
+            failures.append({"matrix": rec.name, "stage": "per_matrix", "error": repr(e)})
             _log.warning("per_matrix failed for %s: %s", rec.name, e)
         finally:
             # release the materialized numpy weight; per_matrix already used it
             # and the plots read the (small) stashed singular values instead.
             rec.weight = None
 
+    if not rows:
+        status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
+        with open(status_path, "w") as f:
+            json.dump({"status": "failed", "failures": failures}, f, indent=2)
+        raise RuntimeError("all discovered matrices failed analysis")
     csv_path = os.path.join(output_dir, f"{model_tag}_matrix_metrics.csv")
-    _write_csv(csv_path, rows)
+    _write_csv(csv_path, rows, n_deciles=cfg.n_deciles)
     _write_summary(os.path.join(output_dir, f"{model_tag}_summary.json"), rows, model_tag)
+    with open(os.path.join(output_dir, f"{model_tag}_run_status.json"), "w") as f:
+        json.dump({"status": "complete" if not failures else "partial",
+                   "usable_matrices": len(rows), "failures": failures}, f, indent=2)
     _maybe_plots(output_dir, model_tag, rows, records, cfg, svals=svals, ovmats=ovmats)
 
     # optional perplexity-vs-decile ablation
@@ -150,9 +162,11 @@ def _maybe_activation_cov(model, records, cfg, spec, tokenizer=None):
             dataset_name=cfg.fm_dataset, n_text_batches=cfg.n_text_batches,
             max_length=cfg.fm_max_length, stride=cfg.fm_stride,
             max_oom=cfg.max_oom, token_weighted=cfg.fm_token_weighted, spec=spec,
-            text_path=cfg.text_path)
+            text_path=cfg.text_path, allow_fallback=cfg.allow_fallback_text)
     except Exception as e:                                      # pragma: no cover
-        _log.warning("activation covariance skipped (%s); overlap will be NaN", e)
+        _log.warning("activation covariance failed (%s); overlap will be unavailable", e)
+        if cfg.strict:
+            raise
         return None
 
 
@@ -164,7 +178,10 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
                                    n_tokens=cfg.perplexity_tokens,
                                    decile_scope=cfg.decile_scope,
                                    n_deciles=cfg.n_deciles, spec=spec,
-                                   text_path=cfg.text_path)
+                                   text_path=cfg.text_path, stride=cfg.ppl_stride,
+                                   backend=cfg.backend,
+                                   gpu_min_dim=cfg.gpu_svd_min_dim,
+                                   allow_fallback=cfg.allow_fallback_text)
         # REPORT §3 A8: a missing text file silently falls back to a repeated
         # pangram and still returns a *finite* perplexity. Make that explicit so
         # the numbers are never mistaken for real wikitext perplexity.
@@ -186,7 +203,9 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
         except Exception as pe:                                 # pragma: no cover
             _log.warning("perplexity plot skipped: %s", pe)
     except Exception as e:                                      # pragma: no cover
-        _log.warning("perplexity-vs-decile skipped: %s", e)
+        _log.warning("perplexity-vs-decile failed: %s", e)
+        if cfg.strict:
+            raise
 
 
 def _safe_plot_name(name: str) -> str:
@@ -229,13 +248,8 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
         stem = _safe_plot_name(name)
         n = int(r.get("n", len(s)))
         m = int(r.get("m", len(s)))
-        # Secondary fix: feed the outlier-trimmed σ to the overlay so the right
-        # edge ν₊ is fit to the noise bulk, not to a spectrum that includes the
-        # large outliers. Fall back to sigma_med if the refined value is absent
-        # or non-finite.
-        sigma = r.get("sigma_med_refined", float("nan"))
-        if not _isfinite(sigma):
-            sigma = r.get("sigma_med", float("nan"))
+        # Use the same fit serialized by the row's MP edges/counts.
+        sigma = r.get("sigma_med", float("nan"))
         N_cov = r.get("N_cov", m)
         # ESD (always, when we have the spectrum). The MP curve is rescaled by
         # the count fraction inside the MP support *inside* plot_esd; we no
@@ -257,9 +271,13 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
         # NN spacing (gated on do_spacing and enough levels)
         if cfg.do_spacing and len(s) >= 50:
             try:
-                plot_nn_spacing((s ** 2) / float(m),
-                                os.path.join(output_dir, "spacing", f"{stem}.png"),
-                                deg=cfg.unfold_deg)
+                levels = (s ** 2) / float(N_cov)
+                levels = levels[(levels >= float(r.get("mp_minus_eig", -np.inf)))
+                                & (levels <= float(r.get("mp_plus_eig", np.inf)))]
+                if levels.size >= 3:
+                    plot_nn_spacing(levels,
+                                    os.path.join(output_dir, "spacing", f"{stem}.png"),
+                                    deg=cfg.unfold_deg)
             except Exception as e:                              # pragma: no cover
                 _log.warning("spacing plot skipped for %s: %s", name, e)
         # collect Q/K/V spectra per layer for the QKV heatmap
@@ -291,12 +309,19 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
                 _log.warning("overlap heatmap skipped for %s: %s", name, e)
 
 
-def _write_csv(path, rows):
+def _write_csv(path, rows, n_deciles=10):
+    groups = int(n_deciles)
+    if groups < 1:
+        raise ValueError("n_deciles must be positive")
+    base = [name for name in CSV_COLUMNS
+            if not name.startswith("entropy_decile_") and not name.startswith("srk_decile_")]
+    columns = (base + [f"entropy_decile_{i}" for i in range(1, groups + 1)]
+               + [f"srk_decile_{i}" for i in range(1, groups + 1)])
     with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=columns, extrasaction="raise")
         w.writeheader()
         for r in rows:
-            w.writerow({k: r.get(k, "") for k in CSV_COLUMNS})
+            w.writerow({k: r.get(k, "") for k in columns})
 
 
 def _write_summary(path, rows, tag):

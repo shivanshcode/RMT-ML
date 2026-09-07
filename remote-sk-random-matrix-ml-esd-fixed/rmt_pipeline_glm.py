@@ -1,4 +1,5 @@
-%%writefile rmt_pipeline_glm.py
+# Archived legacy reference script.  Kept parseable for tooling; the production
+# entry point is ``python -m rmt``.
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """

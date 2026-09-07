@@ -80,6 +80,7 @@ class RunConfig:
     use_svd_cache: bool = True
     svd_cache_dir: str = "./svd_cache"
     text_path: str = "./wikitext-2-raw/wiki.test.raw"
+    allow_fallback_text: bool = False
     # headline / baselines / extras
     do_finetune_recovery: bool = False
     ft_method: str = "lora"
@@ -95,8 +96,25 @@ class RunConfig:
     epoch_checkpoint_every_frac: float = 0.10          # probe every 10% of iterations
     # misc
     offline: bool = True
+    strict: bool = True
     selftest: bool = False
     seed: int = 0
+
+    def __post_init__(self) -> None:
+        if self.n_deciles < 1:
+            raise ValueError("n_deciles must be positive")
+        if self.ppl_stride < 1 or self.fm_stride < 1:
+            raise ValueError("perplexity and activation strides must be positive")
+        if self.fm_max_length < 2 or self.n_text_batches < 1 or self.perplexity_tokens < 2:
+            raise ValueError("text window and token counts are invalid")
+        if self.fm_dataset != "wikitext" or self.ppl_dataset != "wikitext":
+            raise ValueError("only the local wikitext text source is implemented")
+        if self.do_finetune_recovery:
+            raise NotImplementedError(
+                "fine-tune recovery is not implemented; disable do_finetune_recovery")
+        if self.pythia_steps is not None:
+            raise NotImplementedError(
+                "CLI checkpoint-step loading is not implemented; use analyze_checkpoints")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -137,17 +155,23 @@ _LOGGER_CONFIGURED = False
 
 
 def get_logger(name: str = "rmt") -> logging.Logger:
+    """Return a child of one consistently configured ``rmt`` logger."""
     global _LOGGER_CONFIGURED
-    logger = logging.getLogger(name)
+    parent = logging.getLogger("rmt")
     if not _LOGGER_CONFIGURED:
         handler = logging.StreamHandler()
         fmt = logging.Formatter("[%(asctime)s] %(name)s %(levelname)s: %(message)s",
                                 datefmt="%H:%M:%S")
         handler.setFormatter(fmt)
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
+        parent.addHandler(handler)
+        parent.setLevel(logging.INFO)
+        parent.propagate = False
         _LOGGER_CONFIGURED = True
+    logger = logging.getLogger(name)
+    if name != "rmt":
+        logger.handlers.clear()
+        logger.setLevel(logging.NOTSET)
+        logger.propagate = True
     return logger
 
 

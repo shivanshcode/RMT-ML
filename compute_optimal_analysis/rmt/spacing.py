@@ -28,9 +28,9 @@ class BrodyFit:
 
 def _clean_levels(levels: np.ndarray, minimum: int = 3) -> np.ndarray:
     array = np.asarray(levels, dtype=np.float64).ravel()
-    array = np.unique(array[np.isfinite(array)])
+    array = array[np.isfinite(array)]
     if array.size < minimum:
-        raise ValueError(f"at least {minimum} distinct finite levels are required")
+        raise ValueError(f"at least {minimum} finite levels are required")
     return np.sort(array)
 
 
@@ -76,16 +76,18 @@ def unfold_spectrum(
         smoothness = float(ordered.size if smoothing is None else smoothing)
         if smoothness < 0.0 or not np.isfinite(smoothness):
             raise ValueError("smoothing must be finite and nonnegative")
+        unique, first, counts = np.unique(ordered, return_index=True, return_counts=True)
+        if unique.size < 2:
+            raise ValueError("unfolding requires at least two distinct levels")
+        unique_ranks = first + 0.5 * (counts + 1)
         spline = UnivariateSpline(
-            ordered,
-            ranks,
-            k=min(3, ordered.size - 1),
+            unique,
+            unique_ranks,
+            k=min(3, unique.size - 1),
             s=smoothness,
         )
-        preliminary = np.maximum.accumulate(np.asarray(spline(ordered), dtype=np.float64))
-        epsilon = np.finfo(float).eps * max(1.0, float(np.ptp(preliminary)))
-        preliminary += epsilon * np.arange(preliminary.size)
-        smooth = np.asarray(PchipInterpolator(ordered, preliminary)(ordered), dtype=np.float64)
+        preliminary = np.maximum.accumulate(np.asarray(spline(unique), dtype=np.float64))
+        smooth = np.asarray(PchipInterpolator(unique, preliminary)(ordered), dtype=np.float64)
     elif name == "gaussian_kernel":
         window = int(kernel_window)
         if window < 1 or 2 * window >= ordered.size:
@@ -113,8 +115,10 @@ def unfold_spectrum(
     if not np.all(np.isfinite(smooth)):
         raise ValueError("unfolding produced non-finite values")
     monotone = np.maximum.accumulate(smooth)
-    scale_epsilon = np.finfo(float).eps * max(1.0, float(np.ptp(monotone)))
-    monotone = monotone + scale_epsilon * np.arange(monotone.size)
+    # Equal input levels remain equal unfolded levels (a genuine zero spacing).
+    for index in range(1, ordered.size):
+        if ordered[index] == ordered[index - 1]:
+            monotone[index] = monotone[index - 1]
     mean_spacing = float(np.mean(np.diff(monotone)))
     if mean_spacing <= 0.0 or not np.isfinite(mean_spacing):
         raise ValueError("unfolding produced a degenerate staircase")
@@ -147,10 +151,11 @@ def nearest_neighbor_spacings(
         edge_mode=edge_mode,
     )
     spacings = np.diff(transformed)
-    spacings = spacings[np.isfinite(spacings) & (spacings > 0.0)]
-    if spacings.size == 0:
+    spacings = spacings[np.isfinite(spacings) & (spacings >= 0.0)]
+    positive = spacings[spacings > 0.0]
+    if positive.size == 0:
         raise ValueError("no positive spacings remain")
-    return spacings / np.mean(spacings)
+    return spacings / np.mean(positive)
 
 
 def nn_spacing(levels: np.ndarray, deg: int = 7) -> np.ndarray:
@@ -235,7 +240,7 @@ def fit_brody(
     beta = float(np.clip(optimum.x, 0.0, 1.0))
     step = 1e-4
     left, right = max(0.0, beta - step), min(1.0, beta + step)
-    if left < beta < right:
+    if canonical_method == "mle" and left < beta < right:
         curvature = (
             optimized_objective(right)
             - 2.0 * optimized_objective(beta)
@@ -243,6 +248,8 @@ def fit_brody(
         ) / ((right - beta) ** 2)
         standard_error = float(np.sqrt(1.0 / curvature)) if curvature > 0.0 else float("nan")
     else:
+        # CDF residuals are correlated and this objective is not a likelihood;
+        # endpoint curvature is likewise not a symmetric likelihood stencil.
         standard_error = float("nan")
     bootstrap_count = int(n_bootstrap)
     if bootstrap_count < 0:
@@ -382,13 +389,15 @@ def sigma2(levels: np.ndarray, L: float, deg: int = 7) -> float:
 
 
 def _delta3_window(levels: np.ndarray, start: float, length: float) -> float:
-    stop = start + length
-    internal = levels[(levels > start) & (levels < stop)]
-    boundaries = np.concatenate(([start], internal, [stop]))
+    # Work in local coordinates to avoid cancellation under large translations.
+    local_levels = levels - start
+    stop = length
+    internal = local_levels[(local_levels > 0.0) & (local_levels < stop)]
+    boundaries = np.concatenate(([0.0], internal, [stop]))
     left_edges, right_edges = boundaries[:-1], boundaries[1:]
     midpoints = 0.5 * (left_edges + right_edges)
-    baseline = np.searchsorted(levels, start, side="right")
-    staircase = np.searchsorted(levels, midpoints, side="right") - baseline
+    baseline = np.searchsorted(local_levels, 0.0, side="right")
+    staircase = np.searchsorted(local_levels, midpoints, side="right") - baseline
     widths = right_edges - left_edges
     integral_one = float(np.sum(widths))
     integral_x = float(np.sum(0.5 * (right_edges**2 - left_edges**2)))

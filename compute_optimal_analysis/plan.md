@@ -12,8 +12,8 @@
 8. Preserve the Chinchilla allocator: analytic optimum, exact `D/N` target mode, fixed-compute regime transforms, IsoFLOP grids, and architecture parameter estimates.
 9. Preserve local-only data loading, training, centered activation covariance, reversible tranche lesions, and reference descending-decile lesions; add BF16/FP16 autocast, TF32, optional compilation, in-device covariance aggregation, and accelerator SVD bridges only in `models/`/`pipelines/`.
 10. Wire method metadata into the runner and lock each method with deterministic synthetic tests.
-11. Stage a hermetic asset manifest with `scripts/download_assets.py`, exact direct dependency pins, cache-layout documentation, and fail-closed offline runtime behavior.
-12. Provide the four-track `run_hpc.slurm` harness and keep cluster-specific module/partition/account changes operator-controlled.
+11. Stage a hermetic asset manifest with `scripts/download_assets.py`, preserve standalone direct pins, document inventory-driven cluster dependency reconciliation and caches, and keep runtime fail-closed/offline.
+12. Provide the four-track `run_hpc.slurm` harness using the verified `rmt_ml_env` interpreter and `gpulong` queue; keep unverified module, account/QoS, and resource changes operator-controlled.
 
 ## Data flow
 

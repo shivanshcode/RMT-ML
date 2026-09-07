@@ -37,6 +37,18 @@ def _normalized_columns(vectors: np.ndarray) -> np.ndarray:
     return array / norms
 
 
+def _orthonormal_span(vectors: np.ndarray) -> np.ndarray:
+    normalized = _normalized_columns(vectors)
+    U, singular_values, _ = np.linalg.svd(normalized, full_matrices=False)
+    if singular_values.size == 0:
+        raise ValueError("subspace contains no vectors")
+    tolerance = np.finfo(float).eps * max(normalized.shape) * singular_values[0]
+    rank = int(np.count_nonzero(singular_values > tolerance))
+    if rank < 1:
+        raise ValueError("subspace is numerically rank zero")
+    return U[:, :rank]
+
+
 def projection_overlap(
     weight_vectors: np.ndarray,
     activation_vectors: np.ndarray,
@@ -71,8 +83,8 @@ def principal_angle_spectrum(
     activation_basis = _normalized_columns(activation_vectors)
     if weight_basis.shape[0] != activation_basis.shape[0]:
         raise ValueError("weight and activation vectors must share ambient dimension")
-    weight_q = np.linalg.qr(weight_basis, mode="reduced")[0]
-    activation_q = np.linalg.qr(activation_basis, mode="reduced")[0]
+    weight_q = _orthonormal_span(weight_basis)
+    activation_q = _orthonormal_span(activation_basis)
     return np.asarray(subspace_angles(weight_q, activation_q), dtype=np.float64)
 
 
@@ -96,8 +108,8 @@ def frobenius_projection_overlap(
     activation_basis = _normalized_columns(activation_vectors)
     if weight_basis.shape[0] != activation_basis.shape[0]:
         raise ValueError("weight and activation vectors must share ambient dimension")
-    weight_q = np.linalg.qr(weight_basis, mode="reduced")[0]
-    activation_q = np.linalg.qr(activation_basis, mode="reduced")[0]
+    weight_q = _orthonormal_span(weight_basis)
+    activation_q = _orthonormal_span(activation_basis)
     denominator = min(weight_q.shape[1], activation_q.shape[1])
     if denominator < 1:
         raise ValueError("each subspace must contain at least one vector")

@@ -66,7 +66,10 @@ class TokenSequenceDataset(Dataset[dict[str, Tensor]]):
         *,
         stride: int | None = None,
     ) -> None:
-        tensor = torch.as_tensor(tokens, dtype=torch.long).flatten().clone()
+        source = tokens.detach().cpu().numpy() if isinstance(tokens, Tensor) else np.asarray(tokens)
+        if source.ndim != 1 or not np.issubdtype(source.dtype, np.integer):
+            raise ValueError("tokens must be a one-dimensional integer sequence")
+        tensor = torch.as_tensor(source.astype(np.int64, copy=False), dtype=torch.long).clone()
         sequence_length = int(sequence_length)
         stride = sequence_length if stride is None else int(stride)
         if sequence_length < 2 or stride < 1:
@@ -104,15 +107,20 @@ def load_token_array(path: str | Path) -> np.ndarray:
     loaded = np.load(source, allow_pickle=False)
     if isinstance(loaded, np.lib.npyio.NpzFile):
         try:
-            key = "tokens" if "tokens" in loaded.files else sorted(loaded.files)[0]
-            array = np.asarray(loaded[key])
+            if "tokens" not in loaded.files:
+                raise ValueError("NPZ token archives must contain an explicit 'tokens' array")
+            array = np.asarray(loaded["tokens"])
         finally:
             loaded.close()
     else:
         array = np.asarray(loaded)
-    array = array.astype(np.int64, copy=False).ravel()
+    if array.ndim != 1:
+        raise ValueError("token array must be one-dimensional")
+    if not np.issubdtype(array.dtype, np.integer):
+        raise ValueError("token array must use an integer dtype")
     if array.size < 2 or np.any(array < 0):
         raise ValueError("token array must contain at least two nonnegative ids")
+    array = array.astype(np.int64, copy=False)
     return array
 
 
@@ -123,7 +131,10 @@ def split_tokens(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Split one token stream contiguously to avoid train/validation leakage."""
 
-    array = np.asarray(tokens, dtype=np.int64).ravel()
+    source = np.asarray(tokens)
+    if source.ndim != 1 or not np.issubdtype(source.dtype, np.integer):
+        raise ValueError("tokens must be a one-dimensional integer array")
+    array = source.astype(np.int64, copy=False)
     fraction = float(train_fraction)
     if array.size < 4 or not 0.0 < fraction < 1.0:
         raise ValueError("tokens and train_fraction do not support a nonempty split")

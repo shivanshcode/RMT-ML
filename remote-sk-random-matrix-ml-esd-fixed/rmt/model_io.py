@@ -6,7 +6,7 @@ from .config import OfflineGuard, get_logger
 _log = get_logger("rmt.model_io")
 
 
-def load_model(name_or_path, *, model_path=None, dtype="fp16", device=None):
+def load_model(name_or_path, *, model_path=None, dtype="fp32", device=None):
     """Load a local HF causal-LM snapshot fully offline and place it on a device.
 
     Resolves a local directory (``model_path`` or ``./models/<name>``); never
@@ -51,9 +51,13 @@ def load_tokenizer(name_or_path, *, model_path=None):
 
 
 def _resolve_path(name_or_path, model_path):
-    path = model_path or name_or_path
-    if not os.path.isdir(path):
-        cand = os.path.join("./models", os.path.basename(name_or_path))
-        if os.path.isdir(cand):
-            path = cand
-    return path
+    if model_path is not None:
+        if not os.path.isdir(model_path):
+            raise FileNotFoundError(f"explicit model_path does not exist: {model_path}")
+        return os.path.realpath(model_path)
+    if os.path.isdir(name_or_path):
+        return os.path.realpath(name_or_path)
+    cand = os.path.join("./models", os.path.basename(name_or_path))
+    if os.path.isdir(cand):
+        return os.path.realpath(cand)
+    raise FileNotFoundError(f"no offline model snapshot found for {name_or_path!r}")

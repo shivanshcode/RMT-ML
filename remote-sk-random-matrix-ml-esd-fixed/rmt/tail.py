@@ -58,8 +58,10 @@ def fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02,
         alpha = 1.0 + n_tail / slog                      # density exponent
         # theoretical CDF of continuous power law on [xmin, ∞): 1-(x/xmin)^{1-α}
         theo = 1.0 - (tail / xmin) ** (1.0 - alpha)
-        emp = (np.arange(1, n_tail + 1) - 0.5) / n_tail
-        D = float(np.max(np.abs(emp - theo)))
+        emp_hi = np.arange(1, n_tail + 1) / n_tail
+        emp_lo = np.arange(0, n_tail) / n_tail
+        D = float(max(np.max(np.abs(emp_hi - theo)),
+                      np.max(np.abs(theo - emp_lo))))
         if best is None or D < best["ks_D"]:
             best = {"alpha": float(alpha), "xmin": float(xmin),
                     "ks_D": D, "n_tail": int(n_tail)}
@@ -91,12 +93,14 @@ def hill_estimator(svals, k_min=5):
 
 
 def hill_alpha_at(svals, k) -> float:
-    """Survival exponent at a single order statistic count k."""
-    ks, inv_H = hill_estimator(svals, k_min=max(2, min(k, 5)))
-    if ks.size == 0:
-        return float("nan")
-    j = int(np.argmin(np.abs(ks - k)))
-    return float(inv_H[j])
+    """Survival exponent at exactly ``k`` upper order statistics."""
+    x = np.sort(np.asarray(svals, dtype=np.float64))[::-1]
+    x = x[np.isfinite(x) & (x > 0.0)]
+    k = int(k)
+    if k < 1 or k >= x.size:
+        raise ValueError("k must satisfy 1 <= k < number of positive values")
+    H = float(np.mean(np.log(x[:k])) - np.log(x[k]))
+    return float("nan") if H <= 0.0 else 1.0 / H
 
 
 # --------------------------------------------------------------------------- #

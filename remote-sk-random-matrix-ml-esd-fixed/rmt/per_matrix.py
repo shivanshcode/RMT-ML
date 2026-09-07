@@ -44,8 +44,22 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     n, m = int(record.n), int(record.m)
 
     # --- THE single SVD ---------------------------------------------------- #
-    svd: SVDResult = cached_svd(W, full_matrices=False, backend=cfg.backend,
-                                gpu_min_dim=cfg.gpu_svd_min_dim)
+    svd = None
+    digest = None
+    if cfg.use_svd_cache:
+        from .svd_cache import load_svd, weight_digest
+        digest = weight_digest(W)
+        cached = load_svd(cfg.svd_cache_dir, record.name, digest=digest)
+        if cached is not None:
+            U, cached_s, cached_vh = cached
+            svd = SVDResult(U=U, s=cached_s, Vh=cached_vh, n=n, m=m)
+    if svd is None:
+        svd = cached_svd(W, full_matrices=False, backend=cfg.backend,
+                         gpu_min_dim=cfg.gpu_svd_min_dim)
+        if cfg.use_svd_cache:
+            from .svd_cache import save_svd
+            save_svd(cfg.svd_cache_dir, record.name, svd.U, svd.s, svd.Vh,
+                     digest=digest)
     s = np.sort(svd.s)[::-1]                       # descending
     if svals_out is not None:
         svals_out[record.name] = s
@@ -97,11 +111,24 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
             "hill_plateau_width": plateau["hill_plateau_width"],
             "hill_is_powerlaw": int(bool(plateau["hill_is_powerlaw"])),
         })
-        # honor cfg.alpha_estimator for the headline 'alpha'
-        if cfg.alpha_estimator != "all":
-            sel = TAIL.select_alpha(lam, estimator=cfg.alpha_estimator,
-                                    window=cfg.hill_window)
-            row["alpha"] = sel["alpha"]
+        # Honor the selector while keeping exponent convention/cutoff metadata
+        # internally consistent.
+        selected_name = "csn" if cfg.alpha_estimator == "all" else cfg.alpha_estimator
+        row["alpha_estimator"] = selected_name
+        row["alpha_kind"] = "density" if selected_name == "csn" else "survival"
+        if selected_name == "hill":
+            row["alpha"] = alpha_hill_lambda
+            ordered = np.sort(lam)[::-1]
+            row["xmin"] = float(ordered[k_hill])
+            row["n_tail"] = int(k_hill)
+            row["ks_D"] = _nan()
+        elif selected_name == "hill_windowed":
+            row["alpha"] = plateau["hill_plateau_alpha"]
+            width = int(plateau["hill_plateau_width"])
+            ordered = np.sort(lam)[::-1]
+            row["xmin"] = float(ordered[min(width, len(ordered) - 1)]) if width else _nan()
+            row["n_tail"] = width
+            row["ks_D"] = _nan()
 
         # optional powerlaw-pkg LR test
         if cfg.use_powerlaw_pkg:
@@ -124,6 +151,8 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
                    "hill_plateau_width", "hill_is_powerlaw",
                    "LR_trunc", "LR_p", "alpha_rand", "max_ev_rand"):
             row[kx] = _nan()
+        row["alpha_estimator"] = "disabled"
+        row["alpha_kind"] = "unavailable"
 
     # --- scalars ----------------------------------------------------------- #
     row["row_wise_entropy"] = SC.row_wise_entropy(W)
@@ -147,15 +176,17 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     else:
         row["pt_ks_mean"] = _nan(); row["pt_frac_random"] = _nan()
 
-    # --- RMT bulk (on eigenvalues of the covariance) ----------------------- #
-    if cfg.do_spacing and len(lam) >= 50:
-        row["r_statistic_mean"] = SP.r_statistic(lam)
-        ks = SP.nn_spacing_ks(lam, deg=cfg.unfold_deg)
+    # --- RMT bulk (on covariance eigenvalues inside the fitted support) ---- #
+    bulk_lam = lam[(lam >= mp_minus_eig) & (lam <= mp_plus_eig)]
+    row["spacing_level_count"] = int(bulk_lam.size)
+    if cfg.do_spacing and len(bulk_lam) >= 50:
+        row["r_statistic_mean"] = SP.r_statistic(bulk_lam)
+        ks = SP.nn_spacing_ks(bulk_lam, deg=cfg.unfold_deg)
         row["nn_KS_GOE"] = ks["nn_KS_GOE"]; row["nn_KS_Poisson"] = ks["nn_KS_Poisson"]
-        row["delta3_L10"] = SP.delta3(lam, 10, deg=cfg.unfold_deg)
-        row["delta3_L50"] = SP.delta3(lam, 50, deg=cfg.unfold_deg)
-        row["sigma2_L10"] = SP.sigma2(lam, 10, deg=cfg.unfold_deg)
-        row["sigma2_L50"] = SP.sigma2(lam, 50, deg=cfg.unfold_deg)
+        row["delta3_L10"] = SP.delta3(bulk_lam, 10, deg=cfg.unfold_deg)
+        row["delta3_L50"] = SP.delta3(bulk_lam, 50, deg=cfg.unfold_deg)
+        row["sigma2_L10"] = SP.sigma2(bulk_lam, 10, deg=cfg.unfold_deg)
+        row["sigma2_L50"] = SP.sigma2(bulk_lam, 50, deg=cfg.unfold_deg)
     else:
         for kx in ("r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
                    "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50"):
@@ -214,14 +245,14 @@ CSV_COLUMNS = (
      "mp_minus_eig", "mp_plus_eig", "n_right_outliers", "n_left_outliers",
      "frac_right_outliers", "frac_left_outliers",
      "ks_lower", "n_below_minus", "frac_mass_below_minus", "excess_small_sv",
-     "alpha", "xmin", "ks_D", "n_tail", "alpha_on_nu",
+     "alpha", "alpha_estimator", "alpha_kind", "xmin", "ks_D", "n_tail", "alpha_on_nu",
      "alpha_hill_nu", "alpha_hill_lambda",
      "hill_plateau_alpha", "hill_plateau_width", "hill_is_powerlaw",
      "LR_trunc", "LR_p", "alpha_rand", "max_ev_rand",
      "row_wise_entropy", "spectral_entropy", "stable_rank", "mp_softrank",
      "bulk_mass_frac", "max_sval", "min_sval", "mean_sval", "median_sval",
      "ipr_top10_mean", "ipr_bulk_mean", "pt_ks_mean", "pt_frac_random",
-     "r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
+     "spacing_level_count", "r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
      "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50",
      "complex_r_abs_mean", "complex_r_cos_mean",
      "max_overlap", "mean_overlap", "overlap_at_top_sval", "overlap_at_bottom_sval",

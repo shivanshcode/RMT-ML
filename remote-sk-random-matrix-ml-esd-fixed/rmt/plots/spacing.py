@@ -16,6 +16,8 @@ def plot_nn_spacing(levels, out_path, *, deg=7):
     ax.plot(xs, (np.pi / 2) * xs * np.exp(-np.pi * xs**2 / 4), "r-", label="Wigner-GOE")
     ax.plot(xs, np.exp(-xs), "g--", label="Poisson")
     ax.set_xlabel("s"); ax.set_ylabel("P(s)"); ax.legend()
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    parent = os.path.dirname(out_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     fig.savefig(out_path); plt.close(fig)
     return out_path

@@ -216,10 +216,21 @@ def fit_marchenko_pastur(
 ) -> MPFitResult:
     """Fit MP variance by robust quantile matching and report edge departures."""
 
-    values = np.sort(_positive_finite(eigenvalues))
-    if values.size < 4:
-        raise ValueError("at least four positive eigenvalues are required")
+    complete = np.asarray(eigenvalues, dtype=np.float64).ravel()
+    if complete.size < 4 or not np.all(np.isfinite(complete)) or np.any(complete < 0.0):
+        raise ValueError("at least four finite nonnegative eigenvalues are required")
+    values = np.sort(complete[complete > 0.0])
     q = _validate_aspect_ratio(aspect_ratio)
+    if values.size == 0:
+        return MPFitResult(
+            aspect_ratio=q, variance=0.0, sigma=0.0,
+            lambda_minus=0.0, lambda_plus=0.0,
+            ks_distance=float("nan"), bulk_fraction=1.0,
+            n_lower_outliers=0, n_upper_outliers=0,
+            diagnostics={"available": False, "rank_deficiency": int(complete.size)},
+        )
+    if values.size < 4:
+        raise ValueError("at least four positive eigenvalues are required for scale fitting")
     trim = float(trim_upper)
     if not 0.0 <= trim < 0.5:
         raise ValueError("trim_upper must lie in [0, 0.5)")
@@ -232,11 +243,13 @@ def fit_marchenko_pastur(
         fitted_variance = _validate_variance(variance)
     lower, upper = marchenko_pastur_bounds(q, fitted_variance)
     model_cdf = np.asarray(marchenko_pastur_cdf(values, q, fitted_variance))
-    empirical_cdf = (np.arange(values.size, dtype=np.float64) + 0.5) / values.size
-    ks_distance = float(np.max(np.abs(empirical_cdf - model_cdf)))
-    lower_count = int(np.count_nonzero(values < lower))
-    upper_count = int(np.count_nonzero(values > upper))
-    bulk_fraction = float(np.mean((values >= lower) & (values <= upper)))
+    empirical_hi = np.arange(1, values.size + 1, dtype=np.float64) / values.size
+    empirical_lo = np.arange(0, values.size, dtype=np.float64) / values.size
+    ks_distance = float(max(np.max(np.abs(empirical_hi - model_cdf)),
+                            np.max(np.abs(model_cdf - empirical_lo))))
+    lower_count = int(np.count_nonzero(complete < lower))
+    upper_count = int(np.count_nonzero(complete > upper))
+    bulk_fraction = float(np.mean((complete >= lower) & (complete <= upper)))
     return MPFitResult(
         aspect_ratio=q,
         variance=float(fitted_variance),
@@ -247,6 +260,8 @@ def fit_marchenko_pastur(
         bulk_fraction=bulk_fraction,
         n_lower_outliers=lower_count,
         n_upper_outliers=upper_count,
+        diagnostics={"rank_deficiency": int(np.count_nonzero(complete == 0.0)),
+                     "positive_fit_count": int(values.size)},
     )
 
 
@@ -456,8 +471,10 @@ def fit_marchenko_pastur_thamm(
         cumulative /= total
         ordered_singular = np.sort(singular_values)
         model_cdf = np.interp(ordered_singular, cdf_grid, cumulative, left=0.0, right=1.0)
-        empirical_cdf = (np.arange(ordered_singular.size, dtype=np.float64) + 0.5) / ordered_singular.size
-        ks_distance = float(np.max(np.abs(empirical_cdf - model_cdf)))
+        empirical_hi = np.arange(1, ordered_singular.size + 1, dtype=np.float64) / ordered_singular.size
+        empirical_lo = np.arange(0, ordered_singular.size, dtype=np.float64) / ordered_singular.size
+        ks_distance = float(max(np.max(np.abs(empirical_hi - model_cdf)),
+                                np.max(np.abs(model_cdf - empirical_lo))))
     else:
         ks_distance = float("nan")
 
@@ -755,6 +772,7 @@ def detect_spikes_bbp(
 def fit_marchenko_pastur_lanczos(
     weight: np.ndarray,
     *,
+    eigenvalues: np.ndarray | None = None,
     steps: int | None = None,
     n_probes: int = 3,
     tail_window: int | None = None,
@@ -794,7 +812,8 @@ def fit_marchenko_pastur_lanczos(
     )
     q = min(matrix.shape) / max(matrix.shape)
     variance = detected.lambda_plus / (1.0 + np.sqrt(q)) ** 2
-    eigenvalues = mp_eigenvalues(matrix)
+    eigenvalues = (mp_eigenvalues(matrix) if eigenvalues is None
+                   else np.asarray(eigenvalues, dtype=np.float64))
     model = fit_marchenko_pastur(eigenvalues, q, variance=variance)
     return replace(
         model,
@@ -1066,9 +1085,11 @@ def small_sv_deviation(s: np.ndarray, n: int, m: int, sigma: float) -> dict[str,
     median = mp_median(n, m, sigma)
     lower_values = spectrum[spectrum <= median]
     if lower_values.size:
-        empirical = (np.arange(lower_values.size) + 0.5) / spectrum.size
+        empirical_hi = np.arange(1, lower_values.size + 1) / spectrum.size
+        empirical_lo = np.arange(0, lower_values.size) / spectrum.size
         theoretical = np.asarray(mp_cdf(lower_values, n, m, sigma))
-        ks_lower = float(np.max(np.abs(empirical - theoretical)))
+        ks_lower = float(max(np.max(np.abs(empirical_hi - theoretical)),
+                             np.max(np.abs(theoretical - empirical_lo))))
     else:
         ks_lower = float("nan")
     below = spectrum < lower

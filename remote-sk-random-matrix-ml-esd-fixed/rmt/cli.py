@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import gc
+import hashlib
 import os
+import re
 import typing
 from typing import Optional, get_args, get_origin
 
@@ -20,6 +23,8 @@ from .config import RunConfig, OfflineGuard, get_logger
 _log = get_logger("rmt.cli")
 
 # constrained flags get explicit choices
+_LIBRARY_ONLY = {"epoch_probe_fracs", "epoch_checkpoint_every_frac"}
+
 _CHOICES = {
     "backend": ["auto", "numpy", "torch"],
     "alpha_estimator": ["csn", "hill", "hill_windowed", "all"],
@@ -53,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for f in dataclasses.fields(d):
         name = f.name
-        if name == "selftest":          # added manually above as store_true
+        if name == "selftest" or name in _LIBRARY_ONLY:
             continue
         default = getattr(d, name)
         ftype = hints.get(name, str)
@@ -121,15 +126,40 @@ def main(argv: Optional[list] = None) -> int:
     _skip = {"models", "model_path", "dtype", "output_dir", "selftest"}
     overrides = {f.name: getattr(cfg, f.name)
                  for f in dataclasses.fields(cfg) if f.name not in _skip}
+    if cfg.model_path is not None and len(args.models) != 1:
+        _log.error("an explicit model_path can only be used with one model tag")
+        return 2
+    had_failure = False
     for tag in args.models:
-        model = load_model(tag, model_path=cfg.model_path, dtype=cfg.dtype)
-        tokenizer = load_tokenizer(tag, model_path=cfg.model_path)
-        out = os.path.join(cfg.output_dir, _safe_tag(tag))
-        csv_path, rows = analyze_one_model(model, _safe_tag(tag), out,
-                                           tokenizer=tokenizer, **overrides)
-        _log.info("wrote %s (%d rows)", csv_path, len(rows))
-    return 0
+        model = tokenizer = None
+        try:
+            model = load_model(tag, model_path=cfg.model_path, dtype=cfg.dtype)
+            tokenizer = load_tokenizer(tag, model_path=cfg.model_path)
+            resolved = cfg.model_path or tag
+            safe = _safe_tag(tag, identity=os.path.realpath(resolved))
+            out = os.path.join(cfg.output_dir, safe)
+            csv_path, rows = analyze_one_model(model, safe, out,
+                                               tokenizer=tokenizer, **overrides)
+            _log.info("wrote %s (%d rows)", csv_path, len(rows))
+        except Exception as exc:
+            had_failure = True
+            _log.exception("analysis failed for %s: %s", tag, exc)
+        finally:
+            del tokenizer, model
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+    return 1 if had_failure else 0
 
 
-def _safe_tag(name: str) -> str:
-    return name.replace("/", "_").replace(" ", "_")
+def _safe_tag(name: str, *, identity: str | None = None) -> str:
+    raw = str(name)
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_.-") or "model"
+    if stem == raw and raw not in {".", ".."}:
+        return stem
+    digest = hashlib.sha256(str(identity or raw).encode("utf-8")).hexdigest()[:12]
+    return f"{stem}_{digest}"

@@ -33,6 +33,8 @@ class TrainConfig:
     allow_tf32: bool = True
     non_blocking_transfers: bool = True
     log_every: int = 50
+    validation_max_batches: int | None = None
+    max_train_tokens: int | None = None
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -50,6 +52,10 @@ class TrainConfig:
             raise ValueError("unsupported compile_mode")
         if self.log_every < 1:
             raise ValueError("log_every must be positive")
+        if self.validation_max_batches is not None and self.validation_max_batches < 1:
+            raise ValueError("validation_max_batches must be positive")
+        if self.max_train_tokens is not None and self.max_train_tokens < 1:
+            raise ValueError("max_train_tokens must be positive")
 
 
 def seed_everything(seed: int) -> None:
@@ -138,7 +144,8 @@ def evaluate_language_model(
                     raise ValueError("evaluation batches must contain labels")
                 valid = labels[:, 1:] != -100
                 if "attention_mask" in moved:
-                    valid = valid & moved["attention_mask"][:, 1:].to(dtype=torch.bool)
+                    mask = moved["attention_mask"].to(dtype=torch.bool)
+                    valid = valid & mask[:, 1:] & mask[:, :-1]
                 count = int(torch.count_nonzero(valid).item())
                 if count > 0:
                     total_loss += float(loss.detach().cpu()) * count
@@ -188,15 +195,20 @@ class LanguageModelTrainer:
             "float16": torch.float16,
             "bfloat16": torch.bfloat16,
         }[config.amp_dtype]
-        self.scaler = torch.cuda.amp.GradScaler(
-            enabled=self.use_amp and self.amp_torch_dtype == torch.float16
-        )
+        scaler_enabled = self.use_amp and self.amp_torch_dtype == torch.float16
+        try:
+            self.scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
+        except AttributeError:  # compatibility with older supported torch builds
+            self.scaler = torch.cuda.amp.GradScaler(enabled=scaler_enabled)
         self.execution_model: nn.Module = self.model
         if config.compile_model:
             if self.device.type != "cuda":
                 raise ValueError("compile_model is supported only for CUDA training in this pipeline")
             self.execution_model = torch.compile(self.model, mode=config.compile_mode)
         self.global_step = 0
+        self.attempted_steps = 0
+        self.skipped_steps = 0
+        self.processed_train_tokens = 0
         self.history: list[dict[str, float | int]] = []
         self.scheduler: torch.optim.lr_scheduler.LambdaLR | None = None
 
@@ -246,6 +258,30 @@ class LanguageModelTrainer:
                     )
                     for key, value in batch.items()
                 }
+                labels = moved.get("labels")
+                if labels is None:
+                    raise ValueError("training batches must contain labels")
+                valid = labels[:, 1:] != -100
+                if "attention_mask" in moved:
+                    mask = moved["attention_mask"].to(torch.bool)
+                    valid = valid & mask[:, 1:] & mask[:, :-1]
+                batch_tokens = int(torch.count_nonzero(valid).item())
+                if self.config.max_train_tokens is not None:
+                    remaining = self.config.max_train_tokens - self.processed_train_tokens
+                    if remaining <= 0:
+                        stop = True
+                        break
+                    if batch_tokens > remaining:
+                        labels = labels.clone()
+                        valid_positions = torch.nonzero(valid.reshape(-1), as_tuple=False).flatten()
+                        drop = valid_positions[remaining:]
+                        width = labels.shape[1] - 1
+                        labels[drop // width, (drop % width) + 1] = -100
+                        moved["labels"] = labels
+                        batch_tokens = remaining
+                if batch_tokens < 1:
+                    continue
+                self.attempted_steps += 1
                 self.optimizer.zero_grad(set_to_none=True)
                 with self._autocast():
                     output = self.execution_model(**moved)
@@ -257,12 +293,23 @@ class LanguageModelTrainer:
                 gradient_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), self.config.gradient_clip
                 )
+                previous_scale = float(self.scaler.get_scale())
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
-                self.scheduler.step()
-                self.global_step += 1
+                updated = (not self.scaler.is_enabled()
+                           or float(self.scaler.get_scale()) >= previous_scale)
+                if updated:
+                    self.scheduler.step()
+                    self.global_step += 1
+                    self.processed_train_tokens += batch_tokens
+                else:
+                    self.skipped_steps += 1
                 record: dict[str, float | int] = {
                     "step": self.global_step,
+                    "attempted_step": self.attempted_steps,
+                    "optimizer_update": int(updated),
+                    "skipped_steps": self.skipped_steps,
+                    "train_tokens": self.processed_train_tokens,
                     "epoch": epoch,
                     "train_loss": float(loss.detach().cpu()),
                     "learning_rate": float(self.optimizer.param_groups[0]["lr"]),
@@ -274,6 +321,7 @@ class LanguageModelTrainer:
                         self.execution_model,
                         validation_dataloader,
                         self.device,
+                        max_batches=self.config.validation_max_batches,
                         amp_dtype=self.config.amp_dtype,
                         non_blocking_transfers=self.config.non_blocking_transfers,
                     )
@@ -290,17 +338,27 @@ class LanguageModelTrainer:
     def save_checkpoint(self, path: str | Path, *, metadata: dict[str, Any] | None = None) -> None:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
         torch.save(
             {
                 "model": self.model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "scheduler": None if self.scheduler is None else self.scheduler.state_dict(),
+                "scaler": self.scaler.state_dict(),
                 "global_step": self.global_step,
+                "attempted_steps": self.attempted_steps,
+                "skipped_steps": self.skipped_steps,
+                "processed_train_tokens": self.processed_train_tokens,
+                "torch_rng_state": torch.get_rng_state(),
+                "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                "numpy_rng_state": np.random.get_state(),
+                "python_rng_state": random.getstate(),
                 "train_config": asdict(self.config),
                 "metadata": dict(metadata or {}),
             },
-            destination,
+            temporary,
         )
+        temporary.replace(destination)
 
 
 __all__ = [

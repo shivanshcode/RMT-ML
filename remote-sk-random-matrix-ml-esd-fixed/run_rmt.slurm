@@ -22,7 +22,9 @@
 #   encoder loader rather than in this causal-LM batch.
 # ---------------------------------------------------------------------------
 
-cd /home/shivansh/remote-sk-random-matrix-ml-esd-fixed/
+set -euo pipefail
+PROJECT_ROOT="${RMT_PROJECT_ROOT:-/home/shivansh/remote-sk-random-matrix-ml-esd-fixed}"
+cd "$PROJECT_ROOT"
 
 # --- offline guarantees (no network at run time) ---------------------------
 export HF_HUB_OFFLINE=1
@@ -44,7 +46,11 @@ if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
     PY=python
 else
     # fallback: call the env interpreter directly (no activation needed)
-    PY="$CONDA_BASE/envs/rmt/bin/python"
+    PY="$CONDA_BASE/envs/rmt_ml_env/bin/python"
+fi
+if ! "$PY" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
+    echo "[RMT] interpreter is unusable: $PY" >&2
+    exit 1
 fi
 echo "[RMT] using python: $($PY -c 'import sys; print(sys.executable)')"
 

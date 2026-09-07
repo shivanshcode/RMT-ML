@@ -18,9 +18,15 @@ from .discovery import (get_model_spec, discover_weight_matrices, split_fused_qk
                         assign_qkv_block)
 
 
-def _reconstruct_zeroed(W, lo, hi):
-    """SVD of W, zero singular values in ascending index range [lo, hi), rebuild."""
-    U, s, Vh = np.linalg.svd(W, full_matrices=False)
+def _reconstruct_zeroed(W, lo, hi, *, factors=None, backend="numpy", gpu_min_dim=1024):
+    """Zero an ascending singular range, optionally reusing pristine factors."""
+    if factors is None:
+        from .linalg import cached_svd
+        result = cached_svd(W, full_matrices=False, backend=backend,
+                            gpu_min_dim=gpu_min_dim)
+        U, s, Vh = result.U, result.s, result.Vh
+    else:
+        U, s, Vh = factors
     order = np.argsort(s)                       # ascending
     s_new = s.copy()
     zero_idx = order[lo:hi]
@@ -28,7 +34,8 @@ def _reconstruct_zeroed(W, lo, hi):
     return (U * s_new) @ Vh
 
 
-def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None) -> None:
+def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
+                         factor_cache=None, backend="numpy", gpu_min_dim=1024) -> None:
     """Zero the ``decile``-th ascending SV decile of each record's matrix in place.
 
     ``decile`` is 1-based (1 = smallest 10%).  Raises ValueError if out of range.
@@ -68,29 +75,46 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None) -> 
                                           interleaved=interleaved)
                 k = min(block.shape)
                 lo, hi = decile_index_ranges(k, n_deciles, ascending=True)[decile - 1]
-                assign_qkv_block(mat, idx, _reconstruct_zeroed(block, lo, hi),
-                                 num_heads=nh, interleaved=interleaved)
+                factors = None if factor_cache is None else factor_cache.get(name)
+                if factors is None and factor_cache is not None:
+                    from .linalg import cached_svd
+                    result = cached_svd(block, backend=backend, gpu_min_dim=gpu_min_dim)
+                    factors = (result.U, result.s, result.Vh)
+                    factor_cache[name] = factors
+                assign_qkv_block(
+                    mat, idx, _reconstruct_zeroed(
+                        block, lo, hi, factors=factors, backend=backend,
+                        gpu_min_dim=gpu_min_dim,
+                    ), num_heads=nh, interleaved=interleaved,
+                )
             else:
                 k = min(mat.shape)
                 lo, hi = decile_index_ranges(k, n_deciles, ascending=True)[decile - 1]
-                mat = _reconstruct_zeroed(mat, lo, hi)
+                factors = None if factor_cache is None else factor_cache.get(name)
+                if factors is None and factor_cache is not None:
+                    from .linalg import cached_svd
+                    result = cached_svd(mat, backend=backend, gpu_min_dim=gpu_min_dim)
+                    factors = (result.U, result.s, result.Vh)
+                    factor_cache[name] = factors
+                mat = _reconstruct_zeroed(
+                    mat, lo, hi, factors=factors, backend=backend,
+                    gpu_min_dim=gpu_min_dim,
+                )
             out = mat.T if cls == "Conv1D" else mat
-            # Store back at >= float32 (REPORT §0): an fp16 store floors the
-            # reconstruction at ~1e-3 rel-err and swamps the small-SV signal.
-            store_dtype = w.dtype
-            if torch.finfo(w.dtype).bits < 32:
-                store_dtype = torch.float32
-            new_w = torch.as_tensor(out, dtype=store_dtype, device=w.device)
-            if store_dtype == w.dtype:
-                w.copy_(new_w)
-            else:
-                module.weight = torch.nn.Parameter(new_w, requires_grad=w.requires_grad)
+            # Preserve the live Parameter object and execution dtype.  Replacing
+            # only a half-precision weight with float32 breaks F.linear against
+            # half inputs/biases and also destroys ties/optimizer references.
+            # The SVD is still evaluated in float64; the intervention is then
+            # explicitly quantized back to the model's execution precision.
+            new_w = torch.as_tensor(out, dtype=w.dtype, device=w.device)
+            w.copy_(new_w)
 
 
 def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
                          n_tokens=4096, decile_scope="all", n_deciles=10,
-                         spec=None, text_path="./wikitext-2-raw/wiki.test.raw"
-                         ) -> Dict[str, List[float]]:
+                         spec=None, text_path="./wikitext-2-raw/wiki.test.raw",
+                         stride=512, backend="numpy", gpu_min_dim=1024,
+                         allow_fallback=False) -> Dict[str, List[float]]:
     """Perplexity after zeroing each decile, with each decile measured against
     the *pristine* weights (deciles never accumulate).
 
@@ -105,42 +129,76 @@ def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
     """
     from .perplexity import perplexity_wikitext
 
-    deciles = list(range(1, n_deciles + 1))
+    if int(n_deciles) < 1:
+        raise ValueError("n_deciles must be positive")
+    if decile_scope not in {"all", "analyzed"}:
+        raise ValueError("decile_scope must be all or analyzed")
+    deciles = list(range(1, int(n_deciles) + 1))
     ppls = []
-    snapshot = None
+    baseline_model = model_factory()
+    baseline_result = perplexity_wikitext(
+        baseline_model, tokenizer, device, n_tokens=n_tokens,
+        stride=stride, text_path=text_path, allow_fallback=allow_fallback,
+        return_details=True,
+    )
+    baseline = float(baseline_result["perplexity"])
+    selected_roles = {r.short for r in records}
+    selected_layers = {r.layer_idx for r in records}
+    factor_cache = {}
     for d in deciles:
         model = model_factory()
         model.eval()
-        if snapshot is None:
-            # REPORT §1 N2: snapshot WEIGHTS ONLY. A full state_dict() deepcopy
-            # would also clone every (d_in x d_in) float64 activation-covariance
-            # buffer left on wrapped layers (1.64 GB per MLP on the 8B) — a real
-            # OOM. The ablation only ever mutates weights, so weights suffice.
-            snapshot = {k: v.detach().clone()
-                        for k, v in model.state_dict().items()
-                        if k.endswith(".weight")}      # pristine baseline
-        else:
-            model.load_state_dict(snapshot, strict=False)   # restore before ablating
         sp = spec or get_model_spec(model)
         if decile_scope == "all":
-            recs = discover_weight_matrices(model, spec=sp)
+            # Expand over layers, but retain exactly the analyzed matrix roles.
+            recs = [r for r in discover_weight_matrices(model, spec=sp)
+                    if r.short in selected_roles]
         else:
-            recs = _rebind_records(model, records)
-        set_layer_svd_decile(model, recs, d, n_deciles=n_deciles, spec=sp)
-        ppls.append(perplexity_wikitext(model, tokenizer, device, n_tokens=n_tokens,
-                                        text_path=text_path))
-    # leave the last model pristine (un-ablated) for any downstream use
-    if snapshot is not None:
+            recs = _rebind_records(model, records, spec=sp)
+        parameters = {}
+        for rec in recs:
+            base = rec.name.split("[", 1)[0]
+            modname = base[:-len(".weight")] if base.endswith(".weight") else base
+            parameter = model.get_submodule(modname).weight
+            parameters[id(parameter)] = parameter
+        snapshots = {key: parameter.detach().cpu().clone()
+                     for key, parameter in parameters.items()}
         try:
-            model.load_state_dict(snapshot, strict=False)
-        except Exception:
-            pass
-    return {"deciles": deciles, "perplexity": ppls}
+            set_layer_svd_decile(
+                model, recs, d, n_deciles=n_deciles, spec=sp,
+                factor_cache=factor_cache, backend=backend,
+                gpu_min_dim=gpu_min_dim,
+            )
+            measured = perplexity_wikitext(
+                model, tokenizer, device, n_tokens=n_tokens, stride=stride,
+                text_path=text_path, allow_fallback=allow_fallback,
+                return_details=True,
+            )
+            if int(measured["scored_tokens"]) != int(baseline_result["scored_tokens"]):
+                raise RuntimeError("decile and pristine perplexity scored different token counts")
+            ppls.append(float(measured["perplexity"]))
+        finally:
+            import torch
+            with torch.no_grad():
+                for key, parameter in parameters.items():
+                    parameter.copy_(snapshots[key].to(parameter.device))
+    return {
+        "deciles": deciles,
+        "perplexity": ppls,
+        "baseline_perplexity": float(baseline),
+        "delta_perplexity": [float(value - baseline) for value in ppls],
+        "roles": sorted(selected_roles),
+        "layers": sorted(selected_layers),
+        "n_tokens_requested": int(n_tokens),
+        "n_tokens_scored": int(baseline_result["scored_tokens"]),
+        "stride": int(stride),
+        "execution_precision": str(next(baseline_model.parameters()).dtype),
+    }
 
 
-def _rebind_records(model, records):
-    """Re-discover records by name on a fresh model instance (scope='analyzed')."""
+def _rebind_records(model, records, *, spec=None):
+    """Re-discover records by name on a fresh model while preserving its spec."""
     wanted = {r.name for r in records}
-    spec = get_model_spec(model)
-    fresh = discover_weight_matrices(model, spec=spec)
+    resolved = spec or get_model_spec(model)
+    fresh = discover_weight_matrices(model, spec=resolved)
     return [r for r in fresh if r.name in wanted]

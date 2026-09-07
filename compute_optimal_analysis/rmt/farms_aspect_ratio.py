@@ -251,8 +251,10 @@ def farms_window_starts(
     if count < 1:
         raise ValueError("n_submatrices must be positive")
     available = (max_row + 1) * (max_column + 1)
-    if count > available:
-        raise ValueError("n_submatrices exceeds the number of unique window starts")
+    # Sampling without replacement cannot exceed available starts.  A full-size
+    # square default window has exactly one start, so cap rather than failing
+    # after accepting the random-sampling configuration.
+    count = min(count, available)
     generator = _generator(rng)
     flat = np.sort(generator.choice(available, size=count, replace=False))
     starts = np.column_stack((flat // (max_column + 1), flat % (max_column + 1)))

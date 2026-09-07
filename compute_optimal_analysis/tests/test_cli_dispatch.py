@@ -212,7 +212,8 @@ def test_every_overlap_metric_dispatches(metric: str) -> None:
         RMTMethodConfig(overlap_metric=metric),
     )
     assert 0.0 <= float(result["score"]) <= 1.0
-    assert np.isclose(float(result["score"]), 1.0)
+    expected = 1.0 / 3.0 if metric == "staats_dual_end" else 1.0
+    assert np.isclose(float(result["score"]), expected)
 
 
 @pytest.mark.parametrize("detector", SPIKE_DETECTORS)

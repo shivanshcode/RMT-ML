@@ -186,8 +186,8 @@ class RMTMethodConfig:
             raise ValueError("farms_step_size must be positive")
         if self.farms_normalization not in {"canonical", "raw", "trace"}:
             raise ValueError("unsupported FARMS normalization")
-        if self.lanczos_steps is not None and int(self.lanczos_steps) < 2:
-            raise ValueError("lanczos_steps must be at least two")
+        if self.lanczos_steps is not None and int(self.lanczos_steps) < 3:
+            raise ValueError("lanczos_steps must be at least three")
         if int(self.lanczos_probes) < 1 or int(self.lanczos_probes) != self.lanczos_probes:
             raise ValueError("lanczos_probes must be positive")
         if self.lanczos_tail_window is not None and int(self.lanczos_tail_window) < 2:
@@ -259,14 +259,12 @@ def prepare_spectrum(
     config: RMTMethodConfig = RMTMethodConfig(),
     *,
     variance: float = 1.0,
+    svd: Any | None = None,
 ) -> PreparedSpectrum:
     """Apply raw, fixed-ratio, or analytic edge normalization to a matrix."""
 
     matrix = _finite_weight(weight)
     q = min(matrix.shape) / max(matrix.shape)
-    raw = mp_eigenvalues(matrix)
-    if config.aspect_ratio_mode == "raw":
-        return PreparedSpectrum(raw, q, "raw")
     if config.aspect_ratio_mode in {"farms_normalized", "farms_unbiased"}:
         farms = farms_spectrum(matrix, _farms_config(config))
         return PreparedSpectrum(
@@ -276,6 +274,10 @@ def prepare_spectrum(
             farms=farms,
             diagnostics=farms.as_dict(),
         )
+    raw = (np.asarray(svd.covariance_eigenvalues, dtype=np.float64)
+           if svd is not None else mp_eigenvalues(matrix))
+    if config.aspect_ratio_mode == "raw":
+        return PreparedSpectrum(raw, q, "raw")
     normalized = shape_normalize_eigenvalues(raw, q, variance)
     return PreparedSpectrum(
         normalized,
@@ -290,14 +292,20 @@ def dispatch_mp_fit(
     config: RMTMethodConfig = RMTMethodConfig(),
     *,
     variance: float | None = None,
+    svd: Any | None = None,
+    prepared: PreparedSpectrum | None = None,
 ) -> MPFitResult:
     """Run the configured MP bulk fitting method."""
 
     matrix = _finite_weight(weight)
     method = config.mp_fit_method
+    if not np.any(matrix):
+        q = min(matrix.shape) / max(matrix.shape)
+        return fit_marchenko_pastur(np.zeros(min(matrix.shape)), q)
     if method == "lanczos_stieltjes":
         return fit_marchenko_pastur_lanczos(
             matrix,
+            eigenvalues=(None if svd is None else svd.covariance_eigenvalues),
             steps=config.lanczos_steps,
             n_probes=config.lanczos_probes,
             tail_window=config.lanczos_tail_window,
@@ -330,7 +338,9 @@ def dispatch_mp_fit(
             matrix,
             kernel_window=config.gaussian_kernel_window,
         )
-    prepared = prepare_spectrum(matrix, config, variance=1.0 if variance is None else variance)
+    prepared = (prepared if prepared is not None else prepare_spectrum(
+        matrix, config, variance=1.0 if variance is None else variance, svd=svd
+    ))
     if method == "kde_bulk_fit":
         return fit_marchenko_pastur_kde(
             prepared.eigenvalues,
@@ -402,6 +412,15 @@ def dispatch_spike_detector(
     matrix = _finite_weight(weight)
     eigenvalues = mp_eigenvalues(matrix)
     q = min(matrix.shape) / max(matrix.shape)
+    if not np.any(matrix):
+        return SpikeDetectionResult(
+            method=config.spike_detector,
+            threshold=0.0,
+            bulk_edge=0.0,
+            spikes=np.asarray([], dtype=np.float64),
+            indices=np.asarray([], dtype=np.int64),
+            diagnostics={"available": False, "reason": "zero matrix"},
+        )
     if config.spike_detector == "tracy_widom_95":
         return detect_spikes_tracy_widom(
             eigenvalues,

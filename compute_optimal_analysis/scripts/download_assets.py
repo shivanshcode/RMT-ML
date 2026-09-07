@@ -350,8 +350,13 @@ def main() -> int:
     if args.assets in {"all", "wikitext103"}:
         _require_connected_mode(args.allow_network)
     paths = _configure_cache(root)
-    assets: dict[str, Any] = {}
-    revisions: dict[str, str] = {}
+    existing_path = root / "data" / "asset_manifest.json"
+    existing: dict[str, Any] = {}
+    if existing_path.is_file():
+        with existing_path.open("r", encoding="utf-8") as handle:
+            existing = json.load(handle)
+    assets: dict[str, Any] = dict(existing.get("assets", {}))
+    revisions: dict[str, str] = dict(existing.get("source_revisions", {}))
     if args.assets in {"all", "synthetic"}:
         assets["synthetic"] = _generate_synthetic_assets(
             paths,
@@ -360,7 +365,7 @@ def main() -> int:
             seed=args.seed,
         )
     if args.assets in {"all", "wikitext103"}:
-        revisions = _resolve_hub_revisions(args.allow_network)
+        revisions.update(_resolve_hub_revisions(args.allow_network))
         tokenizer_path = _download_tokenizer(
             paths,
             args.allow_network,

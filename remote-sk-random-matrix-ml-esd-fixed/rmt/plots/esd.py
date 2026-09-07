@@ -28,8 +28,17 @@ def _bin_edges(vals, lo, hi):
     left, right = float(min(vals.min(), lo)), float(max(vals.max(), hi))
     if h is None or not np.isfinite(h):
         return np.linspace(left, right, 51)
-    nb = int(np.clip(round((right - left) / h), 50, 400))
-    return np.linspace(left, right, nb + 1)
+    requested = int(np.ceil((right - left) / h))
+    if requested <= 400:
+        return np.linspace(left, right, max(50, requested) + 1)
+    # Preserve the bulk FD resolution and cover sparse tails separately rather
+    # than spreading a capped count over the outlier-inflated full range.
+    bulk_left, bulk_right = max(left, float(lo)), min(right, float(hi))
+    bulk_edges = np.arange(bulk_left, bulk_right + h, h)
+    tails = vals[(vals < bulk_left) | (vals > bulk_right)]
+    tail_edges = (np.quantile(tails, np.linspace(0.0, 1.0, min(100, tails.size) + 1))
+                  if tails.size else np.asarray([]))
+    return np.unique(np.concatenate(([left], bulk_edges, tail_edges, [right])))
 
 
 def _count_frac(vals, lo, hi):
@@ -96,10 +105,17 @@ def plot_esd(svals, n, m, sigma, out_path, *, domain="nu", N=None,
                 "r-", lw=2, label="MP (theory, σ̂)")
 
     if mp_mode in ("fit", "both"):
-        a, nu_min, nu_max = fit_modified_mp(vals, win=broaden_win)
-        xs = _open_grid(nu_min, nu_max)
-        ax.plot(xs, modified_mp(xs, a, nu_max, nu_min),
-                "k--", lw=2, label="modified MP (fit)")
+        # The modified model is defined in singular-value space.  Fit there,
+        # then apply λ=ν²/N and its Jacobian when plotting eigenvalues.
+        a, nu_min, nu_max = fit_modified_mp(s, win=broaden_win)
+        nu_grid = _open_grid(nu_min, nu_max)
+        nu_density = modified_mp(nu_grid, a, nu_max, nu_min)
+        if domain == "nu":
+            fit_x, fit_density = nu_grid, nu_density
+        else:
+            fit_x = nu_grid**2 / N
+            fit_density = nu_density * N / (2.0 * np.maximum(nu_grid, np.finfo(float).tiny))
+        ax.plot(fit_x, fit_density, "k--", lw=2, label="modified MP (fit)")
         xb = np.linspace(vals[0], vals[-1], 2000)
         ax.plot(xb, gaussian_broaden(xb, vals, win=broaden_win),
                 color="0.35", lw=1.2, label="broadened ESD")
@@ -107,7 +123,9 @@ def plot_esd(svals, n, m, sigma, out_path, *, domain="nu", N=None,
     ax.set_xlabel(xlabel)
     ax.set_ylabel("density")
     ax.legend()
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    parent = os.path.dirname(out_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
     return out_path

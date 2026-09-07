@@ -23,6 +23,8 @@ class LesionInfo:
     removed_frobenius_energy: float
     total_frobenius_energy: float
     rank: int
+    target_frobenius_energy: float | None = None
+    target_reached: bool = True
 
     @property
     def removed_energy_fraction(self) -> float:
@@ -52,7 +54,8 @@ def _svd_components(
         target = torch.device(backend)
     if target.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA SVD was requested but is unavailable")
-    analysis = weight.detach().to(device=target, dtype=torch.float32)
+    analysis_dtype = torch.float64 if weight.dtype == torch.float64 else torch.float32
+    analysis = weight.detach().to(device=target, dtype=analysis_dtype)
     keyword_arguments: dict[str, object] = {"full_matrices": False}
     if target.type == "cuda" and driver != "default":
         keyword_arguments["driver"] = driver
@@ -107,11 +110,7 @@ def _count_selection(
         return torch.arange(rank - count, rank, dtype=torch.long)
     candidates = _mp_bulk_candidates(singular_values, n, m)
     if candidates.numel() < count:
-        margin = min(rank // 3, max(1, count))
-        candidates = torch.arange(margin, rank - margin, dtype=torch.long)
-    if candidates.numel() == 0:
         candidates = torch.arange(rank, dtype=torch.long)
-    count = min(count, candidates.numel())
     order = torch.randperm(candidates.numel(), generator=generator)
     return candidates[order[:count]]
 
@@ -155,6 +154,7 @@ def lesion_matrix(
     generator: torch.Generator | None = None,
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
+    svd_factors: tuple[Tensor, Tensor, Tensor] | None = None,
 ) -> tuple[Tensor, LesionInfo]:
     """Return a reconstructed matrix with one singular tranche zeroed."""
 
@@ -167,11 +167,11 @@ def lesion_matrix(
     mode = str(mode).lower()
     if mode not in {"count", "energy"}:
         raise ValueError("mode must be count or energy")
-    U, singular_values, Vh = _svd_components(
-        weight,
-        backend=svd_backend,
-        driver=svd_driver,
+    U, singular_values, Vh = (
+        _svd_components(weight, backend=svd_backend, driver=svd_driver)
+        if svd_factors is None else svd_factors
     )
+    target_energy: float | None = None
     if mode == "count":
         indices = _count_selection(
             singular_values,
@@ -182,6 +182,8 @@ def lesion_matrix(
             generator,
         )
     else:
+        total_before = float(torch.sum(singular_values.detach().cpu().double().square()))
+        target_energy = fraction * total_before if reference_energy is None else float(reference_energy)
         indices = _energy_selection(
             singular_values,
             name,
@@ -205,6 +207,8 @@ def lesion_matrix(
         removed_frobenius_energy=removed_energy,
         total_frobenius_energy=total_energy,
         rank=int(singular_values.numel()),
+        target_frobenius_energy=target_energy,
+        target_reached=(target_energy is None or removed_energy >= target_energy),
     )
     return reconstructed.to(device=weight.device, dtype=weight.dtype), info
 
@@ -307,6 +311,7 @@ def spectral_lesion(
     seed: int = 0,
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
+    factor_cache: dict[str, tuple[Tensor, Tensor, Tensor]] | None = None,
 ) -> Iterator[list[LesionInfo]]:
     """Temporarily lesion named matrices and restore exact bytes on exit."""
 
@@ -326,6 +331,13 @@ def spectral_lesion(
     try:
         with torch.no_grad():
             for name in names:
+                factors = None if factor_cache is None else factor_cache.get(name)
+                if factors is None and factor_cache is not None:
+                    computed = _svd_components(
+                        parameters[name], backend=svd_backend, driver=svd_driver
+                    )
+                    factors = tuple(value.detach().cpu() for value in computed)
+                    factor_cache[name] = factors
                 modified, info = lesion_matrix(
                     parameters[name],
                     tranche,
@@ -335,6 +347,7 @@ def spectral_lesion(
                     generator=generator,
                     svd_backend=svd_backend,
                     svd_driver=svd_driver,
+                    svd_factors=factors,
                 )
                 parameters[name].copy_(modified)
                 information.append(info)
@@ -365,6 +378,7 @@ def independent_lesion_benchmark(
     if not math.isfinite(baseline):
         raise ValueError("baseline evaluation must be finite")
     results: list[dict[str, object]] = []
+    factor_cache: dict[str, tuple[Tensor, Tensor, Tensor]] = {}
     for offset, tranche in enumerate(tranches):
         with spectral_lesion(
             model,
@@ -376,6 +390,7 @@ def independent_lesion_benchmark(
             seed=seed + offset,
             svd_backend=svd_backend,
             svd_driver=svd_driver,
+            factor_cache=factor_cache,
         ) as information:
             value = float(evaluate())
         results.append(
