@@ -235,6 +235,7 @@ def compute_tensor_svd(
     backend: str = "auto",
     driver: str = "gesvdj",
     normalization: float | None = None,
+    analysis_dtype: str = "float64",
 ) -> SVDResult:
     """Compute an accelerated reduced SVD and transfer only factors to the pure container."""
 
@@ -252,9 +253,10 @@ def compute_tensor_svd(
         target = torch.device(backend)
     if target.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA SVD was requested but is unavailable")
-    source_dtype = matrix.dtype
-    analysis_dtype = torch.float64 if source_dtype == torch.float64 else torch.float32
-    analysis = matrix.detach().to(device=target, dtype=analysis_dtype)
+    if analysis_dtype not in {"float32", "float64"}:
+        raise ValueError("analysis_dtype must be float32 or float64")
+    selected_dtype = torch.float64 if analysis_dtype == "float64" else torch.float32
+    analysis = matrix.detach().to(device=target, dtype=selected_dtype)
     keyword_arguments: dict[str, object] = {"full_matrices": False}
     if target.type == "cuda" and driver != "default":
         keyword_arguments["driver"] = driver

@@ -26,6 +26,9 @@ class SVDResult:
     Vh: np.ndarray
     n: int
     m: int
+    backend: str = "unknown"
+    factorization_dtype: str = "float64"
+    degraded: bool = False
 
     @property
     def gamma(self) -> float:
@@ -81,6 +84,9 @@ def cached_svd(weight, full_matrices: bool = False, *, backend: str = "auto",
     else:
         raise ValueError(f"unknown backend {backend!r}")
 
+    actual_backend = "torch" if use_torch else "numpy"
+    factorization_dtype = "float64"
+    degraded = False
     if use_torch:
         try:
             import torch
@@ -104,6 +110,7 @@ def cached_svd(weight, full_matrices: bool = False, *, backend: str = "auto",
             try:
                 U, s, Vh = np.linalg.svd(W, full_matrices=full_matrices)
                 s = s.astype(np.float64)
+                actual_backend = "numpy-fallback"
             except Exception:
                 from .config import get_logger
                 get_logger("rmt.linalg").warning(
@@ -111,13 +118,19 @@ def cached_svd(weight, full_matrices: bool = False, *, backend: str = "auto",
                 U, s, Vh = np.linalg.svd(W.astype(np.float32),
                                          full_matrices=full_matrices)
                 s = s.astype(np.float64)
+                actual_backend = "numpy-fallback"
+                factorization_dtype = "float32"
+                degraded = True
     else:
         U, s, Vh = np.linalg.svd(W, full_matrices=full_matrices)
         s = s.astype(np.float64)
 
     return SVDResult(U=np.asarray(U, dtype=np.float64),
                      s=np.asarray(s, dtype=np.float64),
-                     Vh=np.asarray(Vh, dtype=np.float64), n=n, m=m)
+                     Vh=np.asarray(Vh, dtype=np.float64), n=n, m=m,
+                     backend=actual_backend,
+                     factorization_dtype=factorization_dtype,
+                     degraded=degraded)
 
 
 def _as_float_2d(weight) -> np.ndarray:

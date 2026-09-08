@@ -70,18 +70,18 @@ def ipr(vectors, axis=0) -> np.ndarray:
 
 
 def ipr_summary(Vh, s, n, m, sigma) -> dict:
-    """{ipr_top10_mean, ipr_bulk_mean}; split by MP upper edge ν₊."""
+    """IPR summaries with ``ipr_bulk_mean`` inside both MP support edges."""
     from .mp import mp_bounds
     Vh = np.asarray(Vh, dtype=np.float64)
     s = np.asarray(s, dtype=np.float64)
     # right singular vectors are the rows of Vh -> compute IPR along columns of Vh.T
     iprs = ipr(Vh.T, axis=0)            # one per singular vector
-    _, nu_plus = mp_bounds(n, m, sigma)
+    nu_minus, nu_plus = mp_bounds(n, m, sigma)
     k = min(len(s), iprs.size)
     s = s[:k]; iprs = iprs[:k]
     top_n = max(1, k // 10)
     ipr_top10_mean = float(np.mean(iprs[:top_n]))   # s descending -> first = largest
-    bulk_mask = s <= nu_plus
+    bulk_mask = (s >= nu_minus) & (s <= nu_plus)
     ipr_bulk_mean = float(np.mean(iprs[bulk_mask])) if bulk_mask.any() else float("nan")
     return {"ipr_top10_mean": ipr_top10_mean, "ipr_bulk_mean": ipr_bulk_mean}
 
@@ -121,13 +121,14 @@ def mp_softrank(s, nu_plus) -> float:
     return float(nu_plus / smax) if smax > 0 else float("nan")
 
 
-def bulk_mass_frac(s, nu_plus) -> float:
-    """Σs²[s≤ν₊] / Σs²  ∈ [0,1]  (energy fraction inside the bulk)."""
+def bulk_mass_frac(s, nu_plus, *, nu_minus=0.0) -> float:
+    """Energy fraction inside the two-sided support ``[nu_minus, nu_plus]``."""
     sv = np.asarray(s, dtype=np.float64)
     tot = float(np.sum(sv**2))
     if tot <= 0:
         return float("nan")
-    return float(np.sum(sv[sv <= nu_plus] ** 2) / tot)
+    mask = (sv >= float(nu_minus)) & (sv <= float(nu_plus))
+    return float(np.sum(sv[mask] ** 2) / tot)
 
 
 def decile_index_ranges(k, n_deciles=10, ascending=True) -> List[Tuple[int, int]]:

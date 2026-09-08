@@ -29,15 +29,22 @@ def weight_digest(weight) -> str:
     return digest.hexdigest()
 
 
-def save_svd(cache_dir, name, U, s, Vh, *, digest=None) -> str:
+def save_svd(cache_dir, name, U, s, Vh, *, digest=None,
+             backend="unknown", factorization_dtype=None, degraded=False) -> str:
     """Save (U, s, Vh) to ``cache_dir/<sanitized name>.npz``; return the path."""
     os.makedirs(cache_dir, exist_ok=True)
     path = os.path.join(cache_dir, _safe_stem(name) + ".npz")
     fd, temporary = tempfile.mkstemp(prefix=".svd-", suffix=".npz", dir=cache_dir)
     os.close(fd)
     try:
-        np.savez_compressed(temporary, U=np.asarray(U), s=np.asarray(s), Vh=np.asarray(Vh),
-                            name=np.array(name), digest=np.array(digest or ""))
+        inferred_dtype = factorization_dtype or str(np.asarray(s).dtype)
+        np.savez_compressed(
+            temporary, U=np.asarray(U), s=np.asarray(s), Vh=np.asarray(Vh),
+            name=np.array(name), digest=np.array(digest or ""),
+            backend=np.array(str(backend)),
+            factorization_dtype=np.array(str(inferred_dtype)),
+            degraded=np.array(bool(degraded)),
+        )
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
@@ -45,8 +52,13 @@ def save_svd(cache_dir, name, U, s, Vh, *, digest=None) -> str:
     return path
 
 
-def load_svd(cache_dir, name, *, digest=None):
-    """Load (U, s, Vh); return None if absent."""
+def load_svd(cache_dir, name, *, digest=None, required_dtype=None,
+             allow_degraded=False, return_metadata=False):
+    """Load factors only when identity and requested precision contract match.
+
+    ``return_metadata=True`` appends the persisted backend, factorization dtype,
+    and degraded marker so aggregation cannot erase precision provenance.
+    """
     path = os.path.join(cache_dir, _safe_stem(name) + ".npz")
     if not os.path.exists(path):
         return None
@@ -55,9 +67,23 @@ def load_svd(cache_dir, name, *, digest=None):
             return None
         if digest is not None and ("digest" not in d or str(d["digest"].item()) != digest):
             return None
+        cached_dtype = (str(d["factorization_dtype"].item())
+                        if "factorization_dtype" in d else None)
+        degraded = bool(d["degraded"].item()) if "degraded" in d else False
+        if required_dtype is not None and cached_dtype != str(required_dtype):
+            return None
+        if degraded and not allow_degraded:
+            return None
         U, s, Vh = d["U"], d["s"], d["Vh"]
         if U.ndim != 2 or s.ndim != 1 or Vh.ndim != 2:
             return None
         if U.shape[1] != s.size or Vh.shape[0] != s.size:
             return None
+        if return_metadata:
+            backend = str(d["backend"].item()) if "backend" in d else "unknown-cache"
+            return U, s, Vh, {
+                "backend": backend,
+                "factorization_dtype": cached_dtype or str(s.dtype),
+                "degraded": degraded,
+            }
         return U, s, Vh

@@ -284,7 +284,7 @@ def _file_manifest(root: Path) -> list[dict[str, Any]]:
                 continue
             files.append(
                 {
-                    "path": str(path.relative_to(root)),
+                    "path": path.relative_to(root).as_posix(),
                     "bytes": path.stat().st_size,
                     "sha256": _sha256(path),
                 }
@@ -307,7 +307,7 @@ def _verify_manifest(root: Path) -> int:
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("asset manifest contains a malformed file record")
-        relative = Path(str(record.get("path", "")))
+        relative = Path(str(record.get("path", "")).replace("\\", "/"))
         target = (root / relative).resolve()
         if root != target and root not in target.parents:
             raise ValueError("asset manifest contains a path outside the project root")
@@ -319,6 +319,22 @@ def _verify_manifest(root: Path) -> int:
             raise ValueError(f"staged asset checksum mismatch: {relative}")
         verified += 1
     return verified
+
+
+def _verify_untouched_records(root: Path, manifest: dict[str, Any],
+                              replaced_prefixes: tuple[str, ...]) -> None:
+    """Refuse to re-certify modified files from asset families not being staged."""
+    for record in manifest.get("files", []):
+        portable = str(record.get("path", "")).replace("\\", "/")
+        if any(portable == prefix.rstrip("/") or portable.startswith(prefix)
+               for prefix in replaced_prefixes):
+            continue
+        target = (root / Path(portable)).resolve()
+        if (not target.is_file() or target.stat().st_size != int(record.get("bytes", -1))
+                or _sha256(target) != str(record.get("sha256", ""))):
+            raise ValueError(
+                f"untouched staged asset changed since the existing manifest: {portable}; "
+                "restore it or explicitly restage that asset family")
 
 
 def parse_args() -> argparse.Namespace:
@@ -357,6 +373,14 @@ def main() -> int:
             existing = json.load(handle)
     assets: dict[str, Any] = dict(existing.get("assets", {}))
     revisions: dict[str, str] = dict(existing.get("source_revisions", {}))
+    replaced: list[str] = []
+    if args.assets in {"all", "synthetic"}:
+        replaced.extend(("data/tokenized/synthetic_zipf.npy", "data/tokenizers/synthetic/"))
+    if args.assets in {"all", "wikitext103"}:
+        replaced.extend(("data/tokenized/wikitext", "data/tokenizers/gpt2/",
+                         "data/raw/wikitext"))
+    if existing:
+        _verify_untouched_records(root, existing, tuple(replaced))
     if args.assets in {"all", "synthetic"}:
         assets["synthetic"] = _generate_synthetic_assets(
             paths,

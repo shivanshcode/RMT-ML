@@ -264,7 +264,7 @@ Implementation decision: `lanczos_stieltjes.py` implements adaptive double-reort
 | `--mp-fit-method lanczos_stieltjes` | Lanczos-Cholesky support estimate | 2025 paper; requires matrix/operator input, not only eigenvalues |
 | `--mp-fit-method farms_unbiased` | Analytic MP fit on FARMS pooled fixed-ratio spectra | Hu et al. subsampling plus Phase I MP fitting |
 | `--unfolding-strategy polynomial_chebyshev` | Chebyshev smooth staircase fit | Independent compatibility method; not codebase2 |
-| `--unfolding-strategy spline_monotone` | Smoothed spline followed by monotone interpolation | Independent corrected method |
+| `--unfolding-strategy spline_monotone` | Smoothed spline; folded fits are replaced by the integral of a positive smoothed density, never by flattened ranks | Independent corrected method |
 | `--unfolding-strategy gaussian_kernel` | Adaptive local Gaussian-CDF unfolding | codebase2 |
 | `--unfolding-strategy raw_rank_order` | Empirical rank map | Diagnostic only; it suppresses spacing fluctuations |
 | `--tail-solver clauset_mle` | CSN density MLE with KS cutoff selection | Phase I and codebase2 methodology |

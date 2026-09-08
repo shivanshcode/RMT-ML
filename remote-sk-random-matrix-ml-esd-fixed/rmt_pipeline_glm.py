@@ -1775,4 +1775,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        "This archived monolith is intentionally non-executable. "
+        "Use `python -m rmt` so the maintained, tested package is executed."
+    )

@@ -25,6 +25,9 @@ class LesionInfo:
     rank: int
     target_frobenius_energy: float | None = None
     target_reached: bool = True
+    energy_match_status: str = "not_applicable"
+    relative_energy_error: float | None = None
+    candidate_policy: str = "declared_tranche_only"
 
     @property
     def removed_energy_fraction(self) -> float:
@@ -43,6 +46,7 @@ def _svd_components(
     *,
     backend: str,
     driver: str,
+    analysis_dtype: str = "float64",
 ) -> tuple[Tensor, Tensor, Tensor]:
     if backend not in {"auto", "cpu", "cuda"}:
         raise ValueError("svd backend must be auto, cpu, or cuda")
@@ -54,8 +58,10 @@ def _svd_components(
         target = torch.device(backend)
     if target.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA SVD was requested but is unavailable")
-    analysis_dtype = torch.float64 if weight.dtype == torch.float64 else torch.float32
-    analysis = weight.detach().to(device=target, dtype=analysis_dtype)
+    if analysis_dtype not in {"float32", "float64"}:
+        raise ValueError("analysis_dtype must be float32 or float64")
+    selected_dtype = torch.float64 if analysis_dtype == "float64" else torch.float32
+    analysis = weight.detach().to(device=target, dtype=selected_dtype)
     keyword_arguments: dict[str, object] = {"full_matrices": False}
     if target.type == "cuda" and driver != "default":
         keyword_arguments["driver"] = driver
@@ -86,11 +92,6 @@ def _mp_bulk_candidates(singular_values: Tensor, n: int, m: int) -> Tensor:
         candidates = np.flatnonzero((values >= lower) & (values <= upper))
     except ValueError:
         candidates = np.asarray([], dtype=int)
-    if candidates.size == 0:
-        margin = max(1, int(math.ceil(0.1 * values.size)))
-        candidates = np.arange(margin, values.size - margin, dtype=int)
-    if candidates.size == 0:
-        candidates = np.arange(values.size, dtype=int)
     return torch.as_tensor(candidates, dtype=torch.long)
 
 
@@ -110,7 +111,9 @@ def _count_selection(
         return torch.arange(rank - count, rank, dtype=torch.long)
     candidates = _mp_bulk_candidates(singular_values, n, m)
     if candidates.numel() < count:
-        candidates = torch.arange(rank, dtype=torch.long)
+        raise ValueError(
+            f"matched bulk lesion is infeasible: requested {count} indices but "
+            f"only {candidates.numel()} lie in the declared MP bulk")
     order = torch.randperm(candidates.numel(), generator=generator)
     return candidates[order[:count]]
 
@@ -140,7 +143,15 @@ def _energy_selection(
         order = candidates[permutation]
     cumulative = torch.cumsum(energies[order], dim=0)
     reached = torch.nonzero(cumulative >= target, as_tuple=False)
-    count = order.numel() if reached.numel() == 0 else int(reached[0, 0]) + 1
+    if reached.numel() == 0:
+        count = order.numel()
+    else:
+        upper_count = int(reached[0, 0]) + 1
+        upper_error = abs(float(cumulative[upper_count - 1]) - target)
+        lower_count = upper_count - 1
+        lower_value = 0.0 if lower_count == 0 else float(cumulative[lower_count - 1])
+        lower_error = abs(lower_value - target)
+        count = lower_count if lower_count > 0 and lower_error < upper_error else upper_count
     return order[:count]
 
 
@@ -155,6 +166,7 @@ def lesion_matrix(
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
     svd_factors: tuple[Tensor, Tensor, Tensor] | None = None,
+    analysis_dtype: str = "float64",
 ) -> tuple[Tensor, LesionInfo]:
     """Return a reconstructed matrix with one singular tranche zeroed."""
 
@@ -168,10 +180,12 @@ def lesion_matrix(
     if mode not in {"count", "energy"}:
         raise ValueError("mode must be count or energy")
     U, singular_values, Vh = (
-        _svd_components(weight, backend=svd_backend, driver=svd_driver)
+        _svd_components(weight, backend=svd_backend, driver=svd_driver,
+                        analysis_dtype=analysis_dtype)
         if svd_factors is None else svd_factors
     )
     target_energy: float | None = None
+    energy_infeasible = False
     if mode == "count":
         indices = _count_selection(
             singular_values,
@@ -184,6 +198,12 @@ def lesion_matrix(
     else:
         total_before = float(torch.sum(singular_values.detach().cpu().double().square()))
         target_energy = fraction * total_before if reference_energy is None else float(reference_energy)
+        if name == "bulk":
+            candidates = _mp_bulk_candidates(singular_values, weight.shape[0], weight.shape[1])
+            available = float(torch.sum(
+                singular_values.detach().cpu().double()[candidates].square()
+            ))
+            energy_infeasible = available < target_energy
         indices = _energy_selection(
             singular_values,
             name,
@@ -199,6 +219,17 @@ def lesion_matrix(
     total_energy = float(torch.sum(modified.double().square()).cpu())
     modified[device_indices] = 0.0
     reconstructed = (U * modified.unsqueeze(0)) @ Vh
+    relative_error = (None if target_energy is None else
+                      abs(removed_energy - target_energy) /
+                      max(target_energy, np.finfo(float).eps))
+    if target_energy is None:
+        match_status = "not_applicable"
+    elif energy_infeasible:
+        match_status = "infeasible"
+    elif relative_error is not None and relative_error <= 0.05:
+        match_status = "matched_5pct"
+    else:
+        match_status = "nearest_discrete"
     info = LesionInfo(
         tranche=name,
         fraction=fraction,
@@ -208,7 +239,9 @@ def lesion_matrix(
         total_frobenius_energy=total_energy,
         rank=int(singular_values.numel()),
         target_frobenius_energy=target_energy,
-        target_reached=(target_energy is None or removed_energy >= target_energy),
+        target_reached=(target_energy is None or match_status == "matched_5pct"),
+        energy_match_status=match_status,
+        relative_energy_error=relative_error,
     )
     return reconstructed.to(device=weight.device, dtype=weight.dtype), info
 
@@ -312,6 +345,7 @@ def spectral_lesion(
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
     factor_cache: dict[str, tuple[Tensor, Tensor, Tensor]] | None = None,
+    analysis_dtype: str = "float64",
 ) -> Iterator[list[LesionInfo]]:
     """Temporarily lesion named matrices and restore exact bytes on exit."""
 
@@ -334,7 +368,8 @@ def spectral_lesion(
                 factors = None if factor_cache is None else factor_cache.get(name)
                 if factors is None and factor_cache is not None:
                     computed = _svd_components(
-                        parameters[name], backend=svd_backend, driver=svd_driver
+                        parameters[name], backend=svd_backend, driver=svd_driver,
+                        analysis_dtype=analysis_dtype
                     )
                     factors = tuple(value.detach().cpu() for value in computed)
                     factor_cache[name] = factors
@@ -348,6 +383,7 @@ def spectral_lesion(
                     svd_backend=svd_backend,
                     svd_driver=svd_driver,
                     svd_factors=factors,
+                    analysis_dtype=analysis_dtype,
                 )
                 parameters[name].copy_(modified)
                 information.append(info)
@@ -370,6 +406,7 @@ def independent_lesion_benchmark(
     seed: int = 0,
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
+    analysis_dtype: str = "float64",
 ) -> list[dict[str, object]]:
     """Evaluate each lesion from the same pristine model state."""
 
@@ -391,8 +428,11 @@ def independent_lesion_benchmark(
             svd_backend=svd_backend,
             svd_driver=svd_driver,
             factor_cache=factor_cache,
+            analysis_dtype=analysis_dtype,
         ) as information:
             value = float(evaluate())
+            if not math.isfinite(value):
+                raise ValueError(f"{tranche} lesion evaluation must belak finite")
         results.append(
             {
                 "tranche": _canonical_tranche(tranche),
@@ -434,6 +474,8 @@ def independent_decile_benchmark(
             svd_driver=svd_driver,
         ) as information:
             value = float(evaluate())
+            if not math.isfinite(valuelk(value := value):"): # no
+                raise ValueError(f"decile {decile} evaluation must be finite")
         results.append(
             {
                 "decile": decile,

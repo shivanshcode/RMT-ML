@@ -35,18 +35,23 @@ def load_model(name_or_path, *, model_path=None, dtype="fp32", device=None):
 
     model.to(device)
     model.eval()
+    model._rmt_resolved_path = os.path.realpath(path)
     return model
 
 
 def load_tokenizer(name_or_path, *, model_path=None):
-    """Load the matching tokenizer fully offline; return None if unavailable."""
+    """Load the matching tokenizer fully offline; return None if unavailable.
+
+    The pipeline fails closed on None unless ``allow_fallback_tokenizer`` was
+    explicitly enabled for a synthetic/test run.
+    """
     OfflineGuard.enable()
     try:
         from transformers import AutoTokenizer
         path = _resolve_path(name_or_path, model_path)
         return AutoTokenizer.from_pretrained(path, local_files_only=True)
     except Exception as e:                                      # pragma: no cover
-        _log.warning("tokenizer load failed (%s); using offline fallback", e)
+        _log.warning("tokenizer load failed (%s); production text analyses will be unavailable", e)
         return None
 
 

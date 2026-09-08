@@ -65,7 +65,9 @@ class ModelSpec:
     fused_qkv_order: Tuple[str, str, str] = ("Q", "K", "V")
     # True  → rows are [h0_Q, h0_K, h0_V, h1_Q, …] (GPT-NeoX)
     # False → rows are [all_Q | all_K | all_V]      (GPT-2 c_attn)
-    qkv_interleaved: bool = False
+    # None means the architecture is unknown and fused layout must be supplied.
+    qkv_interleaved: Optional[bool] = False
+    router_policy: str = "not_applicable"
 
 
 _LLAMA = ModelSpec(
@@ -77,6 +79,22 @@ _LLAMA = ModelSpec(
     fused_qkv_substrings=[],
     layer_index_regexes=[r"(?:^|\.)layers\.(\d+)(?:\.|$)"],
 )
+
+_MIXTRAL = ModelSpec(
+    name="mixtral",
+    patterns={
+        "Q": ["q_proj"], "K": ["k_proj"], "V": ["v_proj"], "O": ["o_proj"],
+        # Mixtral experts use w1=gate, w3=up and w2=down.  Router gates are
+        # intentionally excluded: they are routing classifiers, not expert MLPs.
+        "G": [".experts.", ".w1"],
+        "U": [".experts.", ".w3"],
+        "D": [".experts.", ".w2"],
+    },
+    fused_qkv_substrings=[],
+    layer_index_regexes=[r"(?:^|\.)layers\.(\d+)(?:\.|$)"],
+    router_policy="excluded_router; expert w1/w3/w2 included",
+)
+
 
 _PYTHIA = ModelSpec(
     name="gpt_neox",
@@ -127,11 +145,12 @@ _GENERIC = ModelSpec(
                          r"(?:^|\.)layer\.(\d+)(?:\.|$)",
                          r"(?:^|\.)h\.(\d+)(?:\.|$)",
                          r"(?:^|\.)(\d+)(?:\.|$)"],
-    qkv_interleaved=True,
+    qkv_interleaved=None,
 )
 
 _REGISTRY = {
-    "llama": _LLAMA, "mistral": _LLAMA, "mixtral": _LLAMA,
+    "mixtral": _MIXTRAL,
+    "llama": _LLAMA, "mistral": _LLAMA,
     "gpt_neox": _PYTHIA, "pythia": _PYTHIA, "gptneox": _PYTHIA,
     "qwen2": _QWEN, "qwen3": _QWEN, "qwen": _QWEN,
     "bert": _BERT, "roberta": _BERT,
@@ -171,6 +190,11 @@ def get_num_heads(model_or_config) -> Optional[int]:
 
 def classify(name: str, spec: ModelSpec) -> Optional[str]:
     """Return the short role for a module name, or None if not analyzable."""
+    if spec.name == "mixtral" and ".experts." in name:
+        # Exact terminal names avoid treating every expert matrix as all three
+        # roles merely because the common expert path is present.
+        terminal = name.rsplit(".", 1)[-1]
+        return {"w1": "G", "w2": "D", "w3": "U"}.get(terminal)
     # fused QKV first (so 'query_key_value' isn't caught by Q/K/V substrings)
     for sub in spec.fused_qkv_substrings:
         if sub in name:
@@ -223,9 +247,13 @@ def _weight_2d(module, dtype="float64"):
 # fused QKV                                                                    #
 # --------------------------------------------------------------------------- #
 def qkv_is_interleaved(name: str, spec: ModelSpec) -> bool:
-    """Whether this fused-QKV module uses the head-interleaved row layout."""
+    """Whether this fused-QKV module uses a verified interleaved row layout."""
     if any(sub in name for sub in _CONTIGUOUS_QKV_NAMES):
         return False
+    if spec.qkv_interleaved is None:
+        raise ValueError(
+            f"{name}: fused-QKV layout is unknown for architecture {spec.name!r}; "
+            "provide an architecture-specific ModelSpec")
     return bool(spec.qkv_interleaved)
 
 
@@ -298,10 +326,70 @@ _SKIP_SUBSTRINGS = ("embed", "lm_head", "embed_out", "embed_in", "embed_tokens",
                     "wte", "wpe", "shared", "rotary", "norm", "ln_", "layernorm")
 
 
+def discover_weight_metadata(model, layer_indices=None, *, spec=None,
+                             num_heads=None) -> List[MatrixRecord]:
+    """Discover records without materializing host copies of model weights."""
+    if spec is None:
+        spec = get_model_spec(model)
+    if num_heads is None:
+        num_heads = get_num_heads(model)
+    want = set(layer_indices) if layer_indices is not None else None
+    records = []
+    for name, module in model.named_modules():
+        weight = getattr(module, "weight", None)
+        if weight is None or getattr(weight, "dim", lambda: 0)() != 2:
+            continue
+        if any(sk in name.lower() for sk in _SKIP_SUBSTRINGS):
+            continue
+        short = classify(name, spec)
+        layer_idx = extract_layer_index(name, spec)
+        if short is None or (want is not None and layer_idx not in want):
+            continue
+        shape = tuple(int(v) for v in weight.shape)
+        if type(module).__name__ == "Conv1D":
+            shape = (shape[1], shape[0])
+        wname = name + ".weight"
+        if short == "QKV":
+            if shape[0] % 3:
+                raise ValueError(f"fused QKV rows {shape[0]} not divisible by 3 ({wname})")
+            interleaved = qkv_is_interleaved(wname, spec)
+            if interleaved and num_heads is None:
+                raise ValueError(f"{wname}: num_heads is required for interleaved QKV")
+            rows = shape[0] // 3
+            for tag in spec.fused_qkv_order:
+                records.append(MatrixRecord(f"{wname}[{tag}]", tag, layer_idx,
+                                            None, rows, shape[1]))
+        else:
+            records.append(MatrixRecord(wname, short, layer_idx, None,
+                                        shape[0], shape[1]))
+    return records
+
+
+def materialize_record(model, record, *, spec=None, dtype="float64") -> MatrixRecord:
+    """Materialize one metadata record, keeping host memory bounded."""
+    spec = spec or get_model_spec(model)
+    base = record.name.split("[", 1)[0]
+    module_name = base[:-len(".weight")] if base.endswith(".weight") else base
+    W = _weight_2d(model.get_submodule(module_name), dtype=dtype)
+    if W is None:
+        raise ValueError(f"matrix disappeared: {record.name}")
+    if "[" in record.name:
+        tag = record.name.rsplit("[", 1)[1][:-1]
+        idx = list(spec.fused_qkv_order).index(tag)
+        interleaved = qkv_is_interleaved(base, spec)
+        W = extract_qkv_block(W, idx, num_heads=get_num_heads(model),
+                              interleaved=interleaved)
+    return MatrixRecord(record.name, record.short, record.layer_idx, W,
+                        int(W.shape[0]), int(W.shape[1]))
+
+
 def discover_weight_matrices(model, layer_indices=None, *, spec=None,
                              dtype="float64", num_heads=None) -> List[MatrixRecord]:
-    """Walk named_modules(), classify 2-D Linears/Conv1D, skip embeddings/head,
-    split fused QKV. Optionally filter to a set of layer indices."""
+    """Materializing compatibility API.
+
+    Large workflows should use :func:`discover_weight_metadata` followed by
+    :func:`materialize_record` one record at a time.
+    """
     if spec is None:
         spec = get_model_spec(model)
     if num_heads is None:
@@ -317,11 +405,12 @@ def discover_weight_matrices(model, layer_indices=None, *, spec=None,
         short = classify(name, spec)
         if short is None:
             continue
-        W = _weight_2d(module, dtype=dtype)
-        if W is None:
-            continue
+        # Apply cheap metadata filters before materializing a float64 host copy.
         layer_idx = extract_layer_index(name, spec)
         if want is not None and layer_idx not in want:
+            continue
+        W = _weight_2d(module, dtype=dtype)
+        if W is None:
             continue
         wname = name + ".weight"
         if short == "QKV":

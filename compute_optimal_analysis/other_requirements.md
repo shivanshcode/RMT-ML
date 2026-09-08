@@ -95,7 +95,7 @@ Archive the inventory with run records. A successful `pip check` only verifies d
 | safetensors | 0.4.5 |
 | pyarrow | 17.0.0 |
 
-Do **not** install these pins into `rmt_ml_env` blindly. In particular, ESD's default Delta3 path calls `np.trapezoid`, which requires NumPy 2.0 or newer, while the standalone file pins NumPy 1.26.4. Preserve the ESD stack and validate the current versions first.
+Do **not** install these pins into `rmt_ml_env` blindly. The sibling ESD Delta3 path now falls back from `np.trapezoid` to NumPy 1.x's `np.trapz`, so NumPy 1.26 is not by itself a demonstrated incompatibility. Preserve and inventory the complete ESD stack, then validate all required APIs, CUDA/toolchain behavior, and numerical tests before changing it.
 
 If the live stack supplies the APIs this project needs, use it unchanged. If not, clone/create a separate approved environment, select it with `RMT_PYTHON`, and produce a reviewed `requirements-cluster.txt` from that validated environment. A different pin by itself is not evidence that source or environment changes are needed. Staging-only Hugging Face packages need not be installed on compute nodes once a complete integer token array and manifest exist, unless site policy requires one uniform environment.
 

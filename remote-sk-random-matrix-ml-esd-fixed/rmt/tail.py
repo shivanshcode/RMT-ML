@@ -106,7 +106,7 @@ def hill_alpha_at(svals, k) -> float:
 # --------------------------------------------------------------------------- #
 # Paper-1 adapted windowed Hill + plateau                                      #
 # --------------------------------------------------------------------------- #
-def hill_estimator_windowed(svals, *, window=20, k_min=5):
+def hill_estimator_windowed(svals, *, window=20, k_min=1):
     """Local Hill over a sliding window of ``window`` order statistics (Paper 1).
 
     Uses the Rényi normalized log-spacings g_i = i·(ln x₍ᵢ₎ − ln x₍ᵢ₊₁₎), which
@@ -125,12 +125,15 @@ def hill_estimator_windowed(svals, *, window=20, k_min=5):
     a = int(window)
     # extreme tail region: top ~12% of the spectrum (>= a few windows)
     K = int(min(n // 2, max(3 * a, np.ceil(0.12 * n))))
-    ks = np.arange(k_min, K)
+    # k is a one-based rank label, while g is zero based.  A point labelled k
+    # therefore starts at g[k-1].  Include the terminal exactly-fitting window.
+    first_k = max(1, int(k_min))
+    last_k = min(K - 1, g.size - a + 1)
+    ks = np.arange(first_k, last_k + 1)
     alpha_local = np.full(ks.shape, np.nan, dtype=np.float64)
     for i, k in enumerate(ks):
-        if k + a >= g.size:
-            break
-        H = np.mean(g[k:k + a])
+        start = k - 1
+        H = np.mean(g[start:start + a])
         alpha_local[i] = 1.0 / H if H > 1e-12 else np.nan
     return ks, alpha_local
 
@@ -148,6 +151,10 @@ def hill_plateau(svals, *, window=20, flat_tol=0.20) -> dict:
     ks, a_loc = hill_estimator_windowed(svals, window=window)
     res = {"hill_plateau_alpha": float("nan"),
            "hill_plateau_width": 0,
+           "hill_plateau_start_rank": None,
+           "hill_plateau_end_rank": None,
+           "hill_window": int(window),
+           "hill_support_observations": 0,
            "hill_is_powerlaw": False}
     fin = a_loc[np.isfinite(a_loc) & (a_loc > 0)]
     if fin.size < max(5, window // 2):
@@ -186,6 +193,11 @@ def hill_plateau(svals, *, window=20, flat_tol=0.20) -> dict:
     plateau_alpha = float(np.median(plateau_vals))
     res["hill_plateau_alpha"] = plateau_alpha
     res["hill_plateau_width"] = int(width)
+    start_rank = int(ks[best_lo])
+    end_rank = int(ks[best_hi] + int(window) - 1)
+    res["hill_plateau_start_rank"] = start_rank
+    res["hill_plateau_end_rank"] = end_rank
+    res["hill_support_observations"] = end_rank - start_rank + 1
     # power law only if a wide flat band exists AND it agrees with the extreme tail
     consistent = abs(plateau_alpha - extreme_alpha) <= 0.5 * extreme_alpha
     res["hill_is_powerlaw"] = bool(width >= window and consistent)
@@ -225,8 +237,10 @@ def select_alpha(values, *, estimator="all", window=20,
     csn_kwargs = csn_kwargs or {}
     csn = fit_powerlaw_csn(values, **csn_kwargs)
     plateau = hill_plateau(values, window=window)
-    hill_k = max(5, int(len(np.asarray(values)) // 40))
-    hill_a = hill_alpha_at(values, hill_k)
+    usable = np.asarray(values, dtype=np.float64)
+    usable = usable[np.isfinite(usable) & (usable > 0)]
+    hill_k = min(max(1, int(usable.size // 40)), usable.size - 1)
+    hill_a = hill_alpha_at(usable, hill_k) if usable.size >= 2 else float("nan")
 
     if estimator == "csn":
         return {"alpha": csn["alpha"], "source": "csn"}

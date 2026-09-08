@@ -71,7 +71,8 @@ def test_analyze_with_perplexity_and_overlap_regression(tmp_path):
     csv_path, rows = P.analyze_one_model(
         model, "reg", str(tmp_path), do_overlap=True, do_perplexity=True,
         n_deciles=4, perplexity_tokens=64, n_text_batches=2,
-        fm_max_length=64, fm_stride=32, allow_fallback_text=True)
+        fm_max_length=64, fm_stride=32, allow_fallback_text=True,
+        allow_fallback_tokenizer=True)
 
     # (1) weights restored / non-degenerate (NOT all driven to zero)
     s_after = np.linalg.svd(q.weight.detach().numpy(), compute_uv=False)
@@ -103,9 +104,12 @@ def test_cli_full_run_end_to_end(tmp_path, monkeypatch):
                    "--layers", "0", "--n_text_batches", "2", "--fm_max_length", "64",
                    "--fm_stride", "32", "--do_overlap", "--do_perplexity",
                    "--n_deciles", "4", "--perplexity_tokens", "64",
-                   "--allow_fallback_text", "--no-do_qkv_heatmap"])
+                   "--allow_fallback_text", "--allow_fallback_tokenizer",
+                   "--no-do_qkv_heatmap"])
     assert rc == 0
-    assert os.path.exists(os.path.join(str(tmp_path), "dummy", "dummy_matrix_metrics.csv"))
+    runs = list(tmp_path.glob("dummy_*"))
+    assert len(runs) == 1
+    assert list(runs[0].glob("*_matrix_metrics.csv"))
 
 
 def test_epoch_checkpoint_tracking(tmp_path):

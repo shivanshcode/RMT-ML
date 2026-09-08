@@ -146,7 +146,8 @@ def test_feature_layers_inert_after_capture():
     compute_activation_covariance(m, tokenizer=None, layer_indices=[0, 1],
                                   device="cpu", n_text_batches=2, max_length=16,
                                   stride=8, spec=get_model_spec(m),
-                                  allow_fallback=True)
+                                  allow_fallback=True,
+                                  allow_tokenizer_fallback=True)
     fls = [mod for _, mod in m.named_modules() if isinstance(mod, FeatureLayer)]
     counters_before = [f.fm_computation for f in fls]
     with torch.no_grad():
@@ -175,7 +176,8 @@ def test_perplexity_snapshot_is_weight_only():
     spec = get_model_spec(m)
     compute_activation_covariance(m, tokenizer=None, layer_indices=[0, 1],
                                   device="cpu", n_text_batches=2, max_length=16,
-                                  stride=8, spec=spec, allow_fallback=True)
+                                  stride=8, spec=spec, allow_fallback=True,
+                                  allow_tokenizer_fallback=True)
     recs = discover_weight_matrices(m, spec=spec)
 
     import copy
@@ -192,7 +194,8 @@ def test_perplexity_snapshot_is_weight_only():
     try:
         perplexity_vs_decile(lambda: m, None, recs, "cpu", n_tokens=16,
                              decile_scope="analyzed", n_deciles=2, spec=spec,
-                             text_path="/nonexistent", allow_fallback=True)
+                             text_path="/nonexistent", allow_fallback=True,
+                             allow_tokenizer_fallback=True)
     finally:
         copy.deepcopy = real_deepcopy
 

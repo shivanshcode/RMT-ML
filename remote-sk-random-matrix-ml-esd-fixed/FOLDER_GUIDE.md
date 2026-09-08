@@ -11,8 +11,8 @@ several scattered duplicate folders in `~/Downloads`.
 | `rmt/plots/`, `rmt/baselines/` | Plotting and WeightWatcher baseline submodules. |
 | `tests/` | 14 pytest files, including the end-to-end CLI regression test. |
 | `docs/` | `design.md`, `plan.md`, `plan-unittest.md`, `signatures_api.md`. |
-| `run_rmt.slurm` | Current SLURM job script (64G mem, OOM notes). |
-| `rmt_pipeline_glm.py` | Standalone single-file pipeline (older monolith, kept for reference). |
+| `run_rmt.slurm` | Current LF-normalized SLURM job script (64G mem, OOM notes). |
+| `rmt_pipeline_glm.py` | Non-executable historical monolith. It exits with guidance to use `python -m rmt`. |
 | `test_rmt_critical.py`, `_synthetic_models.py` | Root-level test helpers. |
 
 ## Model outputs — `RMT_Local_Outputs/`
@@ -40,6 +40,12 @@ alexnet, vgg16, pythia-410m, pythia-160m, bert, Llama-3_1-8B).
 
 Note this is a **different** result set from `RMT_Local_Outputs/legacy/` — same
 name, different contents. Both retained.
+
+## Runtime ownership and memory
+
+Production output directories include a digest of the resolved model snapshot and must be fresh. The status JSON begins as `running` and is finalized after all requested stages. Matrix discovery is metadata-only until each matrix is processed; activation covariance is captured one projection at a time; and decile sweeps mutate/restore one pristine model. Synthetic text and synthetic hash-tokenization are separate explicit opt-ins.
+
+The sibling `compute_optimal_analysis` project has an incompatible package with the same `rmt` import name. Run each project from its own root in a separate Python process and never combine their roots on `PYTHONPATH`.
 
 ## Notes
 

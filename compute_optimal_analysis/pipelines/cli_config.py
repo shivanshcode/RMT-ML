@@ -287,6 +287,12 @@ def add_pipeline_cli_arguments(parser: argparse.ArgumentParser) -> argparse.Argu
     scaling.add_argument("--vocab-size", type=int, default=50257)
     scaling.add_argument("--parameter-cap", type=float, default=None)
     scaling.add_argument("--max-train-tokens", type=float, default=None)
+    scaling.add_argument(
+        "--allow-collapsed-allocations",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="allow capped calibration cells that no longer realize distinct N/D ratios",
+    )
 
     data = parser.add_argument_group("offline data loading")
     data.add_argument("--sequence-length", type=int, default=256)
@@ -330,6 +336,10 @@ def add_pipeline_cli_arguments(parser: argparse.ArgumentParser) -> argparse.Argu
     )
     hardware.add_argument("--svd-backend", choices=SVD_BACKENDS, default="auto")
     hardware.add_argument("--svd-driver", choices=SVD_DRIVERS, default="gesvdj")
+    hardware.add_argument(
+        "--analysis-dtype", choices=("float32", "float64"), default="float64",
+        help="promote stored weights before SVD independently of training dtype",
+    )
     hardware.add_argument(
         "--covariance-device",
         choices=DEVICE_CHOICES,

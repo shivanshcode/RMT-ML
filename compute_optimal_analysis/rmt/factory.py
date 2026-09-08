@@ -270,9 +270,10 @@ def prepare_spectrum(
         return PreparedSpectrum(
             farms.eigenvalues,
             farms.canonical_aspect_ratio,
-            "farms_normalized",
+            f"farms_{config.farms_normalization}",
             farms=farms,
-            diagnostics=farms.as_dict(),
+            diagnostics={**farms.as_dict(), "spectrum_units": "eigenvalue",
+                         "normalization": config.farms_normalization},
         )
     raw = (np.asarray(svd.covariance_eigenvalues, dtype=np.float64)
            if svd is not None else mp_eigenvalues(matrix))
@@ -284,6 +285,22 @@ def prepare_spectrum(
         q,
         "shape_normalized",
         diagnostics={"target_upper_edge": 4.0, "source_variance": float(variance)},
+    )
+
+
+def _unavailable_mp_fit(matrix: np.ndarray, method: str, reason: str,
+                        eigenvalues: np.ndarray | None = None) -> MPFitResult:
+    q = min(matrix.shape) / max(matrix.shape)
+    values = (mp_eigenvalues(matrix) if eigenvalues is None
+              else np.asarray(eigenvalues, dtype=np.float64).ravel())
+    return MPFitResult(
+        aspect_ratio=float(q), variance=float("nan"), sigma=float("nan"),
+        lambda_minus=float("nan"), lambda_plus=float("nan"),
+        ks_distance=float("nan"), bulk_fraction=float("nan"),
+        n_lower_outliers=0, n_upper_outliers=0, method=method,
+        diagnostics={"available": False, "status": "unavailable",
+                     "reason": str(reason),
+                     "rank_deficiency": int(np.count_nonzero(values == 0.0))},
     )
 
 
@@ -300,25 +317,41 @@ def dispatch_mp_fit(
     matrix = _finite_weight(weight)
     method = config.mp_fit_method
     if not np.any(matrix):
-        q = min(matrix.shape) / max(matrix.shape)
-        return fit_marchenko_pastur(np.zeros(min(matrix.shape)), q)
+        return _unavailable_mp_fit(matrix, method, "zero matrix",
+                                   None if svd is None else svd.covariance_eigenvalues)
     if method == "lanczos_stieltjes":
-        return fit_marchenko_pastur_lanczos(
-            matrix,
-            eigenvalues=(None if svd is None else svd.covariance_eigenvalues),
-            steps=config.lanczos_steps,
-            n_probes=config.lanczos_probes,
-            tail_window=config.lanczos_tail_window,
-            threshold_c=config.lanczos_threshold_c,
-            threshold_delta=config.lanczos_threshold_delta,
-            residue_threshold=config.lanczos_residue_threshold,
-            ridge=config.lanczos_ridge,
-            adaptive=config.lanczos_adaptive,
-            convergence_tolerance=config.lanczos_convergence_tolerance,
-            sequence_length=config.lanczos_sequence_length,
-            check_interval=config.lanczos_check_interval,
-            pole_method=config.lanczos_pole_method,
-            rng=config.seed,
+        try:
+            return fit_marchenko_pastur_lanczos(
+                matrix,
+                eigenvalues=(None if svd is None else svd.covariance_eigenvalues),
+                steps=config.lanczos_steps,
+                n_probes=config.lanczos_probes,
+                tail_window=config.lanczos_tail_window,
+                threshold_c=config.lanczos_threshold_c,
+                threshold_delta=config.lanczos_threshold_delta,
+                residue_threshold=config.lanczos_residue_threshold,
+                ridge=config.lanczos_ridge,
+                adaptive=config.lanczos_adaptive,
+                convergence_tolerance=config.lanczos_convergence_tolerance,
+                sequence_length=config.lanczos_sequence_length,
+                check_interval=config.lanczos_check_interval,
+                pole_method=config.lanczos_pole_method,
+                rng=config.seed,
+            )
+        except (ValueError, np.linalg.LinAlgError) as error:
+            return _unavailable_mp_fit(
+                matrix, method, str(error),
+                None if svd is None else svd.covariance_eigenvalues,
+            )
+    if method == "farms_unbiased" and prepared is not None and prepared.farms is not None:
+        fitted = fit_marchenko_pastur(
+            prepared.eigenvalues, prepared.aspect_ratio,
+            trim_upper=config.mp_trim_upper,
+        )
+        return MPFitResult(
+            **{**fitted.as_dict(), "method": "farms_unbiased",
+               "diagnostics": {**prepared.diagnostics,
+                               "spectral_max": float(np.max(prepared.eigenvalues))}}
         )
     if method == "farms_unbiased":
         return fit_marchenko_pastur_farms(
@@ -331,11 +364,13 @@ def dispatch_mp_fit(
             step_size=config.farms_step_size,
             orient_tall=config.farms_orient_tall,
             seed=config.seed,
+            normalization=config.farms_normalization,
             trim_upper=config.mp_trim_upper,
         )
     if method == "thamm_modified_singular":
         return fit_marchenko_pastur_thamm(
             matrix,
+            singular_values=None if svd is None else svd.s,
             kernel_window=config.gaussian_kernel_window,
         )
     prepared = (prepared if prepared is not None else prepare_spectrum(
@@ -406,12 +441,14 @@ def dispatch_spike_detector(
     config: RMTMethodConfig = RMTMethodConfig(),
     *,
     variance: float = 1.0,
+    eigenvalues: np.ndarray | None = None,
+    aspect_ratio: float | None = None,
 ) -> SpikeDetectionResult:
     """Run the configured right-spike detector on a rectangular factor."""
 
     matrix = _finite_weight(weight)
-    eigenvalues = mp_eigenvalues(matrix)
-    q = min(matrix.shape) / max(matrix.shape)
+    q = (min(matrix.shape) / max(matrix.shape)
+         if aspect_ratio is None else float(aspect_ratio))
     if not np.any(matrix):
         return SpikeDetectionResult(
             method=config.spike_detector,
@@ -421,16 +458,21 @@ def dispatch_spike_detector(
             indices=np.asarray([], dtype=np.int64),
             diagnostics={"available": False, "reason": "zero matrix"},
         )
+    if config.spike_detector != "lanczos_poles" and eigenvalues is None:
+        eigenvalues = mp_eigenvalues(matrix)
+    values = None if eigenvalues is None else np.asarray(eigenvalues, dtype=np.float64)
     if config.spike_detector == "tracy_widom_95":
+        effective_small = int(values.size)
+        effective_large = max(effective_small, int(round(effective_small / q)))
         return detect_spikes_tracy_widom(
-            eigenvalues,
-            min(matrix.shape),
-            max(matrix.shape),
+            values,
+            effective_small,
+            effective_large,
             variance,
             confidence=0.95,
         )
     if config.spike_detector == "bbp_transition":
-        return detect_spikes_bbp(eigenvalues, q, variance)
+        return detect_spikes_bbp(values, q, variance)
     detected = detect_spikes_from_factor(
         matrix,
         steps=config.lanczos_steps,

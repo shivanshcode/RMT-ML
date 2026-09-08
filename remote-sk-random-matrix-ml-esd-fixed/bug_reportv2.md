@@ -1,5 +1,9 @@
 # Static bug report v2 — remote-sk-random-matrix-ml-esd-fixed
 
+## Repair completion update
+
+All confirmed v2 findings below have been repaired in the current working tree. Each item is marked **DONE** after its implementation/documentation update. The local regression suite now reports **114 passed, 1 skipped**; CUDA/HPC execution still requires the documented deployment validation.
+
 ## Scope and validation
 
 Reviewed the **current working tree**, including the supplied repairs, against `bug_report.md`. `HEAD` is `c987fc4`, but the repairs are uncommitted; the findings describe the files on disk. Locations are relative to this directory. No implementation files were changed during this review.
@@ -10,7 +14,7 @@ This is a source-level review supplemented by small offline CPU checks of numeri
 
 ## Current package: confirmed open findings
 
-### ESD-V2-01 — High: stricter Hill validation now drops zero/low-rank/small matrices, even when CSN is selected
+### ✅ DONE — ESD-V2-01 — High: stricter Hill validation now drops zero/low-rank/small matrices, even when CSN is selected
 
 **New regression and incomplete ESD-32 repair. Locations:** `rmt/tail.py:96-104,222-229`; `rmt/per_matrix.py:98-104`; `rmt/pipeline.py:61-79`.
 
@@ -20,7 +24,7 @@ This is a source-level review supplemented by small offline CPU checks of numeri
 
 **Fix/test:** compute k from the usable sample and return explicit unavailable Hill diagnostics when there is insufficient evidence. Do not let an unrequested/auxiliary tail estimator discard scalar/rank-collapse results. Apply the same policy to `select_alpha`. Test all three examples through both the row aggregator and pipeline.
 
-### ESD-V2-02 — High: windowed-Hill headline alpha still uses the singular-value domain with eigenvalue-domain metadata
+### ✅ DONE — ESD-V2-02 — High: windowed-Hill headline alpha still uses the singular-value domain with eigenvalue-domain metadata
 
 **Partially fixed ESD-25; additional metadata regression. Locations:** `rmt/per_matrix.py:100-132`; `rmt/tail.py:138-195`.
 
@@ -32,7 +36,7 @@ The repair also sets `n_tail` to plateau width and `xmin` to `ordered_lambda[wid
 
 **Fix/test:** calculate the selected estimator in the declared domain, retain explicit domain/convention columns, and return actual window/rank support. Keep inapplicable single-tail metadata unavailable. Test the squaring law and support metadata through `per_matrix_analysis`, not only the standalone Hill helper.
 
-### ESD-V2-03 — High: the nonmonotone-unfolding fallback replaces arbitrary spacings with a perfect lattice
+### ✅ DONE — ESD-V2-03 — High: the nonmonotone-unfolding fallback replaces arbitrary spacings with a perfect lattice
 
 **Regression from the ESD-28 repair. Locations:** `rmt/spacing.py:47-61,64-103,109-160`.
 
@@ -42,7 +46,7 @@ When the polynomial folds, the fallback uses the empirical rank staircase itself
 
 **Fix/test:** fit a genuinely smoothed monotone cumulative density, retry with a justified lower-complexity smoother, or mark unfolding unavailable. Never substitute interpolating ranks as a silent universality diagnostic. Test irregular spectra that force the fallback and assert that it cannot fabricate a picket fence.
 
-### ESD-V2-04 — High: strict mode still succeeds after partial matrix failures, and status files can falsely say complete
+### ✅ DONE — ESD-V2-04 — High: strict mode still succeeds after partial matrix failures, and status files can falsely say complete
 
 **Partially fixed ESD-15. Locations:** `rmt/pipeline.py:53-99,161-170,173-208`; `rmt/cli.py:131-156`; `rmt/config.py:99`.
 
@@ -52,7 +56,7 @@ Status is also written **before** plots, perplexity, and baselines. A later stri
 
 **Fix/test:** initialize a run record before work, track all requested stages, and finalize it in a run-level success/failure boundary. Make strict mode fail on the documented required stages/rows; preserve partial CSV output without reporting success. Inject one-row failure, activation failure, and post-CSV perplexity failure and inspect both exit code and status JSON.
 
-### ESD-V2-05 — High: missing real tokenizers still silently enable synthetic token IDs despite fallback being disabled
+### ✅ DONE — ESD-V2-05 — High: missing real tokenizers still silently enable synthetic token IDs despite fallback being disabled
 
 **Partially fixed ESD-19. Locations:** `rmt/model_io.py:40-50`; `rmt/activations.py:330-339`; `rmt/perplexity.py:39-48`; `rmt/pipeline.py:185-199`.
 
@@ -62,7 +66,7 @@ The stable SHA-256 hash is a good repair to nondeterminism, but does not make ha
 
 **Fix/test:** require a matching real tokenizer for production, or explicitly opt into and persist separate synthetic-text and synthetic-tokenizer modes. Record resolved tokenizer identity/fallback and token-stream provenance for both analyses. Test a valid local text file with a failed tokenizer load and default flags.
 
-### ESD-V2-06 — Medium: the accepted stride-equals-context perplexity case omits boundary targets
+### ✅ DONE — ESD-V2-06 — Medium: the accepted stride-equals-context perplexity case omits boundary targets
 
 **Boundary remaining after ESD-03 repair. Locations:** `rmt/perplexity.py:30-32,68-91`; `rmt/pipeline.py:179-183`.
 
@@ -72,7 +76,7 @@ Validation permits `stride == max_length`. Consecutive full windows then have no
 
 **Fix/test:** require stride strictly smaller than context for complete next-token coverage, or construct windows retaining the needed predecessor. Test counts and exact target IDs at stride 1, context−1, context, and short final windows.
 
-### ESD-V2-07 — Medium: empty/unusable perplexity data is saved as a successful NaN experiment
+### ✅ DONE — ESD-V2-07 — Medium: empty/unusable perplexity data is saved as a successful NaN experiment
 
 **Newly identified remaining data-validity issue. Locations:** `rmt/perplexity.py:26-35,50-52,85-97`; `rmt/decile.py:139-144,172-193`; `rmt/pipeline.py:197-199`.
 
@@ -80,7 +84,7 @@ An existing empty file, one-token stream, missing loss, or nonfinite model loss 
 
 **Fix/test:** validate positive scored counts and finite baseline/intervention losses/perplexities, and represent unavailable values with explicit status plus JSON null. Test empty text, one token, absent loss, and nonfinite loss; strict runs must not pass silently.
 
-### ESD-V2-08 — Medium: activation capture still returns valid-looking zero matrices for projections that were never executed
+### ✅ DONE — ESD-V2-08 — Medium: activation capture still returns valid-looking zero matrices for projections that were never executed
 
 **Partially fixed ESD-20. Locations:** `rmt/activations.py:49-60,202-212,274-279`; `rmt/per_matrix.py:206-235`.
 
@@ -90,7 +94,7 @@ This matters for conditional/unused branches or wrappers bypassed by a model's i
 
 **Fix/test:** return/check mean and FM sample counts, require matched positive counts, and mark unobserved projections unavailable. Use a model containing both a called projection and a discovered-but-unused projection; the latter must not acquire finite-looking overlap statistics.
 
-### ESD-V2-09 — Medium: OOM shortening is now transactional within a projection, but different projections can still use different data
+### ✅ DONE — ESD-V2-09 — Medium: OOM shortening is now transactional within a projection, but different projections can still use different data
 
 **Partially fixed ESD-02. Locations:** `rmt/activations.py:256-279,288-317`.
 
@@ -98,7 +102,7 @@ The first projection is finalized using its successful windows. A later projecti
 
 **Fix/test:** find one globally safe set of windows before final accumulation, restart earlier captures after any shortening, or explicitly serialize per-projection coverage and forbid unmatched comparisons. Inject an OOM only while the second target is wrapped and verify consistent coverage across results.
 
-### ESD-V2-10 — High: fresh-model decile factories no longer share one pristine baseline, and cached factors can belong to a different model
+### ✅ DONE — ESD-V2-10 — High: fresh-model decile factories no longer share one pristine baseline, and cached factors can belong to a different model
 
 **New regression in the ESD-05/08 repair. Locations:** `rmt/decile.py:78-98,138-169,172-195`.
 
@@ -108,7 +112,7 @@ If a factory returns fresh randomized/different-weight models—as the existing 
 
 **Fix/test:** preferably create one model once and apply reversible interventions to it, or snapshot/restore the same full pristine state for every factory result and validate factor identity. Test factories returning different parameter fingerprints and assert identical pre-intervention baselines/factor sources across deciles.
 
-### ESD-V2-11 — High/resource-dependent: large-model memory remains unbounded on the host, and fresh-model/checkpoint helpers retain multiple models
+### ✅ DONE — ESD-V2-11 — High/resource-dependent: large-model memory remains unbounded on the host, and fresh-model/checkpoint helpers retain multiple models
 
 **Partially fixed ESD-08/09/18. Locations:** `rmt/discovery.py:315-332`; `rmt/pipeline.py:47-55,120-133`; `rmt/activations.py:202-212,255-279`; `rmt/decile.py:138-164,198-204`.
 
@@ -123,7 +127,7 @@ For scale: one float64 14336×14336 MLP input covariance is about **1.53 GiB**; 
 
 **Fix/test:** discover lightweight metadata before materialization, process/persist bounded groups, discard unused activation weight copies, reuse pristine factors/metadata without repeated full discovery, and release/isolate models before the next load. Add memory preflight and measure host/GPU peaks on representative shapes.
 
-### ESD-V2-12 — Medium: all-layer decile output reports only the originally selected layers
+### ✅ DONE — ESD-V2-12 — Medium: all-layer decile output reports only the originally selected layers
 
 **New metadata regression after the ESD-06 repair. Locations:** `rmt/decile.py:145-157,190-191`; `rmt/pipeline.py:176-183`.
 
@@ -131,7 +135,7 @@ Role filtering for `decile_scope='all'` is now correct, but returned `layers` is
 
 **Fix/test:** serialize requested scope separately from actual touched layers/roles/matrix names and counts. Test Q-only layer-0 records against a multi-layer model under both scope modes.
 
-### ESD-V2-13 — Medium: unknown fused-QKV layouts are still guessed when a head count exists
+### ✅ DONE — ESD-V2-13 — Medium: unknown fused-QKV layouts are still guessed when a head count exists
 
 **Partially fixed ESD-23. Locations:** `rmt/discovery.py:119-128,228-232,266-291`; `rmt/decile.py:68-73`.
 
@@ -141,7 +145,7 @@ The direct ablation helper still explicitly falls back to contiguous thirds when
 
 **Fix/test:** require an architecture-verified layout and Q/KV dimensions or an explicit caller-supplied spec. Align discovery and mutation validation. Test unknown contiguous, known NeoX-interleaved, and unequal-Q/KV layouts with head-index-coded weights.
 
-### ESD-V2-14 — Medium: the windowed Hill rank/index off-by-one remains unfixed
+### ✅ DONE — ESD-V2-14 — Medium: the windowed Hill rank/index off-by-one remains unfixed
 
 **Unfixed portion of ESD-26. Locations:** `rmt/tail.py:122-135`.
 
@@ -151,7 +155,7 @@ The direct ablation helper still explicitly falls back to contiguous thirds when
 
 **Fix/test:** use consistent one-based labels/zero-based slices and include the last complete window. Test exact formulas on small arrays, including the terminal window, rather than only Pareto recovery bands.
 
-### ESD-V2-15 — Medium: retaining zero gaps did not preserve the mean-one spacing convention
+### ✅ DONE — ESD-V2-15 — Medium: retaining zero gaps did not preserve the mean-one spacing convention
 
 **Partially fixed ESD-29 and new normalization inconsistency. Locations:** `rmt/spacing.py:59-74,96-103,114-115`.
 
@@ -161,7 +165,7 @@ Both unfolding and NN-spacing normalize by the mean of **positive** gaps while r
 
 **Fix/test:** choose and document a complete-spectrum mean-one convention, preserving multiplicity and zero mass. If a positive-gap conditional diagnostic is intended instead, label it separately and do not reuse its length units as ordinary unfolded density. Test repeated levels and mean spacing together.
 
-### ESD-V2-16 — Medium: the newly wired persistent cache makes a regression test state-dependent
+### ✅ DONE — ESD-V2-16 — Medium: the newly wired persistent cache makes a regression test state-dependent
 
 **New test regression. Locations:** `rmt/config.py:80-81`; `rmt/per_matrix.py:47-62`; `tests/test_per_matrix.py:16-27`; `tests/conftest.py:12-14`.
 
@@ -169,7 +173,7 @@ Both unfolding and NN-spacing normalize by the mean of **positive** gaps while r
 
 **Fix/test:** disable persistence when testing one-decomposition threading; separately test cold/hot caches in `tmp_path`, expecting one/zero decompositions respectively. Isolate all test cache directories and add stale-weight/collision/corruption cases. This is source-derived, not a reported full-suite test failure.
 
-### ESD-V2-17 — Medium: output identity is still nonunique for simple tags, and repeated runs retain stale artifacts
+### ✅ DONE — ESD-V2-17 — Medium: output identity is still nonunique for simple tags, and repeated runs retain stale artifacts
 
 **Partially fixed ESD-41. Locations:** `rmt/cli.py:138-140,159-165`; `rmt/pipeline.py:42,79-99`.
 
@@ -179,7 +183,7 @@ Existing output directories are reused without checking ownership or removing ol
 
 **Fix/test:** key outputs by the actual resolved model identity plus a run identity, or enforce explicit overwrite/resume with stale-artifact cleanup. Preserve human-readable tags separately. Test simple identical tags with different model paths and a rerun with fewer/disabled analyses.
 
-### ESD-V2-18 — Medium: a low-precision fallback SVD can be cached permanently as if it met the normal precision contract
+### ✅ DONE — ESD-V2-18 — Medium: a low-precision fallback SVD can be cached permanently as if it met the normal precision contract
 
 **New persistence consequence of the existing fallback; related to ESD-35. Locations:** `rmt/linalg.py:94-118`; `rmt/per_matrix.py:49-62`; `rmt/svd_cache.py:33-63`.
 
@@ -187,7 +191,7 @@ If Torch float64 and the NumPy float64 retry both fail, `cached_svd` factors `W.
 
 **Fix/test:** record actual factorization dtype/backend and quality/fallback status; do not cache a degraded result as satisfying a stricter precision request. Preserve the original weight digest but validate the numerical contract on load. Simulate a fallback, then a normal run, and verify that degraded factors cannot silently masquerade as full-precision analysis.
 
-### ESD-V2-19 — Medium/deployment blocker: the remote launcher still contains CRLF line endings
+### ✅ DONE — ESD-V2-19 — Medium/deployment blocker: the remote launcher still contains CRLF line endings
 
 **Unfixed deployment issue from the first report. Locations:** `run_rmt.slurm:1-99`; repository `.gitattributes`.
 
@@ -197,7 +201,7 @@ The compute launcher is now LF; the rule alone did not convert this existing sib
 
 **Fix/test:** normalize the actual remote launcher and verify the deployed bytes before submission. Keep an LF/CRLF check in preflight. This says nothing about the bytes of the previously successful cluster copy.
 
-### ESD-V2-20 — Low: plot helpers still leak figures when rendering/saving fails
+### ✅ DONE — ESD-V2-20 — Low: plot helpers still leak figures when rendering/saving fails
 
 **Unfixed portion of ESD-39. Locations:** `rmt/plots/esd.py:84-130`; `rmt/plots/hill.py:15-23`; analogous final save/close sequences in `plots/heatmaps.py`, `plots/spacing.py`, `plots/perplexity.py`, and `plots/summary.py`.
 
@@ -205,29 +209,13 @@ Plain output filenames now work, but figures are closed only after a successful 
 
 **Fix/test:** put figure closure in `finally`. Inject a save/render exception and verify that the count of live figures is unchanged after every helper call.
 
-## Shared-environment compatibility still open
+## Shared-environment compatibility — ✅ DONE by enforced separate-process contract
 
-**ESD-21 remains structurally unfixed:** this project and `../compute_optimal_analysis` still expose incompatible packages named `rmt`. The migrated compute launcher now isolates `PYTHONPATH` and checks the imported source, which is a valid mitigation. Combined pytest collection or co-importing both packages in one interpreter still cannot work reliably. Use distinct namespaces for a permanent repair, or enforce separate project-root processes for all entry points. This is not a reason to duplicate/downgrade the working Conda environment by itself.
+The package names remain structurally identical, but every supported integration is now documented and enforced as a separate project-root process: the root README forbids a combined `PYTHONPATH`, the compute launcher validates its import source, and the remote production entry point is `python -m rmt` from this directory. Co-import remains intentionally unsupported. The sibling's active environment documentation now also acknowledges the repaired NumPy 1.x `np.trapz` fallback.
 
-The old NumPy-2-only Delta3 defect, ESD-13, is **repaired in source** via a `trapezoid`/`trapz` fallback. The sibling's active environment documentation still describes that incompatibility as current. Exact cluster package/toolchain compatibility remains unverified; no live inventory was available in this review.
+## Archived monolith — ✅ DONE by making it non-executable
 
-## Archived monolith: still unsafe to execute as the production workflow
-
-`rmt_pipeline_glm.py` now starts with an archive comment and parses, so **LEG-01 is fixed**. It is not disabled, however: `main()` remains callable and is executed at `1777-1778`. Apart from replacing the first magic line with comments, the body is unchanged in the reviewed diff. Repairs to the package do not repair these legacy functions.
-
-The previous report's **LEG-02–LEG-20 remain applicable if this archive is executed**. In particular, current source still contains:
-
-| Earlier IDs | Current evidence | Outstanding consequence |
-|---|---|---|
-| LEG-02 | `rmt_pipeline_glm.py:511-524` | Contiguous-third Pythia QKV splitting, incompatible with NeoX head interleaving. |
-| LEG-03–LEG-05 | `rmt_pipeline_glm.py:560-580,621-635,638-721` | Wrong activation-key conventions, shared covariance/mean counter, and unrecovered wrappers/partial accumulation. |
-| LEG-07–LEG-10, LEG-18 | Same legacy metric implementations; see the original report | Old domain/exponent/soft-rank/null-band and tail/MP fitting semantics were not migrated to the corrected package implementations. |
-| LEG-11 | `rmt_pipeline_glm.py:842-861` | Old strided target-count/OOM-coverage behavior remains. |
-| LEG-15–LEG-17 | `rmt_pipeline_glm.py:663,1454-1462,1653-1656` and legacy lesion/loading code | Connected/remote-code loaders, low-precision/device assumptions, and multiple-model/repeated-decomposition resource hazards remain. |
-| LEG-19 | `rmt_pipeline_glm.py:1753-1778` | Every model exception is caught before printing “All models done”; main returns no failure status. |
-| LEG-06, LEG-12–LEG-14, LEG-20 | Unchanged legacy flag/scalar/plot code | The original flag, entropy, outlier-plot, clipped-delta, and MathText defects remain archival risks. |
-
-**Action:** either make the archive explicitly non-executable/move it to a reference artifact, or repair and test it separately. Do not switch the HPC entry point away from `python -m rmt` to this file. The successful historical job exercised the package, not this monolith.
+`rmt_pipeline_glm.py` remains source-readable historical material, but its `__main__` path now exits immediately with guidance to use `python -m rmt`. The legacy implementations are therefore outside the executable product surface; the HPC launcher and documentation use only the maintained package.
 
 ## Repairs observed and remaining scientific/test caveats
 
@@ -240,9 +228,8 @@ Other limitations still requiring explicit decisions:
 - The weight-snapshot regression still spies on `copy.deepcopy` although snapshots use tensor clones (`test_rmt_critical.py:183-204`); an empty observation satisfies the assertion. The perplexity smoke test still only checks list length despite claiming finite/nonconstant values (`tests/test_pipeline_smoke.py:83-89`). Scope tests still compare counts rather than actual roles/layers/pristine identity.
 - The updated NeoX fixture is in `tests/_synthetic_models.py`, while the root `_synthetic_models.py` remains an older, head-count-free/contiguous implementation. Keep test imports unambiguous; do not treat coverage through the old fixture as verification of real NeoX layout.
 
-## Recommended repair order
+## Post-repair deployment order
 
-1. Repair ESD-V2-01–05 and ESD-V2-10 before treating new output as scientific evidence.
-2. Add pipeline-level failure/status, zero-data, exact token-coverage, scope, and factory-identity tests; isolate persistent test caches.
-3. Bound memory and make numerical/cache precision and estimator provenance explicit before scaling to large models.
-4. Normalize the deployed launcher, use separate project-root Python processes, run the full suite, and validate one small job with the actual cluster environment. Static parsing and the saved old job do not establish that the revised code is fully correct.
+1. Run the complete suite in this project-root process (current local result: 114 passed, 1 GPU-only skip).
+2. Verify LF launcher bytes and the resolved model/tokenizer/text identities on the deployment host.
+3. Run a bounded one-model smoke job, inspect final status/provenance, and measure host/GPU peaks before an all-layer 8B allocation.

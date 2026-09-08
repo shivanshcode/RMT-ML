@@ -36,7 +36,7 @@ Always gate a real run on the analytic self-check:
 python -m rmt --selftest         # exit 0 if the RMT core matches known ground truth
 ```
 
-Full offline analysis (see `run_rmt.slurm` for the A100 batch version):
+Full offline analysis (see `run_rmt.slurm` for the A100 batch version). Each model writes to an identity-hashed, fresh directory; rerunning into an owned nonempty directory fails instead of mixing artifacts:
 
 ```bash
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m rmt \
@@ -46,10 +46,17 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m rmt \
   --backend auto --do_overlap --do_spacing --do_powerlaw
 ```
 
+Real text analyses fail closed unless the matching tokenizer loads. Synthetic tests must opt into text and tokenizer fallbacks separately:
+
+```bash
+python -m rmt --models ./models/tiny-test --allow_fallback_text --allow_fallback_tokenizer
+```
+
 ## Outputs (per model `<tag>`)
 
 - `<tag>_matrix_metrics.csv` — one row per matrix, full schema (see `EXECUTIVE_SUMMARY.md`).
 - `<tag>_summary.json` — model-level aggregates.
+- `<tag>_run_status.json` — initialized before work and finalized only after requested stages; strict partial failures exit nonzero.
 - `<tag>_perplexity.json` — decile-ablation perplexity (if `--do_perplexity`).
 - `<tag>_stable_rank_per_epoch.csv` — epoch tracking (via `pipeline.analyze_checkpoints`).
 - plots under `<tag>/` (ESD, Hill, NN-spacing, heatmaps, summary).
@@ -66,6 +73,10 @@ pytest                  # full suite (adds tiny in-process torch models)
 - Eigenvalue domain `λ = ν²/N`, `C = WWᵀ/N`, default `N = #cols`.
 - σ̂ = Gavish–Donoho median estimator.
 - Deciles ascending: decile 1 = smallest 10%, decile 10 = largest.
-- Fused QKV split into contiguous thirds `Q=[:d], K=[d:2d], V=[2d:]`.
+- Fused QKV uses architecture-verified layout: GPT-2 is contiguous and GPT-NeoX/Pythia is head-interleaved. Unknown fused layouts are rejected rather than guessed.
 - Exponents: CSN α is the **density** exponent; Hill α = 1/H is the **survival**
-  exponent; for a pure law `α_csn = α_hill + 1` and `α(λ) = α(ν)/2` for Hill.
+  exponent; for a pure law `α_csn = α_hill + 1` and `α(λ) = α(ν)/2` for Hill. Headline windowed Hill is computed on `λ`; rank/window support is serialized instead of inventing a single cutoff.
+- Repeated levels retain zero spacing mass and the complete spacing sample is normalized to mean one. Continuous Brody fits are explicitly conditional on positive spacings.
+- Persistent SVD cache entries include actual backend/factorization dtype/degraded status; degraded float32 fallbacks cannot satisfy the float64 contract.
+- Discovery is metadata-first, analysis/covariance capture is projection-at-a-time, and decile interventions reuse one reversible pristine model to bound host/device memory.
+- `rmt_pipeline_glm.py` is a non-executable archive. The supported entry point is `python -m rmt`.

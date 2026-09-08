@@ -1,7 +1,8 @@
 """rmt.perplexity — strided negative-log-likelihood perplexity on local text.
 
 Fully offline: reads a local raw text file (default the wikitext-2 test split)
-and computes a sliding-window perplexity.  Returns NaN if no tokens are usable.
+and computes a sliding-window perplexity.  Unusable/non-finite evaluations fail
+explicitly rather than being serialized as successful NaN experiments.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import numpy as np
 def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
                         text_path="./wikitext-2-raw/wiki.test.raw",
                         max_length=1024, allow_fallback=False,
-                        return_details=False):
+                        allow_tokenizer_fallback=False, return_details=False):
     """Sliding-window perplexity over the first ~n_tokens tokens of a local file.
 
     If ``tokenizer`` is None (tiny test models), a trivial whitespace/byte
@@ -28,11 +29,16 @@ def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
                 if return_details else float(value))
 
     n_tokens, stride, max_length = int(n_tokens), int(stride), int(max_length)
-    if n_tokens < 2 or stride < 1 or max_length < 2 or stride > max_length:
-        raise ValueError("require n_tokens/max_length >= 2 and 1 <= stride <= max_length")
+    if n_tokens < 2 or stride < 1 or max_length < 2:
+        raise ValueError("require n_tokens/max_length >= 2 and a positive stride")
+    from .config import effective_context_length
+    requested_max_length = max_length
+    requested_stride = stride
+    max_length = effective_context_length(model, requested_max_length)
+    stride = min(stride, max_length - 1)
     text = _read_text(text_path, allow_fallback=allow_fallback)
-    if not text:
-        return result(float("nan"))
+    if not text.strip():
+        raise ValueError("perplexity text is empty")
 
     # only tokenize the portion we need (avoids the "sequence too long" warning)
     text = text[: (n_tokens + 8) * 8]
@@ -41,6 +47,8 @@ def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
                         add_special_tokens=False)
         input_ids = enc["input_ids"][0]
     else:
+        if not allow_tokenizer_fallback:
+            raise RuntimeError("a matching tokenizer is required; synthetic token IDs are disabled")
         vocab = int(getattr(model, "vocab", getattr(getattr(model, "config", None),
                                                      "vocab_size", 50)))
         toks = [int.from_bytes(hashlib.sha256(w.encode("utf-8")).digest()[:8], "big") % vocab
@@ -49,14 +57,14 @@ def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
 
     input_ids = input_ids[:n_tokens]
     if input_ids.numel() < 2:
-        return result(float("nan"))
+        raise ValueError("tokenizer produced fewer than two tokens")
     # always place inputs on the model's actual device
     try:
         device = next(model.parameters()).device
     except StopIteration:
         pass
     input_ids = input_ids.to(device)
-    was_training = model.training
+    mode_snapshot = [(module, bool(module.training)) for module in model.modules()]
     model.eval()
 
     nll_sum = 0.0
@@ -84,17 +92,35 @@ def perplexity_wikitext(model, tokenizer, device, *, n_tokens=4096, stride=512,
                     out = model(input_ids=ids, labels=labels)
                     loss = getattr(out, "loss", None)
                     if loss is None:
-                        return result(float("nan"), n_tok)
-                    nll_sum += float(loss) * valid
+                        raise ValueError("model output has no loss")
+                    loss_value = float(loss)
+                    if not math.isfinite(loss_value):
+                        raise ValueError("model produced a non-finite loss")
+                    nll_sum += loss_value * valid
                     n_tok += valid
                 previous_end = end
                 if end == seq_len:
                     break
     finally:
-        model.train(was_training)
-    if n_tok == 0:
-        return result(float("nan"))
-    return result(math.exp(nll_sum / n_tok), n_tok)
+        # Restore mixed per-submodule modes exactly; model.train(root_mode)
+        # would flatten a deliberately mixed train/eval tree.
+        for module, training in mode_snapshot:
+            module.training = training
+    if n_tok <= 0:
+        raise ValueError("perplexity evaluation scored no targets")
+    value = math.exp(nll_sum / n_tok)
+    if not math.isfinite(value):
+        raise ValueError("perplexity is non-finite")
+    if return_details:
+        return {
+            "perplexity": float(value),
+            "scored_tokens": int(n_tok),
+            "requested_max_length": int(requested_max_length),
+            "effective_max_length": int(max_length),
+            "requested_stride": int(requested_stride),
+            "effective_stride": int(stride),
+        }
+    return result(value, n_tok)
 
 
 def _read_text(text_path, *, allow_fallback=False) -> str:

@@ -49,17 +49,28 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     if cfg.use_svd_cache:
         from .svd_cache import load_svd, weight_digest
         digest = weight_digest(W)
-        cached = load_svd(cfg.svd_cache_dir, record.name, digest=digest)
+        cached = load_svd(cfg.svd_cache_dir, record.name, digest=digest,
+                          required_dtype="float64", allow_degraded=False,
+                          return_metadata=True)
         if cached is not None:
-            U, cached_s, cached_vh = cached
-            svd = SVDResult(U=U, s=cached_s, Vh=cached_vh, n=n, m=m)
+            U, cached_s, cached_vh, provenance = cached
+            svd = SVDResult(U=U, s=cached_s, Vh=cached_vh, n=n, m=m,
+                            backend=provenance["backend"],
+                            factorization_dtype=provenance["factorization_dtype"],
+                            degraded=provenance["degraded"])
     if svd is None:
         svd = cached_svd(W, full_matrices=False, backend=cfg.backend,
                          gpu_min_dim=cfg.gpu_svd_min_dim)
-        if cfg.use_svd_cache:
+        if cfg.use_svd_cache and not svd.degraded:
             from .svd_cache import save_svd
             save_svd(cfg.svd_cache_dir, record.name, svd.U, svd.s, svd.Vh,
-                     digest=digest)
+                     digest=digest, backend=svd.backend,
+                     factorization_dtype=svd.factorization_dtype,
+                     degraded=svd.degraded)
+    if svd.degraded and cfg.strict:
+        raise RuntimeError(
+            f"{record.name}: float64 SVD precision contract was not satisfied "
+            f"(backend={svd.backend}, dtype={svd.factorization_dtype})")
     s = np.sort(svd.s)[::-1]                       # descending
     if svals_out is not None:
         svals_out[record.name] = s
@@ -72,6 +83,10 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     row: Dict[str, object] = {
         "name": record.name, "short": record.short, "layer_idx": record.layer_idx,
         "n": n, "m": m, "is_square": int(n == m), "N_cov": int(N_cov),
+        "svd_backend": svd.backend,
+        "svd_factorization_dtype": svd.factorization_dtype,
+        "svd_degraded": int(bool(svd.degraded)),
+        "precision_status": "degraded" if svd.degraded else "complete",
     }
 
     # --- MP bulk + sigma --------------------------------------------------- #
@@ -98,10 +113,15 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     if cfg.do_powerlaw:
         csn_lambda = TAIL.fit_powerlaw_csn(lam)            # CSN density-α on λ
         csn_nu = TAIL.fit_powerlaw_csn(s)                  # CSN density-α on ν
-        k_hill = max(5, len(s) // 40)
-        alpha_hill_nu = TAIL.hill_alpha_at(s, k_hill)
-        alpha_hill_lambda = TAIL.hill_alpha_at(lam, k_hill)
-        plateau = TAIL.hill_plateau(s, window=cfg.hill_window)
+        positive = int(np.count_nonzero(np.isfinite(lam) & (lam > 0.0)))
+        k_hill = min(max(1, positive // 40), positive - 1)
+        if positive >= 2:
+            alpha_hill_nu = TAIL.hill_alpha_at(s, k_hill)
+            alpha_hill_lambda = TAIL.hill_alpha_at(lam, k_hill)
+        else:
+            alpha_hill_nu = alpha_hill_lambda = _nan()
+        # All headline estimators use the declared covariance-eigenvalue domain.
+        plateau = TAIL.hill_plateau(lam, window=cfg.hill_window)
         row.update({
             "alpha": csn_lambda["alpha"], "xmin": csn_lambda["xmin"],
             "ks_D": csn_lambda["ks_D"], "n_tail": csn_lambda["n_tail"],
@@ -109,6 +129,10 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
             "alpha_hill_nu": alpha_hill_nu, "alpha_hill_lambda": alpha_hill_lambda,
             "hill_plateau_alpha": plateau["hill_plateau_alpha"],
             "hill_plateau_width": plateau["hill_plateau_width"],
+            "hill_plateau_start_rank": plateau["hill_plateau_start_rank"],
+            "hill_plateau_end_rank": plateau["hill_plateau_end_rank"],
+            "hill_window": plateau["hill_window"],
+            "hill_support_observations": plateau["hill_support_observations"],
             "hill_is_powerlaw": int(bool(plateau["hill_is_powerlaw"])),
         })
         # Honor the selector while keeping exponent convention/cutoff metadata
@@ -118,16 +142,15 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
         row["alpha_kind"] = "density" if selected_name == "csn" else "survival"
         if selected_name == "hill":
             row["alpha"] = alpha_hill_lambda
-            ordered = np.sort(lam)[::-1]
-            row["xmin"] = float(ordered[k_hill])
-            row["n_tail"] = int(k_hill)
+            ordered = np.sort(lam[np.isfinite(lam) & (lam > 0.0)])[::-1]
+            row["xmin"] = float(ordered[k_hill]) if ordered.size >= 2 else _nan()
+            row["n_tail"] = int(k_hill) if ordered.size >= 2 else 0
             row["ks_D"] = _nan()
         elif selected_name == "hill_windowed":
             row["alpha"] = plateau["hill_plateau_alpha"]
-            width = int(plateau["hill_plateau_width"])
-            ordered = np.sort(lam)[::-1]
-            row["xmin"] = float(ordered[min(width, len(ordered) - 1)]) if width else _nan()
-            row["n_tail"] = width
+            # A sliding plateau is not one Pareto sample with one cutoff.
+            row["xmin"] = _nan()
+            row["n_tail"] = 0
             row["ks_D"] = _nan()
 
         # optional powerlaw-pkg LR test
@@ -148,7 +171,9 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     else:
         for kx in ("alpha", "xmin", "ks_D", "n_tail", "alpha_on_nu",
                    "alpha_hill_nu", "alpha_hill_lambda", "hill_plateau_alpha",
-                   "hill_plateau_width", "hill_is_powerlaw",
+                   "hill_plateau_width", "hill_plateau_start_rank",
+                   "hill_plateau_end_rank", "hill_window",
+                   "hill_support_observations", "hill_is_powerlaw",
                    "LR_trunc", "LR_p", "alpha_rand", "max_ev_rand"):
             row[kx] = _nan()
         row["alpha_estimator"] = "disabled"
@@ -159,7 +184,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     row["spectral_entropy"] = SC.spectral_entropy(s)
     row["stable_rank"] = SC.stable_rank(s=s)
     row["mp_softrank"] = SC.mp_softrank(s, mp_plus)
-    row["bulk_mass_frac"] = SC.bulk_mass_frac(s, mp_plus)
+    row["bulk_mass_frac"] = SC.bulk_mass_frac(s, mp_plus, nu_minus=mp_minus)
     row.update({
         "max_sval": float(np.max(s)), "min_sval": float(np.min(s)),
         "mean_sval": float(np.mean(s)), "median_sval": float(np.median(s)),
@@ -179,18 +204,27 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     # --- RMT bulk (on covariance eigenvalues inside the fitted support) ---- #
     bulk_lam = lam[(lam >= mp_minus_eig) & (lam <= mp_plus_eig)]
     row["spacing_level_count"] = int(bulk_lam.size)
+    row["spacing_available"] = 0
+    row["spacing_status"] = "disabled" if not cfg.do_spacing else "insufficient_levels"
+    for kx in ("r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
+               "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50"):
+        row[kx] = _nan()
     if cfg.do_spacing and len(bulk_lam) >= 50:
+        # The gap ratio is unfolding-free and remains meaningful whenever its
+        # own denominator exists, even if smooth unfolding is unavailable.
         row["r_statistic_mean"] = SP.r_statistic(bulk_lam)
-        ks = SP.nn_spacing_ks(bulk_lam, deg=cfg.unfold_deg)
-        row["nn_KS_GOE"] = ks["nn_KS_GOE"]; row["nn_KS_Poisson"] = ks["nn_KS_Poisson"]
-        row["delta3_L10"] = SP.delta3(bulk_lam, 10, deg=cfg.unfold_deg)
-        row["delta3_L50"] = SP.delta3(bulk_lam, 50, deg=cfg.unfold_deg)
-        row["sigma2_L10"] = SP.sigma2(bulk_lam, 10, deg=cfg.unfold_deg)
-        row["sigma2_L50"] = SP.sigma2(bulk_lam, 50, deg=cfg.unfold_deg)
-    else:
-        for kx in ("r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
-                   "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50"):
-            row[kx] = _nan()
+        try:
+            ks = SP.nn_spacing_ks(bulk_lam, deg=cfg.unfold_deg)
+            row["nn_KS_GOE"] = ks["nn_KS_GOE"]
+            row["nn_KS_Poisson"] = ks["nn_KS_Poisson"]
+            row["delta3_L10"] = SP.delta3(bulk_lam, 10, deg=cfg.unfold_deg)
+            row["delta3_L50"] = SP.delta3(bulk_lam, 50, deg=cfg.unfold_deg)
+            row["sigma2_L10"] = SP.sigma2(bulk_lam, 10, deg=cfg.unfold_deg)
+            row["sigma2_L50"] = SP.sigma2(bulk_lam, 50, deg=cfg.unfold_deg)
+            row["spacing_available"] = 1
+            row["spacing_status"] = "available"
+        except (ValueError, np.linalg.LinAlgError) as error:
+            row["spacing_status"] = f"unavailable: {error}"
 
     row["complex_r_abs_mean"] = _nan(); row["complex_r_cos_mean"] = _nan()
     if cfg.do_complex_spacing and n == m:
@@ -209,7 +243,8 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
                 # overlap functions, instead of two identical eigh on (d_in x d_in).
                 eig = np.linalg.eigh(C)
                 ov = OV.overlap_analysis(W, C, svd=svd, eig=eig)
-                coi = OV.eigenvector_eigenvalue_coincidence(W, C, svd=svd, eig=eig)
+                coi = OV.eigenvector_eigenvalue_coincidence(
+                    W, C, svd=svd, eig=eig, cos_matrix=ov["overlap_matrix"])
                 if ovmat_out is not None:
                     ovmat_out[record.name] = ov["overlap_matrix"]
                 o = ov["overlap"]
@@ -223,6 +258,24 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
                 row["max_overlap_with_top_eigenvector"] = coi["max_overlap_with_top_eigenvector"]
                 row["argmax_singular_for_top_eigenvector"] = coi["argmax_singular_for_top_eigenvector"]
                 row["diagonal_coincidence"] = coi["diagonal_coincidence"]
+                capture = fm_dict[key]
+                row["activation_mean_count"] = int(capture.get("mean_count", 0))
+                row["activation_fm_count"] = int(capture.get("fm_count", 0))
+                row["activation_requested_max_length"] = int(
+                    capture.get("requested_max_length", 0))
+                row["activation_effective_max_length"] = int(
+                    capture.get("effective_max_length", 0))
+                row["activation_window_lengths"] = repr(
+                    capture.get("captured_window_lengths", []))
+                row["activation_window_identity"] = str(
+                    capture.get("window_identity_sha256", ""))
+    for key, default in (
+        ("activation_mean_count", 0), ("activation_fm_count", 0),
+        ("activation_requested_max_length", 0),
+        ("activation_effective_max_length", 0),
+        ("activation_window_lengths", "[]"), ("activation_window_identity", ""),
+    ):
+        row.setdefault(key, default)
 
     # --- per-decile (ascending) -------------------------------------------- #
     row.update(SC.per_decile(s, cfg.n_deciles))
@@ -241,24 +294,30 @@ def _set_overlap_nans(row):
 # canonical column order (plan.md §5)
 CSV_COLUMNS = (
     ["name", "short", "layer_idx", "n", "m", "is_square", "N_cov",
+     "svd_backend", "svd_factorization_dtype", "svd_degraded", "precision_status",
      "sigma_med", "sigma_med_refined", "n_iter_sigma", "mp_minus", "mp_plus",
      "mp_minus_eig", "mp_plus_eig", "n_right_outliers", "n_left_outliers",
      "frac_right_outliers", "frac_left_outliers",
      "ks_lower", "n_below_minus", "frac_mass_below_minus", "excess_small_sv",
      "alpha", "alpha_estimator", "alpha_kind", "xmin", "ks_D", "n_tail", "alpha_on_nu",
      "alpha_hill_nu", "alpha_hill_lambda",
-     "hill_plateau_alpha", "hill_plateau_width", "hill_is_powerlaw",
+     "hill_plateau_alpha", "hill_plateau_width", "hill_plateau_start_rank",
+     "hill_plateau_end_rank", "hill_window", "hill_support_observations",
+     "hill_is_powerlaw",
      "LR_trunc", "LR_p", "alpha_rand", "max_ev_rand",
      "row_wise_entropy", "spectral_entropy", "stable_rank", "mp_softrank",
      "bulk_mass_frac", "max_sval", "min_sval", "mean_sval", "median_sval",
      "ipr_top10_mean", "ipr_bulk_mean", "pt_ks_mean", "pt_frac_random",
-     "spacing_level_count", "r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
+     "spacing_level_count", "spacing_available", "spacing_status",
+     "r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
      "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50",
      "complex_r_abs_mean", "complex_r_cos_mean",
      "max_overlap", "mean_overlap", "overlap_at_top_sval", "overlap_at_bottom_sval",
      "rho_top_eigenvector_vs_svals", "rho_top_singular_vs_evals", "rho_diag_vs_svals",
      "max_overlap_with_top_eigenvector", "argmax_singular_for_top_eigenvector",
-     "diagonal_coincidence"]
+     "diagonal_coincidence", "activation_mean_count", "activation_fm_count",
+     "activation_requested_max_length", "activation_effective_max_length",
+     "activation_window_lengths", "activation_window_identity"]
     + [f"entropy_decile_{i}" for i in range(1, 11)]
     + [f"srk_decile_{i}" for i in range(1, 11)]
 )

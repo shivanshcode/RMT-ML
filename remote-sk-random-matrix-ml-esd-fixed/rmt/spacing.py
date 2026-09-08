@@ -47,18 +47,27 @@ def unfold(levels, deg=7) -> np.ndarray:
     unique, first, counts = np.unique(x, return_index=True, return_counts=True)
     if unique.size < 2:
         raise ValueError("unfolding requires at least two distinct levels")
-    # Fit in scaled coordinates.  If the unconstrained polynomial folds, use a
-    # monotone multiplicity-aware staircase interpolation instead.
+    # Fit in scaled coordinates, reducing complexity until the fitted density is
+    # monotone.  Never substitute the empirical ranks evaluated at themselves:
+    # that turns every distinct input spectrum into an artificial picket fence.
     center, scale = float(np.mean(unique)), max(float(np.ptp(unique)), 1.0)
-    fitted_deg = min(max(1, int(deg)), unique.size - 1)
-    coeffs = np.polyfit((unique - center) / scale,
-                        first + 0.5 * (counts + 1), fitted_deg)
-    smooth_unique = np.polyval(coeffs, (unique - center) / scale)
-    if np.any(np.diff(smooth_unique) <= 0.0) or not np.all(np.isfinite(smooth_unique)):
-        smooth_unique = first + 0.5 * (counts + 1)
+    coords = (unique - center) / scale
+    targets = first + 0.5 * (counts + 1)
+    smooth_unique = None
+    for fitted_deg in range(min(max(1, int(deg)), unique.size - 1), 0, -1):
+        coeffs = np.polyfit(coords, targets, fitted_deg)
+        candidate = np.polyval(coeffs, coords)
+        if np.all(np.isfinite(candidate)) and np.all(np.diff(candidate) > 0.0):
+            smooth_unique = candidate
+            break
+    if smooth_unique is None:
+        raise ValueError("no monotone polynomial unfolding could be fitted")
     xi = np.interp(x, unique, smooth_unique)
-    mean_positive = np.mean(np.diff(xi)[np.diff(xi) > 0.0])
-    return (xi - xi[0]) / mean_positive
+    gaps = np.diff(xi)
+    mean_gap = float(np.mean(gaps))
+    if not np.isfinite(mean_gap) or mean_gap <= 0.0:
+        raise ValueError("unfolding has no positive mean spacing")
+    return (xi - xi[0]) / mean_gap
 
 
 def nn_spacing(levels, deg=7) -> np.ndarray:
@@ -66,11 +75,14 @@ def nn_spacing(levels, deg=7) -> np.ndarray:
     xi = unfold(levels, deg=deg)
     s = np.diff(xi)
     s = s[np.isfinite(s)]
-    positive = s[s > 0.0]
-    if positive.size == 0:
+    if s.size == 0:
         return s
-    # Keep zero gaps while normalizing the ordinary (positive) local scale.
-    return s / np.mean(positive)
+    mean_gap = float(np.mean(s))
+    if not np.isfinite(mean_gap) or mean_gap <= 0.0:
+        return s
+    # Multiplicities are part of the empirical ESD, so normalize over the full
+    # spacing sample, including its zero mass.
+    return s / mean_gap
 
 
 def wigner_goe_cdf(s) -> np.ndarray:

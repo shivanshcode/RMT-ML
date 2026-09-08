@@ -136,7 +136,8 @@ def _verify_dataset_asset(dataset_path: str | Path) -> dict[str, Any]:
     with manifest_path.open("r", encoding="utf-8") as handle:
         manifest = json.load(handle)
     for record in manifest.get("files", []):
-        candidate = (Path.cwd() / str(record.get("path", ""))).resolve()
+        portable = str(record.get("path", "")).replace("\\", "/")
+        candidate = (Path.cwd() / portable).resolve()
         if candidate != target:
             continue
         actual_size = target.stat().st_size
@@ -191,7 +192,8 @@ def _runtime_environment(args: argparse.Namespace) -> dict[str, Any]:
             dataset["source_revisions"] = staged.get("source_revisions", {})
             dataset_target = Path(args.dataset_path).resolve()
             for record in staged.get("files", []):
-                candidate = (Path.cwd() / str(record.get("path", ""))).resolve()
+                portable = str(record.get("path", "")).replace("\\", "/")
+                candidate = (Path.cwd() / portable).resolve()
                 if candidate == dataset_target:
                     dataset["bytes"] = record.get("bytes")
                     dataset["sha256"] = record.get("sha256")
@@ -255,6 +257,11 @@ def build_manifest(
                 "architecture_target_parameters": architecture_target,
                 "realized_parameters": realized_parameters,
                 "realized_tokens": float(realized_tokens),
+                "requested_tokens_per_parameter": float(allocation.tokens / allocation.parameters),
+                "realized_tokens_per_parameter": float(realized_tokens / realized_parameters),
+                "realized_allocation_ratio": float(
+                    (realized_tokens / realized_parameters) / 20.0
+                ),
                 "realized_training_compute": float(
                     law.flops_per_parameter_token * realized_parameters * realized_tokens
                 ),
@@ -264,6 +271,19 @@ def build_manifest(
                 "architecture": architecture,
             }
         )
+    # Flag designs where caps/discretization erase the requested intervention.
+    signatures: dict[tuple[float, float, float], list[int]] = defaultdict(list)
+    for index, cell in enumerate(manifest):
+        signature = (float(cell["compute_budget"]), float(cell["realized_parameters"]),
+                     float(cell["realized_tokens"]))
+        signatures[signature].append(index)
+    for indices in signatures.values():
+        collapsed = len(indices) > 1
+        for index in indices:
+            manifest[index]["allocation_collapsed"] = collapsed
+            manifest[index]["collapsed_with_cells"] = [
+                manifest[other]["cell_index"] for other in indices if other != index
+            ]
     return manifest
 
 
@@ -299,6 +319,7 @@ def analyze_model(
     *,
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
+    analysis_dtype: str = "float64",
     compute_activation_overlap: bool = True,
     compute_spacing_distribution: bool = True,
     compute_number_variance: bool = True,
@@ -318,13 +339,32 @@ def analyze_model(
             parameter,
             backend=svd_backend,
             driver=svd_driver,
+            analysis_dtype=analysis_dtype,
         )
-        analysis_dtype = torch.float64 if parameter.dtype == torch.float64 else torch.float32
-        weight = parameter.detach().to(dtype=analysis_dtype).cpu().numpy()
-        prepared = prepare_spectrum(weight, method_config, svd=svd)
-        eigenvalues = prepared.eigenvalues
+        selected_dtype = torch.float64 if analysis_dtype == "float64" else torch.float32
+        weight = parameter.detach().to(dtype=selected_dtype).cpu().numpy()
+        raw_methods = {"lanczos_stieltjes", "thamm_modified_singular"}
+        if method_config.mp_fit_method in raw_methods:
+            prepared = None
+            eigenvalues = np.asarray(svd.covariance_eigenvalues, dtype=np.float64)
+            spectrum_mode = "raw"
+            spectrum_aspect_ratio = svd.aspect_ratio
+        else:
+            prepared = prepare_spectrum(weight, method_config, svd=svd)
+            eigenvalues = prepared.eigenvalues
+            spectrum_mode = prepared.mode
+            spectrum_aspect_ratio = prepared.aspect_ratio
         mp_fit = dispatch_mp_fit(weight, method_config, svd=svd, prepared=prepared)
-        if (method_config.mp_fit_method == "lanczos_stieltjes"
+        fit_available = bool(mp_fit.diagnostics.get("available", True))
+        if not fit_available:
+            spike_fit = SpikeDetectionResult(
+                method=method_config.spike_detector, threshold=float("nan"),
+                bulk_edge=float("nan"), spikes=np.asarray([]),
+                indices=np.asarray([], dtype=np.int64),
+                diagnostics={"available": False, "status": "unavailable",
+                             "reason": "MP fit unavailable"},
+            )
+        elif (method_config.mp_fit_method == "lanczos_stieltjes"
                 and method_config.spike_detector == "lanczos_poles"):
             diagnostics = mp_fit.diagnostics
             poles = np.asarray(diagnostics.get("poles", []), dtype=np.float64)
@@ -341,6 +381,8 @@ def analyze_model(
                 weight,
                 method_config,
                 variance=mp_fit.variance,
+                eigenvalues=eigenvalues,
+                aspect_ratio=mp_fit.aspect_ratio,
             )
         tail = dispatch_tail_solver(
             eigenvalues,
@@ -355,13 +397,11 @@ def analyze_model(
             hill = float("nan")
             plateau = {"hill_plateau_alpha": float("nan"),
                        "hill_plateau_width": 0, "hill_is_powerlaw": False}
-        spacing_eigenvalues = svd.covariance_eigenvalues
-        spacing_mp_fit = (
-            mp_fit
-            if method_config.mp_fit_method == "thamm_modified_singular"
-            else fit_marchenko_pastur(spacing_eigenvalues, svd.aspect_ratio)
-        )
-        if method_config.mp_fit_method == "farms_unbiased":
+        # Spacing, fit edges, detector and plotted ESD share one explicit domain.
+        spacing_eigenvalues = eigenvalues
+        spacing_mp_fit = mp_fit
+        if (method_config.mp_fit_method == "farms_unbiased"
+                and "spectral_max" in mp_fit.diagnostics):
             mp_soft_spectrum = np.asarray([float(mp_fit.diagnostics["spectral_max"])])
         elif method_config.mp_fit_method == "lanczos_stieltjes":
             mp_soft_spectrum = spacing_eigenvalues
@@ -385,35 +425,37 @@ def analyze_model(
         needs_spacing = bool(
             compute_spacing_distribution or compute_number_variance or compute_delta3
         )
+        unfolding_status = "not_requested_or_insufficient"
         if (needs_spacing and bulk_levels.size >= minimum_bulk
                 and float(np.ptp(bulk_levels)) > 0.0):
-            unfolded = dispatch_unfolding(bulk_levels, method_config)
-            if compute_spacing_distribution:
-                spacings = np.diff(unfolded)
-                spacings = spacings[np.isfinite(spacings) & (spacings > 0.0)]
-                if spacings.size:
-                    spacings = spacings / np.mean(spacings)
-                if spacings.size >= 8:
-                    beta = (
-                        fit_brody_cdf_nls(spacings).beta
-                        if brody_fit_method == "cdf_nls"
-                        else fit_brody(spacings).beta
+            try:
+                unfolded = dispatch_unfolding(bulk_levels, method_config)
+                unfolding_status = "available"
+            except ValueError as error:
+                unfolded = None
+                unfolding_status = f"unavailable: {error}"
+            if unfolded is not None:
+                if compute_spacing_distribution:
+                    spacings = np.diff(unfolded)
+                    spacings = spacings[np.isfinite(spacings) & (spacings >= 0.0)]
+                    if spacings.size and np.mean(spacings) > 0.0:
+                        spacings = spacings / np.mean(spacings)
+                    if np.count_nonzero(spacings > 0.0) >= 8:
+                        beta = (
+                            fit_brody_cdf_nls(spacings).beta
+                            if brody_fit_method == "cdf_nls"
+                            else fit_brody(spacings).beta
+                        )
+                    ratio = r_statistic(bulk_levels)
+                if compute_number_variance:
+                    variance_10 = number_variance(
+                        unfolded, 10.0, unfolded=True,
+                        method=number_variance_method, rng=seed,
                     )
-                ratio = r_statistic(bulk_levels)
-            if compute_number_variance:
-                variance_10 = number_variance(
-                    unfolded,
-                    10.0,
-                    unfolded=True,
-                    method=number_variance_method,
-                    rng=seed,
-                )
-            if compute_delta3:
-                rigidity_10 = dyson_mehta_delta3(
-                    unfolded,
-                    10.0,
-                    unfolded=True,
-                )
+                if compute_delta3:
+                    rigidity_10 = dyson_mehta_delta3(
+                        unfolded, 10.0, unfolded=True,
+                    )
         module_name = parameter_name[: -len(".weight")]
         covariance = covariances.get(f"{module_name}:pre")
         top_alignment = bulk_alignment = bottom_alignment = float("nan")
@@ -457,6 +499,9 @@ def analyze_model(
             "realized_parameters": cell["realized_parameters"],
             "requested_tokens": cell["requested_tokens"],
             "realized_tokens": cell["realized_tokens"],
+            "realized_tokens_per_parameter": cell.get("realized_tokens_per_parameter"),
+            "realized_allocation_ratio": cell.get("realized_allocation_ratio"),
+            "allocation_collapsed": cell.get("allocation_collapsed", False),
             "realized_training_compute": cell["realized_training_compute"],
             "optimizer_updates": cell.get("optimizer_updates"),
             "attempted_steps": cell.get("attempted_steps"),
@@ -466,32 +511,38 @@ def analyze_model(
             "n": svd.n,
             "m": svd.m,
             "normalization": svd.normalization,
-            "aspect_ratio": prepared.aspect_ratio,
+            "analysis_dtype": analysis_dtype,
+            "aspect_ratio": spectrum_aspect_ratio,
             "mp_aspect_ratio": mp_fit.aspect_ratio,
-            "mp_spectrum_domain": (
-                "full_covariance" if method_config.mp_fit_method == "lanczos_stieltjes"
-                else prepared.mode
-            ),
+            "mp_spectrum_domain": spectrum_mode,
             "aspect_ratio_mode": method_config.aspect_ratio_mode,
-            "spectrum_mode": prepared.mode,
+            "spectrum_mode": spectrum_mode,
+            "spectrum_units": "eigenvalue",
+            "spectrum_denominator": svd.normalization,
             "mp_fit_method": method_config.mp_fit_method,
             "mp_variance": mp_fit.variance,
             "mp_lambda_minus": mp_fit.lambda_minus,
             "mp_lambda_plus": mp_fit.lambda_plus,
             "mp_ks": mp_fit.ks_distance,
             "mp_bulk_fraction": mp_fit.bulk_fraction,
+            "mp_fit_available": fit_available,
             "mp_fit_converged": mp_fit.diagnostics.get(
-                "converged", mp_fit.diagnostics.get("optimizer_success", True)
+                "converged", mp_fit.diagnostics.get("optimizer_success", fit_available)
             ),
             "mp_fit_method_status": mp_fit.diagnostics.get(
-                "optimizer_message", "available"
+                "status", mp_fit.diagnostics.get("optimizer_message", "available")
             ),
+            "mp_fit_diagnostics": json.dumps(_sanitize_json(mp_fit.diagnostics), sort_keys=True),
             "lower_outliers": mp_fit.n_lower_outliers,
             "upper_outliers": mp_fit.n_upper_outliers,
+            "above_edge_observations": int(np.count_nonzero(eigenvalues > mp_fit.lambda_plus))
+                if fit_available else 0,
             "spike_detector": method_config.spike_detector,
             "spike_threshold": spike_fit.threshold,
             "detected_spikes": spike_fit.n_spikes,
-            "spike_detector_converged": spike_fit.diagnostics.get("converged", True),
+            "spike_detector_available": spike_fit.diagnostics.get("available", True),
+            "spike_detector_converged": spike_fit.diagnostics.get("converged", fit_available),
+            "spike_diagnostics": json.dumps(_sanitize_json(spike_fit.diagnostics), sort_keys=True),
             "mp_soft_rank": mp_soft_rank(
                 mp_soft_spectrum,
                 mp_fit.lambda_plus,
@@ -519,7 +570,10 @@ def analyze_model(
             "von_neumann_entropy": von_neumann_entropy(s=svd.s),
             "brody_beta": beta,
             "brody_fit_method": brody_fit_method,
+            "brody_sample_conditioning": "positive_spacings" if np.any(spacings == 0.0) else "complete",
+            "zero_spacing_count": int(np.count_nonzero(spacings == 0.0)),
             "unfolding_strategy": method_config.unfolding_strategy,
+            "unfolding_status": unfolding_status,
             "r_statistic": ratio,
             "number_variance_L10": variance_10,
             "number_variance_method": number_variance_method,
@@ -586,7 +640,8 @@ def _plot_esd(artifacts: list[dict[str, Any]], output: Path) -> None:
     plt.close(figure)
 
 
-def _plot_spacing(artifacts: list[dict[str, Any]], output: Path) -> None:
+def _plot_spacing(artifacts: list[dict[str, Any]], output: Path, *,
+                  brody_fit_method: str = "mle") -> None:
     grouped: dict[str, list[np.ndarray]] = defaultdict(list)
     for artifact in artifacts:
         spacings = np.asarray(artifact["spacings"])
@@ -598,8 +653,10 @@ def _plot_spacing(artifacts: list[dict[str, Any]], output: Path) -> None:
     axis.plot(grid, 0.5 * np.pi * grid * np.exp(-np.pi * grid**2 / 4.0), color="black", linestyle="--", label="GOE")
     for regime, arrays in sorted(grouped.items()):
         combined = np.concatenate(arrays)
-        beta = fit_brody(combined).beta if combined.size >= 8 else float("nan")
-        label = f"{regime}, beta={beta:.3f}" if math.isfinite(beta) else regime
+        beta = (fit_brody(combined, method=brody_fit_method).beta
+                if np.count_nonzero(combined > 0.0) >= 8 else float("nan"))
+        label = (f"{regime}, pooled {brody_fit_method} beta={beta:.3f}"
+                 if math.isfinite(beta) else f"{regime}, pooled {brody_fit_method}")
         axis.hist(combined, bins=40, range=(0.0, 3.5), density=True, histtype="step", linewidth=1.5, label=label)
     axis.set_xlabel("unfolded nearest-neighbor spacing")
     axis.set_ylabel("density")
@@ -663,9 +720,9 @@ def _plot_scaling(rows: list[dict[str, Any]], output: Path) -> None:
     grouped: dict[tuple[float, float], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[(float(row.get("realized_training_compute", row["compute_budget"])),
-                 float(row["kappa"]))].append(row)
+                 float(row.get("realized_allocation_ratio", row["kappa"])))].append(row)
     figure, axes = plt.subplots(1, 2, figsize=(12, 5))
-    for kappa in sorted({float(row["kappa"]) for row in rows}):
+    for kappa in sorted({float(row.get("realized_allocation_ratio", row["kappa"])) for row in rows}):
         points = sorted((key, values) for key, values in grouped.items() if math.isclose(key[1], kappa))
         budgets = [key[0] for key, _ in points]
         alpha = [
@@ -676,8 +733,8 @@ def _plot_scaling(rows: list[dict[str, Any]], output: Path) -> None:
             float(np.nanmean([float(row["brody_beta"]) for row in values]))
             for _, values in points
         ]
-        axes[0].plot(budgets, alpha, marker="o", label=f"kappa={kappa:g}")
-        axes[1].plot(budgets, beta, marker="o", label=f"kappa={kappa:g}")
+        axes[0].plot(budgets, alpha, marker="o", label=f"realized ratio={kappa:g}")
+        axes[1].plot(budgets, beta, marker="o", label=f"realized ratio={kappa:g}")
     for axis, ylabel in zip(axes, ("mean selected tail exponent", "mean Brody beta")):
         axis.set_xscale("log")
         axis.set_xlabel("measured training FLOPs")
@@ -782,8 +839,22 @@ def execute_cell(
     cell["optimizer_updates"] = trainer.global_step
     cell["attempted_steps"] = trainer.attempted_steps
     cell["skipped_steps"] = trainer.skipped_steps
+    cell["attempted_target_tokens"] = trainer.attempted_target_tokens
+    cell["forwarded_input_positions"] = trainer.forwarded_input_positions
+    cell["successful_update_target_tokens"] = trainer.processed_train_tokens
+    cell["realized_tokens_per_parameter"] = float(
+        trainer.processed_train_tokens / cell["realized_parameters"]
+    )
+    cell["realized_allocation_ratio"] = cell["realized_tokens_per_parameter"] / 20.0
+    cell["training_budget_complete"] = bool(
+        trainer.processed_train_tokens == train_config.max_train_tokens
+    )
     cell["realized_training_compute"] = float(
         6.0 * cell["realized_parameters"] * trainer.processed_train_tokens
+    )
+    cell["realized_training_compute_semantics"] = "6ND approximation; D=successful update targets"
+    cell["forwarded_compute_proxy"] = float(
+        6.0 * cell["realized_parameters"] * trainer.forwarded_input_positions
     )
     if args.save_checkpoints:
         trainer.save_checkpoint(
@@ -812,6 +883,7 @@ def execute_cell(
         rmt_config_from_namespace(args),
         svd_backend=args.svd_backend,
         svd_driver=args.svd_driver,
+        analysis_dtype=args.analysis_dtype,
         compute_activation_overlap=args.compute_activation_overlap,
         compute_spacing_distribution=args.compute_spacing_distribution,
         compute_number_variance=args.compute_number_variance,
@@ -853,6 +925,7 @@ def execute_cell(
             seed=seed,
             svd_backend=args.svd_backend,
             svd_driver=args.svd_driver,
+            analysis_dtype=args.analysis_dtype,
         )
     lesion_rows: list[dict[str, Any]] = []
     for result in lesions:
@@ -869,6 +942,12 @@ def execute_cell(
                 "matrix_count": len(result["matrices"]),
                 "mean_removed_energy_fraction": float(
                     np.mean([matrix["removed_energy_fraction"] for matrix in result["matrices"]])
+                ),
+                "all_energy_matches_reached": bool(all(
+                    matrix["target_reached"] for matrix in result["matrices"]
+                )),
+                "matrix_interventions": json.dumps(
+                    _sanitize_json(result["matrices"]), sort_keys=True
                 ),
             }
         )
@@ -920,15 +999,35 @@ def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
         if positive not in explicit and negative not in explicit:
             setattr(args, attribute, value)
 
-    if args.experiment_mode in {"reproduce_paper1", "compute_optimal_rmt"}:
-        preset("run_spectral_lesioning", True)
-        preset("compute_activation_overlap", True)
-    if args.experiment_mode == "reproduce_paper2":
-        preset("compute_spacing_distribution", True)
-        preset("compute_number_variance", True)
-        preset("compute_delta3", True)
-    if args.experiment_mode == "reproduce_paper3":
-        preset("compute_stable_rank", True)
+    method_presets = {
+        "reproduce_paper1": {
+            "aspect_ratio_mode": "raw", "mp_fit_method": "analytic_mp",
+            "spike_detector": "tracy_widom_95", "overlap_metric": "staats_dual_end",
+            "unfolding_strategy": "gaussian_kernel", "tail_solver": "rank_ordered_mle",
+            "run_spectral_lesioning": True, "compute_activation_overlap": True,
+        },
+        "reproduce_paper2": {
+            "aspect_ratio_mode": "raw", "mp_fit_method": "thamm_modified_singular",
+            "spike_detector": "tracy_widom_95",
+            "unfolding_strategy": "polynomial_chebyshev", "polynomial_degree": 15,
+            "compute_spacing_distribution": True, "compute_number_variance": True,
+            "compute_delta3": True,
+        },
+        "reproduce_paper3": {
+            "aspect_ratio_mode": "raw", "mp_fit_method": "kde_bulk_fit",
+            "spike_detector": "tracy_widom_95", "tail_solver": "clauset_mle",
+            "compute_stable_rank": True,
+        },
+        "compute_optimal_rmt": {
+            "aspect_ratio_mode": "farms_normalized",
+            "mp_fit_method": "lanczos_stieltjes", "spike_detector": "lanczos_poles",
+            "unfolding_strategy": "spline_monotone", "tail_solver": "clauset_mle",
+            "overlap_metric": "staats_dual_end", "run_spectral_lesioning": True,
+            "compute_activation_overlap": True,
+        },
+    }
+    for attribute, value in method_presets.get(args.experiment_mode, {}).items():
+        preset(attribute, value)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -937,6 +1036,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     _resolve_runtime_configuration(args)
     output = Path(args.output_dir)
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(
+            f"output directory is not empty: {output}; use a fresh run directory")
     output.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(
         vocab_size=args.vocab_size,
@@ -945,6 +1047,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         parameter_cap=args.parameter_cap,
         token_cap=args.max_train_tokens,
     )
+    collapsed = [cell["cell_index"] for cell in manifest if cell.get("allocation_collapsed")]
+    if args.execute and collapsed and not args.allow_collapsed_allocations:
+        raise ValueError(
+            f"allocation cells {collapsed} collapse to identical realized N/D designs; "
+            "change caps or explicitly allow capped calibration runs")
     _write_json(output / "allocation_manifest.json", manifest)
     _write_json(output / "spectral_method_config.json", rmt_config_from_namespace(args).as_dict())
     _write_json(output / "run_config.json", vars(args))
@@ -1012,8 +1119,10 @@ def main(argv: Iterable[str] | None = None) -> int:
             raise
     if artifacts:
         _plot_esd(artifacts, output)
-        _plot_spacing(artifacts, output)
-        _plot_overlap(artifacts, output)
+        if args.compute_spacing_distribution:
+            _plot_spacing(artifacts, output, brody_fit_method=args.brody_fit_method)
+        if args.compute_activation_overlap:
+            _plot_overlap(artifacts, output)
     if lesion_rows:
         _plot_lesions(lesion_rows, output)
     if spectral_rows:

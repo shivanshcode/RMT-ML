@@ -198,6 +198,10 @@ def hill_plateau(
         return {
             "hill_plateau_alpha": float("nan"),
             "hill_plateau_width": 0,
+            "hill_plateau_start_rank": None,
+            "hill_plateau_end_rank": None,
+            "hill_window": int(window),
+            "hill_support_observations": 0,
             "hill_is_powerlaw": False,
         }
     extreme_count = min(estimates.size, max(3 * int(window), estimates.size // 3, 12))
@@ -211,9 +215,15 @@ def hill_plateau(
     relative_drift = abs(slope) * rank_span / max(abs(median), np.finfo(float).eps)
     plausible = 0.25 <= median <= 15.0
     stable = relative_iqr <= max(0.25, 1.75 * flat_tol) and relative_drift <= max(0.35, 2.5 * flat_tol)
+    start_rank = int(extreme_ks[0])
+    end_rank = int(extreme_ks[-1] + int(window) - 1)
     return {
         "hill_plateau_alpha": median,
         "hill_plateau_width": int(extreme_count),
+        "hill_plateau_start_rank": start_rank,
+        "hill_plateau_end_rank": end_rank,
+        "hill_window": int(window),
+        "hill_support_observations": end_rank - start_rank + 1,
         "hill_is_powerlaw": bool(plausible and stable),
     }
 
@@ -438,6 +448,10 @@ def select_tail_estimator(
         else {
             "hill_plateau_alpha": float("nan"),
             "hill_plateau_width": 0,
+            "hill_plateau_start_rank": None,
+            "hill_plateau_end_rank": None,
+            "hill_window": window,
+            "hill_support_observations": 0,
             "hill_is_powerlaw": False,
         }
     )
@@ -467,10 +481,9 @@ def select_tail_estimator(
             csn = {**_empty_fit(), "xmin": float(clean[k]), "n_tail": int(k)}
     elif name == "hill_windowed":
         selected, kind = plateau["hill_plateau_alpha"], "survival"
-        clean = _clean_positive(values)[::-1]
-        width = int(plateau["hill_plateau_width"])
-        if width > 0 and width < clean.size:
-            csn = {**_empty_fit(), "xmin": float(clean[width]), "n_tail": width}
+        # A sequence of overlapping local windows is not one Pareto sample;
+        # single-cutoff xmin/n_tail fields are intentionally unavailable.
+        csn = _empty_fit()
     elif name == "fixed_cutoff_mle":
         selected, kind = fixed["alpha"], "density"
         csn = fixed

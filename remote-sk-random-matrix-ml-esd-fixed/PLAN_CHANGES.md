@@ -71,11 +71,7 @@ These match the plan-unittest calibration table.
 `perplexity_vs_decile` previously relied on the caller to supply a "fresh model
 per decile." The pipeline passed `lambda: model` (the same instance), so the
 in-place `set_layer_svd_decile` edits piled up across deciles and eventually
-drove a matrix's entire spectrum to zero. Fixed by snapshotting the pristine
-`state_dict` on the first model and **restoring it before each decile's
-ablation** (and once more at the end), making every decile independent and the
-caller's model pristine afterward — correct whether the factory returns a fresh
-or a reused instance.
+drove a matrix's entire spectrum to zero. The current implementation obtains exactly one model from the factory, snapshots only touched parameters, factors pristine matrices once, and restores those exact parameters before/after every ablation. It therefore does not assume independently constructed factory results have identical random weights, and it avoids retaining multiple full models.
 
 ### 9.2 Activation-covariance / overlap now actually runs (was high)
 The activation path called `tokenizer(text, ...)` with `tokenizer=None`, raising
@@ -83,8 +79,7 @@ a `TypeError` that the pipeline's `try/except` swallowed, so `max_overlap` was
 always NaN under the standard CLI. Fixed by (a) loading the real tokenizer in
 `cli.main`/`model_io.load_tokenizer` and threading it through
 `analyze_one_model(..., tokenizer=...)`, and (b) reading text from the local
-`text_path` with a deterministic hash-tokenizer fallback when no tokenizer is
-present, so the overlap block runs offline even for tiny in-process models.
+`text_path`. Production fails closed when the matching tokenizer is unavailable. Tiny in-process tests can explicitly enable the separate `allow_fallback_text` and `allow_fallback_tokenizer` modes; outputs record synthetic tokenizer provenance.
 
 ### 9.3 Regression test added
 `test_pipeline_smoke.py::test_analyze_with_perplexity_and_overlap_regression`

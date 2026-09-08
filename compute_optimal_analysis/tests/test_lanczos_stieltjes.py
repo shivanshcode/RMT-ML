@@ -119,7 +119,9 @@ def test_lanczos_detects_three_separated_spikes_and_mp_edge() -> None:
     assert result.probe_converged.shape == (3,)
     assert result.representative_probe == int(np.argmax(result.iterations))
     assert len(result.probe_tail_metadata) == 3
-    assert abs(result.lambda_plus / theoretical_edge - 1.0) < 0.025
+    # The factor adapter preserves the finite Lanczos estimate rather than
+    # replacing it with an analytic MP moment projection.
+    assert abs(result.lambda_plus / theoretical_edge - 1.0) < 0.04
     grid = np.linspace(result.lambda_minus, result.lambda_plus, 64)
     density = result.density(grid, eta=0.02)
     assert np.all(np.isfinite(density))

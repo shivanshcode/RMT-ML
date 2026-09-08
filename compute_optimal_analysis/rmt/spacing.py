@@ -86,7 +86,20 @@ def unfold_spectrum(
             k=min(3, unique.size - 1),
             s=smoothness,
         )
-        preliminary = np.maximum.accumulate(np.asarray(spline(unique), dtype=np.float64))
+        preliminary = np.asarray(spline(unique), dtype=np.float64)
+        if not np.all(np.diff(preliminary) > 0.0):
+            # Integrate a positive smoothed density rather than flattening a
+            # folded staircase.  This preserves fluctuations and guarantees a
+            # genuinely monotone cumulative map.
+            derivative = np.asarray(spline.derivative()(unique), dtype=np.float64)
+            positive = derivative[np.isfinite(derivative) & (derivative > 0.0)]
+            floor = max(np.finfo(float).eps,
+                        (float(np.median(positive)) * 1e-3 if positive.size else 1e-6))
+            density = np.maximum(np.nan_to_num(derivative, nan=floor), floor)
+            increments = 0.5 * (density[1:] + density[:-1]) * np.diff(unique)
+            preliminary = np.concatenate(([0.0], np.cumsum(increments)))
+            preliminary *= (unique_ranks[-1] - unique_ranks[0]) / preliminary[-1]
+            preliminary += unique_ranks[0]
         smooth = np.asarray(PchipInterpolator(unique, preliminary)(ordered), dtype=np.float64)
     elif name == "gaussian_kernel":
         window = int(kernel_window)
@@ -114,7 +127,9 @@ def unfold_spectrum(
         smooth = ranks
     if not np.all(np.isfinite(smooth)):
         raise ValueError("unfolding produced non-finite values")
-    monotone = np.maximum.accumulate(smooth)
+    if np.any(np.diff(smooth)[np.diff(ordered) > 0.0] <= 0.0):
+        raise ValueError("unfolding folded distinct levels; diagnostics unavailable")
+    monotone = smooth.copy()
     # Equal input levels remain equal unfolded levels (a genuine zero spacing).
     for index in range(1, ordered.size):
         if ordered[index] == ordered[index - 1]:
@@ -139,7 +154,7 @@ def nearest_neighbor_spacings(
     kernel_window: int = 15,
     edge_mode: str = "replicate",
 ) -> np.ndarray:
-    """Return positive nearest-neighbor spacings normalized to mean one."""
+    """Return all nonnegative nearest-neighbor spacings with complete mean one."""
 
     ordered = _clean_levels(levels, minimum=3)
     transformed = ordered if unfolded else unfold_spectrum(
@@ -152,10 +167,9 @@ def nearest_neighbor_spacings(
     )
     spacings = np.diff(transformed)
     spacings = spacings[np.isfinite(spacings) & (spacings >= 0.0)]
-    positive = spacings[spacings > 0.0]
-    if positive.size == 0:
-        raise ValueError("no positive spacings remain")
-    return spacings / np.mean(positive)
+    if spacings.size == 0 or float(np.mean(spacings)) <= 0.0:
+        raise ValueError("no positive mean spacing remains")
+    return spacings / np.mean(spacings)
 
 
 def nn_spacing(levels: np.ndarray, deg: int = 7) -> np.ndarray:
@@ -199,8 +213,12 @@ def fit_brody(
 ) -> BrodyFit:
     """Fit ``beta in [0,1]`` by MLE or empirical-CDF least squares."""
 
-    values = np.asarray(spacings, dtype=np.float64).ravel()
-    values = values[np.isfinite(values) & (values > 0.0)]
+    complete = np.asarray(spacings, dtype=np.float64).ravel()
+    complete = complete[np.isfinite(complete) & (complete >= 0.0)]
+    zero_count = int(np.count_nonzero(complete == 0.0))
+    # The continuous Brody family has no atom at zero.  Fit its explicitly
+    # conditional positive component while preserving zero mass separately.
+    values = complete[complete > 0.0]
     if values.size < 8:
         raise ValueError("at least eight positive spacings are required")
     values = values / np.mean(values)
@@ -240,7 +258,12 @@ def fit_brody(
     beta = float(np.clip(optimum.x, 0.0, 1.0))
     step = 1e-4
     left, right = max(0.0, beta - step), min(1.0, beta + step)
-    if canonical_method == "mle" and left < beta < right:
+    left_width, right_width = beta - left, right - beta
+    symmetric_interior = (
+        left_width >= 0.999 * step and right_width >= 0.999 * step
+        and np.isclose(left_width, right_width, rtol=1e-6, atol=1e-12)
+    )
+    if canonical_method == "mle" and symmetric_interior:
         curvature = (
             optimized_objective(right)
             - 2.0 * optimized_objective(beta)
@@ -272,6 +295,9 @@ def fit_brody(
         diagnostics={
             "fit_objective": float(optimum.fun),
             "n_bootstrap": bootstrap_count,
+            "conditioning": "positive_spacings",
+            "zero_spacing_count": zero_count,
+            "complete_spacing_count": int(complete.size),
         },
     )
 

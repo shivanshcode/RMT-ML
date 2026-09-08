@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
@@ -184,6 +184,7 @@ class LanczosSpikeResult:
     representative_probe: int
     stieltjes_diagonal: np.ndarray = field(repr=False)
     stieltjes_sub_diagonal: np.ndarray = field(repr=False)
+    ridge: float = 0.0
     probe_stieltjes_diagonals: Sequence[np.ndarray] = field(default_factory=tuple, repr=False)
     probe_stieltjes_sub_diagonals: Sequence[np.ndarray] = field(default_factory=tuple, repr=False)
     probe_tail_metadata: Sequence[dict[str, object]] = field(default_factory=tuple)
@@ -225,6 +226,8 @@ class LanczosSpikeResult:
         object.__setattr__(self, "probe_converged", probe_converged)
         if not 0 <= int(self.representative_probe) < probe_counts.size:
             raise ValueError("representative_probe must index the supplied probes")
+        if not np.isfinite(float(self.ridge)) or float(self.ridge) < 0.0:
+            raise ValueError("ridge must be finite and nonnegative")
         object.__setattr__(self, "stieltjes_diagonal", np.asarray(self.stieltjes_diagonal, dtype=np.float64))
         object.__setattr__(self, "stieltjes_sub_diagonal", np.asarray(self.stieltjes_sub_diagonal, dtype=np.float64))
         diagonals = tuple(
@@ -245,10 +248,13 @@ class LanczosSpikeResult:
         object.__setattr__(self, "probe_stieltjes_sub_diagonals", sub_diagonals)
 
     def stieltjes(self, z: np.ndarray | complex) -> np.ndarray | complex:
+        # Recurrences are built for A + ridge*I; evaluate them at z+ridge to
+        # expose the resolvent and density of the original operator A.
+        shifted_z = np.asarray(z, dtype=np.complex128) + float(self.ridge)
         if self.probe_stieltjes_diagonals:
             estimates = [
                 extended_stieltjes_transform(
-                    z,
+                    shifted_z,
                     diagonal,
                     sub_diagonal,
                     tail_alpha=self.tail_alpha,
@@ -262,7 +268,7 @@ class LanczosSpikeResult:
             averaged = np.mean(np.asarray(estimates), axis=0)
             return complex(averaged) if np.asarray(z).ndim == 0 else averaged
         return extended_stieltjes_transform(
-            z,
+            shifted_z,
             self.stieltjes_diagonal,
             self.stieltjes_sub_diagonal,
             tail_alpha=self.tail_alpha,
@@ -1002,6 +1008,7 @@ def detect_spikes_lanczos(
         probe_converged=adaptive_flags,
         pole_method=str(pole_method),
         representative_probe=representative,
+        ridge=float(ridge),
         stieltjes_diagonal=stieltjes_diagonal,
         stieltjes_sub_diagonal=stieltjes_sub,
         probe_stieltjes_diagonals=tuple(probe_stieltjes_diagonals),
@@ -1028,32 +1035,11 @@ def detect_spikes_from_factor(
             np.finfo(float).eps,
         )
     operator = covariance_linear_operator(matrix, normalization=normalization)
-    result = detect_spikes_lanczos(operator, **kwargs)
-    # Debias finite-recurrence support scale with a cheap trace identity after
-    # excluding separated poles (no dense decomposition is introduced).
-    bulk_count = dimension - result.n_spikes
-    if bulk_count > 0:
-        trace = float(np.sum(np.square(matrix)) / normalization)
-        bulk_variance = max(np.finfo(float).eps,
-                            (trace - float(np.sum(result.poles))) / bulk_count)
-        q = dimension / max(matrix.shape)
-        moment_lower = bulk_variance * (1.0 - np.sqrt(q)) ** 2
-        moment_upper = bulk_variance * (1.0 + np.sqrt(q)) ** 2
-        gap = float(kwargs.get("threshold_c", 1.0)) * dimension ** (
-            -float(kwargs.get("threshold_delta", 0.25))
-        )
-        corrected_threshold = float(moment_upper + gap)
-        retained = result.poles > corrected_threshold
-        result = replace(
-            result,
-            lambda_minus=float(moment_lower),
-            lambda_plus=float(moment_upper),
-            threshold=corrected_threshold,
-            poles=result.poles[retained],
-            residues=result.residues[retained],
-            n_spikes=int(np.count_nonzero(retained)),
-        )
-    return result
+    # The factor adapter is exactly the reduced covariance operator adapter.
+    # Do not replace the fitted one-cut support with an unrelated analytic MP
+    # moment projection: all returned edges, poles, recurrences and diagnostics
+    # must describe the same Lanczos result.
+    return detect_spikes_lanczos(operator, **kwargs)
 
 
 lanczos_tridiagonalization = lanczos_tridiagonalize

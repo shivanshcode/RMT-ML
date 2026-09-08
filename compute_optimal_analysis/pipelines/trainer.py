@@ -35,6 +35,7 @@ class TrainConfig:
     log_every: int = 50
     validation_max_batches: int | None = None
     max_train_tokens: int | None = None
+    max_consecutive_skipped_updates: int = 100
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -56,6 +57,8 @@ class TrainConfig:
             raise ValueError("validation_max_batches must be positive")
         if self.max_train_tokens is not None and self.max_train_tokens < 1:
             raise ValueError("max_train_tokens must be positive")
+        if self.max_consecutive_skipped_updates < 1:
+            raise ValueError("max_consecutive_skipped_updates must be positive")
 
 
 def seed_everything(seed: int) -> None:
@@ -148,16 +151,29 @@ def evaluate_language_model(
                     valid = valid & mask[:, 1:] & mask[:, :-1]
                 count = int(torch.count_nonzero(valid).item())
                 if count > 0:
-                    total_loss += float(loss.detach().cpu()) * count
+                    loss_value = float(loss.detach().cpu())
+                    if not math.isfinite(loss_value):
+                        raise FloatingPointError("evaluation produced a non-finite loss")
+                    total_loss += loss_value * count
                     total_tokens += count
     finally:
         model.train(was_training)
     if total_tokens == 0:
-        return {"loss": float("nan"), "perplexity": float("nan"), "tokens": 0.0}
+        raise ValueError("evaluation scored no valid next-token targets")
     mean_loss = total_loss / total_tokens
+    if not math.isfinite(mean_loss):
+        raise FloatingPointError("evaluation mean loss is non-finite")
+    try:
+        perplexity = math.exp(mean_loss)
+        perplexity_status = "finite"
+    except OverflowError:
+        perplexity = float("inf")
+        perplexity_status = "overflow"
     return {
         "loss": float(mean_loss),
-        "perplexity": float(math.exp(min(mean_loss, 80.0))),
+        "log_perplexity": float(mean_loss),
+        "perplexity": float(perplexity),
+        "perplexity_status": perplexity_status,
         "tokens": float(total_tokens),
     }
 
@@ -209,6 +225,8 @@ class LanguageModelTrainer:
         self.attempted_steps = 0
         self.skipped_steps = 0
         self.processed_train_tokens = 0
+        self.attempted_target_tokens = 0
+        self.forwarded_input_positions = 0
         self.history: list[dict[str, float | int]] = []
         self.scheduler: torch.optim.lr_scheduler.LambdaLR | None = None
 
@@ -230,6 +248,11 @@ class LanguageModelTrainer:
             raise ValueError("train_dataloader must expose its finite length")
         available_steps = len(train_dataloader) * self.config.epochs
         total_steps = min(available_steps, self.config.max_steps or available_steps)
+        token_budget = self.config.max_train_tokens
+        # A token budget is the authoritative completion criterion.  Epoch and
+        # update estimates only size the scheduler; the finite loader is recycled.
+        if token_budget is not None:
+            total_steps = max(total_steps, 1)
         if total_steps < 1:
             raise ValueError("train_dataloader contains no batches")
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -244,9 +267,15 @@ class LanguageModelTrainer:
         self.model.train()
         self.execution_model.train()
         stop = False
-        for epoch in range(self.config.epochs):
+        epoch = 0
+        consecutive_skips = 0
+        while True:
+            made_progress = False
             for batch in train_dataloader:
-                if self.global_step >= total_steps:
+                if token_budget is None and self.global_step >= total_steps:
+                    stop = True
+                    break
+                if token_budget is not None and self.processed_train_tokens >= token_budget:
                     stop = True
                     break
                 moved = {
@@ -265,7 +294,9 @@ class LanguageModelTrainer:
                 if "attention_mask" in moved:
                     mask = moved["attention_mask"].to(torch.bool)
                     valid = valid & mask[:, 1:] & mask[:, :-1]
-                batch_tokens = int(torch.count_nonzero(valid).item())
+                original_batch_tokens = int(torch.count_nonzero(valid).item())
+                self.attempted_target_tokens += original_batch_tokens
+                batch_tokens = original_batch_tokens
                 if self.config.max_train_tokens is not None:
                     remaining = self.config.max_train_tokens - self.processed_train_tokens
                     if remaining <= 0:
@@ -278,7 +309,20 @@ class LanguageModelTrainer:
                         width = labels.shape[1] - 1
                         labels[drop // width, (drop % width) + 1] = -100
                         moved["labels"] = labels
+                        # Trim rows/context after masking so a tiny final token
+                        # remainder does not execute a full physical batch.
+                        kept = torch.nonzero(labels[:, 1:] != -100, as_tuple=False)
+                        if kept.numel():
+                            row_stop = int(torch.max(kept[:, 0]).item()) + 1
+                            col_stop = int(torch.max(kept[:, 1]).item()) + 2
+                            for key, value in list(moved.items()):
+                                if value.ndim >= 2 and value.shape[:2] == labels.shape:
+                                    moved[key] = value[:row_stop, :col_stop]
+                            labels = moved["labels"]
                         batch_tokens = remaining
+                input_ids = moved.get("input_ids")
+                if input_ids is not None:
+                    self.forwarded_input_positions += int(input_ids.numel())
                 if batch_tokens < 1:
                     continue
                 self.attempted_steps += 1
@@ -293,6 +337,10 @@ class LanguageModelTrainer:
                 gradient_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), self.config.gradient_clip
                 )
+                if not bool(torch.isfinite(torch.as_tensor(gradient_norm)).item()):
+                    self.optimizer.zero_grad(set_to_none=True)
+                    raise FloatingPointError(
+                        f"non-finite gradient norm at attempted step {self.attempted_steps}")
                 previous_scale = float(self.scaler.get_scale())
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
@@ -302,14 +350,21 @@ class LanguageModelTrainer:
                     self.scheduler.step()
                     self.global_step += 1
                     self.processed_train_tokens += batch_tokens
+                    made_progress = True
+                    consecutive_skips = 0
                 else:
                     self.skipped_steps += 1
+                    consecutive_skips += 1
+                    if consecutive_skips >= self.config.max_consecutive_skipped_updates:
+                        raise RuntimeError("training made no progress across the skipped-update limit")
                 record: dict[str, float | int] = {
                     "step": self.global_step,
                     "attempted_step": self.attempted_steps,
                     "optimizer_update": int(updated),
                     "skipped_steps": self.skipped_steps,
                     "train_tokens": self.processed_train_tokens,
+                    "attempted_target_tokens": self.attempted_target_tokens,
+                    "forwarded_input_positions": self.forwarded_input_positions,
                     "epoch": epoch,
                     "train_loss": float(loss.detach().cpu()),
                     "learning_rate": float(self.optimizer.param_groups[0]["lr"]),
@@ -333,6 +388,13 @@ class LanguageModelTrainer:
                     callback(dict(record))
             if stop:
                 break
+            if not made_progress:
+                raise RuntimeError("one complete data pass produced no optimizer updates")
+            epoch += 1
+            if token_budget is None and epoch >= self.config.epochs:
+                break
+        if token_budget is not None and self.processed_train_tokens != token_budget:
+            raise RuntimeError("training ended before the requested target-token budget")
         return [dict(record) for record in self.history]
 
     def save_checkpoint(self, path: str | Path, *, metadata: dict[str, Any] | None = None) -> None:
@@ -349,6 +411,8 @@ class LanguageModelTrainer:
                 "attempted_steps": self.attempted_steps,
                 "skipped_steps": self.skipped_steps,
                 "processed_train_tokens": self.processed_train_tokens,
+                "attempted_target_tokens": self.attempted_target_tokens,
+                "forwarded_input_positions": self.forwarded_input_positions,
                 "torch_rng_state": torch.get_rng_state(),
                 "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
                 "numpy_rng_state": np.random.get_state(),

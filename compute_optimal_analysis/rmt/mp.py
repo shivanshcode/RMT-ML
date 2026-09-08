@@ -242,9 +242,10 @@ def fit_marchenko_pastur(
     else:
         fitted_variance = _validate_variance(variance)
     lower, upper = marchenko_pastur_bounds(q, fitted_variance)
-    model_cdf = np.asarray(marchenko_pastur_cdf(values, q, fitted_variance))
-    empirical_hi = np.arange(1, values.size + 1, dtype=np.float64) / values.size
-    empirical_lo = np.arange(0, values.size, dtype=np.float64) / values.size
+    ordered_complete = np.sort(complete)
+    model_cdf = np.asarray(marchenko_pastur_cdf(ordered_complete, q, fitted_variance))
+    empirical_hi = np.arange(1, complete.size + 1, dtype=np.float64) / complete.size
+    empirical_lo = np.arange(0, complete.size, dtype=np.float64) / complete.size
     ks_distance = float(max(np.max(np.abs(empirical_hi - model_cdf)),
                             np.max(np.abs(model_cdf - empirical_lo))))
     lower_count = int(np.count_nonzero(complete < lower))
@@ -422,6 +423,7 @@ def fit_modified_mp_singular(
 def fit_marchenko_pastur_thamm(
     weight: np.ndarray,
     *,
+    singular_values: np.ndarray | None = None,
     lower_index: int = 0,
     x_min: float = 0.0,
     fit_peak_fraction: float = 0.7,
@@ -441,7 +443,11 @@ def fit_marchenko_pastur_thamm(
     matrix = np.asarray(weight, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("weight must be a finite matrix with both dimensions at least two")
-    singular_values = np.linalg.svd(matrix, compute_uv=False)
+    singular_values = (np.linalg.svd(matrix, compute_uv=False)
+                       if singular_values is None
+                       else np.asarray(singular_values, dtype=np.float64).ravel())
+    if singular_values.size != min(matrix.shape):
+        raise ValueError("cached singular values do not match the matrix shape")
     curve = fit_modified_mp_singular(
         singular_values,
         lower_index=lower_index,
@@ -517,7 +523,10 @@ def fit_marchenko_pastur_kde(
     WeightWatcher notebook while using a bounded scalar optimizer.
     """
 
-    values = np.sort(_positive_finite(eigenvalues))
+    complete = np.asarray(eigenvalues, dtype=np.float64).ravel()
+    if complete.size == 0 or not np.all(np.isfinite(complete)) or np.any(complete < 0.0):
+        raise ValueError("eigenvalues must be finite, nonnegative, and nonempty")
+    values = np.sort(complete[complete > 0.0])
     if values.size < 8:
         raise ValueError("at least eight positive eigenvalues are required")
     q = _validate_aspect_ratio(aspect_ratio)
@@ -555,7 +564,7 @@ def fit_marchenko_pastur_kde(
         options={"xatol": 1e-8, "maxiter": 500},
     )
     variance = float(np.exp(optimum.x))
-    fitted = fit_marchenko_pastur(values, q, variance=variance, trim_upper=trim)
+    fitted = fit_marchenko_pastur(complete, q, variance=variance, trim_upper=trim)
     return replace(
         fitted,
         method="kde_bulk_fit",
@@ -580,6 +589,7 @@ def fit_marchenko_pastur_farms(
     step_size: int = 10,
     orient_tall: bool = False,
     seed: int | None = 0,
+    normalization: str = "canonical",
     trim_upper: float = 0.1,
 ) -> MPFitResult:
     """Fit MP theory to a fixed-ratio pooled submatrix ESD."""
@@ -595,7 +605,7 @@ def fit_marchenko_pastur_farms(
             column_windows=column_windows,
             sampling=sampling,
             step_size=step_size,
-            normalization="canonical",
+            normalization=normalization,
             orient_tall=orient_tall,
             seed=seed,
         ),
@@ -611,6 +621,8 @@ def fit_marchenko_pastur_farms(
         diagnostics={
             **result.as_dict(),
             "spectral_max": float(np.max(result.eigenvalues)),
+            "normalization": normalization,
+            "spectrum_units": "eigenvalue",
         },
     )
 
@@ -820,7 +832,7 @@ def fit_marchenko_pastur_lanczos(
         lambda_minus=float(detected.lambda_minus),
         lambda_plus=float(detected.lambda_plus),
         n_lower_outliers=int(np.count_nonzero(eigenvalues < detected.lambda_minus)),
-        n_upper_outliers=int(detected.n_spikes),
+        n_upper_outliers=int(np.count_nonzero(eigenvalues > detected.lambda_plus)),
         bulk_fraction=float(
             np.mean(
                 (eigenvalues >= detected.lambda_minus)

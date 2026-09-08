@@ -23,7 +23,7 @@ def test_single_svd_called_once(monkeypatch, rng):
 
     monkeypatch.setattr(PM, "cached_svd", counting)
     W = rng.standard_normal((120, 80))
-    PM.per_matrix_analysis(_record(W))
+    PM.per_matrix_analysis(_record(W), cfg=RunConfig(use_svd_cache=False))
     assert calls["n"] == 1
 
 

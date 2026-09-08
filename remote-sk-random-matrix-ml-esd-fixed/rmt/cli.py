@@ -118,7 +118,7 @@ def main(argv: Optional[list] = None) -> int:
         return 1
 
     from .pipeline import analyze_one_model
-    from .model_io import load_model, load_tokenizer
+    from .model_io import load_model, load_tokenizer, _resolve_path
 
     # `output_dir`, `dtype`, `model_path`, `models` are consumed by the loop /
     # loader (and `output_dir` is passed positionally), so they must NOT also be
@@ -135,7 +135,13 @@ def main(argv: Optional[list] = None) -> int:
         try:
             model = load_model(tag, model_path=cfg.model_path, dtype=cfg.dtype)
             tokenizer = load_tokenizer(tag, model_path=cfg.model_path)
-            resolved = cfg.model_path or tag
+            resolved = getattr(model, "_rmt_resolved_path", None)
+            if resolved is None:
+                try:
+                    resolved = _resolve_path(tag, cfg.model_path)
+                except FileNotFoundError:
+                    # In-process/custom loaders may not expose a filesystem path.
+                    resolved = cfg.model_path or tag
             safe = _safe_tag(tag, identity=os.path.realpath(resolved))
             out = os.path.join(cfg.output_dir, safe)
             csv_path, rows = analyze_one_model(model, safe, out,
@@ -159,7 +165,7 @@ def main(argv: Optional[list] = None) -> int:
 def _safe_tag(name: str, *, identity: str | None = None) -> str:
     raw = str(name)
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_.-") or "model"
-    if stem == raw and raw not in {".", ".."}:
-        return stem
+    # Human-readable names are not identities: even simple tags receive the
+    # digest of the loader's resolved snapshot path.
     digest = hashlib.sha256(str(identity or raw).encode("utf-8")).hexdigest()[:12]
     return f"{stem}_{digest}"

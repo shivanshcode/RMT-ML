@@ -84,48 +84,48 @@ def plot_esd(svals, n, m, sigma, out_path, *, domain="nu", N=None,
     s = np.sort(np.asarray(svals, dtype=float))
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    if domain == "nu":
-        vals = s
-        lo, hi = MP.mp_bounds(n, m, sigma)
-        xlabel = "singular value ν"
-        pdf_theory = lambda xs: MP.mp_pdf(xs, n, m, sigma)
-    else:
-        N = N or m
-        vals = s ** 2 / N
-        lo, hi = MP.mp_bounds_eig(n, m, sigma, N)
-        xlabel = "eigenvalue λ=ν²/N"
-        pdf_theory = lambda xs: MP.mp_pdf_eig(xs, n, m, sigma, N)
-
-    ax.hist(vals, bins=_bin_edges(vals, lo, hi), density=True, alpha=0.5,
-            label=f"empirical {'ν' if domain == 'nu' else 'λ'}")
-
-    if mp_mode in ("theory", "both"):
-        xs = _open_grid(max(lo, 1e-12) if domain != "nu" else lo, hi)
-        ax.plot(xs, pdf_theory(xs) * _count_frac(vals, lo, hi),
-                "r-", lw=2, label="MP (theory, σ̂)")
-
-    if mp_mode in ("fit", "both"):
-        # The modified model is defined in singular-value space.  Fit there,
-        # then apply λ=ν²/N and its Jacobian when plotting eigenvalues.
-        a, nu_min, nu_max = fit_modified_mp(s, win=broaden_win)
-        nu_grid = _open_grid(nu_min, nu_max)
-        nu_density = modified_mp(nu_grid, a, nu_max, nu_min)
+    try:
         if domain == "nu":
-            fit_x, fit_density = nu_grid, nu_density
+            vals = s
+            lo, hi = MP.mp_bounds(n, m, sigma)
+            xlabel = "singular value ν"
+            pdf_theory = lambda xs: MP.mp_pdf(xs, n, m, sigma)
         else:
-            fit_x = nu_grid**2 / N
-            fit_density = nu_density * N / (2.0 * np.maximum(nu_grid, np.finfo(float).tiny))
-        ax.plot(fit_x, fit_density, "k--", lw=2, label="modified MP (fit)")
-        xb = np.linspace(vals[0], vals[-1], 2000)
-        ax.plot(xb, gaussian_broaden(xb, vals, win=broaden_win),
-                color="0.35", lw=1.2, label="broadened ESD")
+            N = N or m
+            vals = s ** 2 / N
+            lo, hi = MP.mp_bounds_eig(n, m, sigma, N)
+            xlabel = "eigenvalue λ=ν²/N"
+            pdf_theory = lambda xs: MP.mp_pdf_eig(xs, n, m, sigma, N)
 
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("density")
-    ax.legend()
-    parent = os.path.dirname(out_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    fig.savefig(out_path)
-    plt.close(fig)
+        ax.hist(vals, bins=_bin_edges(vals, lo, hi), density=True, alpha=0.5,
+                label=f"empirical {'ν' if domain == 'nu' else 'λ'}")
+
+        if mp_mode in ("theory", "both"):
+            xs = _open_grid(max(lo, 1e-12) if domain != "nu" else lo, hi)
+            ax.plot(xs, pdf_theory(xs) * _count_frac(vals, lo, hi),
+                    "r-", lw=2, label="MP (theory, σ̂)")
+
+        if mp_mode in ("fit", "both"):
+            a, nu_min, nu_max = fit_modified_mp(s, win=broaden_win)
+            nu_grid = _open_grid(nu_min, nu_max)
+            nu_density = modified_mp(nu_grid, a, nu_max, nu_min)
+            if domain == "nu":
+                fit_x, fit_density = nu_grid, nu_density
+            else:
+                fit_x = nu_grid**2 / N
+                fit_density = nu_density * N / (2.0 * np.maximum(nu_grid, np.finfo(float).tiny))
+            ax.plot(fit_x, fit_density, "k--", lw=2, label="modified MP (fit)")
+            xb = np.linspace(vals[0], vals[-1], 2000)
+            ax.plot(xb, gaussian_broaden(xb, vals, win=broaden_win),
+                    color="0.35", lw=1.2, label="broadened ESD")
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("density")
+        ax.legend()
+        parent = os.path.dirname(out_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        fig.savefig(out_path)
+    finally:
+        plt.close(fig)
     return out_path

@@ -4,8 +4,8 @@
 
 `rmt` analyzes the spectra of LLM weight matrices to characterize how training
 shapes them, using three complementary Random-Matrix-Theory lenses. For every
-analyzable 2-D weight (attention Q/K/V/O, MLP gate/up/down, fused QKV split into
-thirds) it computes **one SVD** and derives, in a single flat CSV row:
+analyzable 2-D weight (attention Q/K/V/O, MLP gate/up/down, fused QKV split by
+an architecture-verified contiguous or head-interleaved layout) it computes **one SVD** and derives, in a single flat CSV row:
 
 **Marchenko–Pastur bulk + noise scale.** The Gavish–Donoho median estimator
 gives σ̂; the MP edges (ν₋, ν₊) and their eigenvalue images (ν₋²/N, ν₊²/N) bound
@@ -43,7 +43,7 @@ the A100 for large matrices but always hands numpy back to the analysis, and
 `per_matrix_analysis` is proven to call it exactly once per matrix. Everything
 runs fully offline (HF offline env vars set before any model touch).
 
-**Test status: 105 passed, 1 skipped (GPU-only), 0 failed.**
+The v2 repair suite additionally covers fail-closed tokenizer provenance, strict run status, complete-mean spacing, lambda-domain windowed Hill support, pristine reversible decile sweeps, metadata-first bounded processing, and precision-qualified SVD caching. Run the current suite locally for an environment-specific count; historical pass totals are not a release guarantee.
 
 ## How to run
 
@@ -64,7 +64,7 @@ fused `query_key_value` automatically.
 
 ## Output files (per model `<tag>`)
 
-`<tag>_matrix_metrics.csv` (one row per matrix, 88 columns), `<tag>_summary.json`,
+`<tag>_matrix_metrics.csv` (one row per matrix), `<tag>_summary.json`, `<tag>_run_status.json`,
 `<tag>_perplexity.json`, `<tag>_stable_rank_per_epoch.csv`, and plots under `<tag>/`.
 
 ## CSV columns (groups)
@@ -73,7 +73,7 @@ identity (`name, short, layer_idx, n, m, is_square, N_cov`) ·
 MP bulk (`sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig],
 n_*_outliers, frac_*_outliers`) · small-SV (`ks_lower, n_below_minus,
 frac_mass_below_minus, excess_small_sv`) · tail (`alpha, xmin, ks_D, n_tail,
-alpha_on_nu, alpha_hill_nu, alpha_hill_lambda, hill_plateau_alpha/width,
+alpha_on_nu, alpha_hill_nu, alpha_hill_lambda, hill_plateau_alpha/width/start/end/window/support,
 hill_is_powerlaw, LR_trunc, LR_p, alpha_rand, max_ev_rand`) · scalars
 (`row_wise_entropy, spectral_entropy, stable_rank, mp_softrank, bulk_mass_frac,
 max/min/mean/median_sval, ipr_top10_mean, ipr_bulk_mean, pt_ks_mean,

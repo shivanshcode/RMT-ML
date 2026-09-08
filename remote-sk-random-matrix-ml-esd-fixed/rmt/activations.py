@@ -200,14 +200,15 @@ def restore_linears(model) -> int:
 
 
 def collect_feature_matrices(model) -> Dict[str, dict]:
-    """name → {weight, FM, mean}; FM is the (d_in × d_in) centered covariance."""
+    """Collect covariance data and observation counts for wrapped projections."""
     out = {}
     for name, module in model.named_modules():
         if isinstance(module, FeatureLayer):
             out[name] = {
-                "weight": module.weight.detach().cpu().float().numpy(),
                 "FM": module.cov_,
                 "mean": module.mean_,
+                "mean_count": int(module.computation),
+                "fm_count": int(module.fm_computation),
             }
     return out
 
@@ -217,7 +218,10 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
                                   n_text_batches=5, max_length=2048, stride=1024,
                                   max_oom=3, token_weighted=False, spec=None,
                                   text_path="./wikitext-2-raw/wiki.test.raw",
-                                  allow_fallback=False) -> dict:
+                                  allow_fallback=False,
+                                  allow_tokenizer_fallback=False,
+                                  target_names=None,
+                                  window_plan=None) -> dict:
     """Two-pass (mean then centered FM) activation covariance on local text.
 
     Fully offline: text is read from ``text_path`` (the local wikitext file).
@@ -228,10 +232,19 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
     spec = spec or get_model_spec(model)
     if n_text_batches < 1 or max_length < 2 or stride < 1:
         raise ValueError("capture counts, max_length, and stride must be positive")
+    from .config import effective_context_length
+    requested_max_length = int(max_length)
+    max_length = effective_context_length(model, requested_max_length)
     was_training = model.training
     batches = _load_text_batches(model, tokenizer, text_path, n_text_batches,
                                  max_length, stride, device,
-                                 allow_fallback=allow_fallback)
+                                 allow_fallback=allow_fallback,
+                                 allow_tokenizer_fallback=allow_tokenizer_fallback)
+    if window_plan is not None and window_plan.get("lengths") is not None:
+        lengths = list(window_plan["lengths"])
+        if len(lengths) != len(batches):
+            raise RuntimeError("activation window plan does not match the text corpus")
+        batches = [batch[:, :int(length)] for batch, length in zip(batches, lengths)]
     if not batches:
         raise ValueError("activation text produced no usable token windows")
 
@@ -239,11 +252,14 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
     # once can exceed model memory by many GiB.
     from .discovery import extract_layer_index
     want = set(layer_indices) if layer_indices is not None else None
+    explicit_targets = None if target_names is None else set(target_names)
     targets = []
     for name, module in model.named_modules():
         if not (isinstance(module, nn.Linear) or type(module).__name__ == "Conv1D"):
             continue
         if any(sk in name.lower() for sk in _SKIP) or classify(name, spec) is None:
+            continue
+        if explicit_targets is not None and name not in explicit_targets:
             continue
         if want is None or extract_layer_index(name, spec) in want:
             targets.append(name)
@@ -254,31 +270,59 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
     try:
         model.eval()
         replay_batches = list(batches)
-        for target_name in targets:
-            try:
-                replace_with_feature_layers(
-                    model, layer_indices, device, spec=spec,
-                    target_names=[target_name], token_weighted=token_weighted,
-                )
-                set_feature_mode(model, "mean")
-                successful = []
-                with torch.no_grad():
-                    for ids in replay_batches:
-                        successful.append(_safe_forward(model, ids, max_oom))
-                set_feature_mode(model, "FM")
-                with torch.no_grad():
-                    for ids in successful:
-                        # The exact successfully shortened mean-pass windows are
-                        # replayed, so covariance and mean describe identical data.
-                        _safe_forward(model, ids, 0)
-                captured = collect_feature_matrices(model)
-                for value in captured.values():
-                    if value.get("FM") is None:
-                        raise ValueError("activation covariance was not collected")
-                result.update(captured)
-                replay_batches = successful
-            finally:
-                restore_linears(model)
+        # If any later projection requires shorter windows, discard all earlier
+        # results and restart so every covariance describes identical tokens.
+        while True:
+            result = {}
+            restart = False
+            for target_name in targets:
+                try:
+                    replace_with_feature_layers(
+                        model, layer_indices, device, spec=spec,
+                        target_names=[target_name], token_weighted=token_weighted,
+                    )
+                    set_feature_mode(model, "mean")
+                    successful = []
+                    with torch.no_grad():
+                        for ids in replay_batches:
+                            successful.append(_safe_forward(model, ids, max_oom))
+                    if any(got.shape[1] != sent.shape[1]
+                           for got, sent in zip(successful, replay_batches)):
+                        replay_batches = successful
+                        restart = True
+                        break
+                    set_feature_mode(model, "FM")
+                    with torch.no_grad():
+                        for ids in successful:
+                            _safe_forward(model, ids, 0)
+                    captured = collect_feature_matrices(model)
+                    for value in captured.values():
+                        if (value.get("FM") is None or value.get("mean_count", 0) <= 0
+                                or value.get("fm_count", 0) <= 0):
+                            raise ValueError(
+                                f"projection {target_name} was discovered but not executed")
+                    result.update(captured)
+                finally:
+                    restore_linears(model)
+            if not restart:
+                break
+        successful_lengths = [int(batch.shape[1]) for batch in replay_batches]
+        previous_lengths = None if window_plan is None else window_plan.get("lengths")
+        if window_plan is not None:
+            if previous_lengths is not None and list(previous_lengths) != successful_lengths:
+                window_plan["revision"] = int(window_plan.get("revision", 0)) + 1
+            window_plan["lengths"] = successful_lengths
+        import hashlib as _hashlib
+        identity = _hashlib.sha256()
+        for batch in replay_batches:
+            identity.update(batch.detach().to("cpu").numpy().tobytes())
+        for value in result.values():
+            value.update({
+                "requested_max_length": requested_max_length,
+                "effective_max_length": int(max_length),
+                "captured_window_lengths": list(successful_lengths),
+                "window_identity_sha256": identity.hexdigest(),
+            })
     finally:
         restore_linears(model)
         model.train(was_training)
@@ -318,7 +362,8 @@ def _safe_forward(model, input_ids, max_oom):
 
 
 def _load_text_batches(model, tokenizer, text_path, n_text_batches,
-                       max_length, stride, device, *, allow_fallback=False):
+                       max_length, stride, device, *, allow_fallback=False,
+                       allow_tokenizer_fallback=False):
     """Tokenize windows of a local text file (offline). Falls back to a
     deterministic hash tokenizer when ``tokenizer`` is None. Only the portion
     of text needed for ``n_text_batches`` windows is tokenized."""
@@ -332,6 +377,8 @@ def _load_text_batches(model, tokenizer, text_path, n_text_batches,
                         add_special_tokens=False)
         ids = enc["input_ids"][0]
     else:
+        if not allow_tokenizer_fallback:
+            raise RuntimeError("a matching tokenizer is required; synthetic token IDs are disabled")
         vocab = int(getattr(model, "vocab",
                             getattr(getattr(model, "config", None), "vocab_size", 50)))
         toks = [int.from_bytes(hashlib.sha256(w.encode("utf-8")).digest()[:8], "big") % vocab

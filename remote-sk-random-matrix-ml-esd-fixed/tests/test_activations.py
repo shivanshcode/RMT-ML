@@ -72,6 +72,7 @@ def test_replace_and_collect_roundtrip():
     fm = A.collect_feature_matrices(m)
     assert set(fm) == set(wrapped)
     for name, d in fm.items():
-        assert set(d) == {"weight", "FM", "mean"}
+        assert set(d) == {"FM", "mean", "mean_count", "fm_count"}
+        assert d["mean_count"] > 0
         assert d["FM"].shape[0] == d["FM"].shape[1]       # square d_in
-        assert d["FM"].shape[0] == d["weight"].shape[1]
+        assert d["FM"].shape[0] == m.get_submodule(name).kernel_dim

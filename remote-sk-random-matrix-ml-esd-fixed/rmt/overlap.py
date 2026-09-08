@@ -66,7 +66,7 @@ def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
 
 
 def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
-                                       eig=None) -> dict:
+                                       eig=None, cos_matrix=None) -> dict:
     """Fig. 15 cosine-similarity map + scalar summaries (NaN → 0.0).
 
     ``eig`` (optional ``(evals, evecs)``) shares a single ``eigh(C)`` factorisation
@@ -80,9 +80,14 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
     evecs = evecs[:, order]
 
     k = min(Vh.shape[0], evecs.shape[0])
-    # Keep every activation direction for rectangular weights.  Truncating to
-    # :k columns can force a right singular vector away from its true best match.
-    cos_matrix = np.abs(Vh[:k] @ evecs)
+    # Reuse overlap_analysis's product when supplied; this avoids a second
+    # transformer-scale dense overlap allocation with identical entries.
+    if cos_matrix is None:
+        cos_matrix = np.abs(Vh[:k] @ evecs)
+    else:
+        cos_matrix = np.asarray(cos_matrix, dtype=np.float64)
+        if cos_matrix.shape != (k, evecs.shape[1]):
+            raise ValueError("cos_matrix has incompatible overlap dimensions")
     svals_desc = s[:k]
 
     argmax_per_sv = np.argmax(cos_matrix, axis=1)   # best eigvec for each sv

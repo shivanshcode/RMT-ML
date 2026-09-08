@@ -81,6 +81,8 @@ class RunConfig:
     svd_cache_dir: str = "./svd_cache"
     text_path: str = "./wikitext-2-raw/wiki.test.raw"
     allow_fallback_text: bool = False
+    # Synthetic hashed token IDs are a separate, explicit test-only fallback.
+    allow_fallback_tokenizer: bool = False
     # headline / baselines / extras
     do_finetune_recovery: bool = False
     ft_method: str = "lora"
@@ -118,6 +120,33 @@ class RunConfig:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def effective_context_length(model, requested: int) -> int:
+    """Return a safe text-window length for the model's enforced context.
+
+    Learned position tables are authoritative.  For other supported models,
+    standard finite configuration limits are honored; callers retain both the
+    requested and returned lengths as provenance.
+    """
+    requested = int(requested)
+    if requested < 2:
+        raise ValueError("requested context length must be at least two")
+    limits = []
+    config = getattr(model, "config", None)
+    for attr in ("max_position_embeddings", "n_positions", "n_ctx"):
+        value = getattr(config, attr, None)
+        if isinstance(value, int) and value >= 2:
+            limits.append(value)
+    # A learned position embedding is an enforced limit even when configuration
+    # metadata is missing or stale (GPT-2/BERT and compatible local models).
+    for name, module in getattr(model, "named_modules", lambda: [])():
+        count = getattr(module, "num_embeddings", None)
+        lowered = name.lower()
+        if (isinstance(count, int) and count >= 2
+                and ("position" in lowered or lowered.endswith("wpe"))):
+            limits.append(count)
+    return min([requested, *limits]) if limits else requested
 
 
 class OfflineGuard:

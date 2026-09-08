@@ -75,7 +75,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `hill_alpha_at(values, k) -> float`
 - `hill_estimator_windowed(values, *, window=20, k_min=5) -> tuple[np.ndarray, np.ndarray]`
 - `hill_plateau(values, *, window=20, flat_tol=0.15) -> dict`
-- `select_tail_estimator(values, estimator="csn", **kwargs) -> dict`; accepted canonical names are `clauset_mle`, `hill_estimator`, `hill_windowed`, `fixed_cutoff_mle`, `rank_ordered_mle`, and `all`, with legacy `csn`/`hill` aliases.
+- `select_tail_estimator(values, estimator="csn", **kwargs) -> dict`; accepted canonical names are `clauset_mle`, `hill_estimator`, `hill_windowed`, `fixed_cutoff_mle`, `rank_ordered_mle`, and `all`, with legacy `csn`/`hill` aliases. Windowed-Hill reports start/end rank, window width, and union support; its inapplicable single-cutoff `xmin`/`n_tail` fields remain unavailable.
 - `powerlaw_pkg_fit(values, xmax=None) -> dict | None`
 
 ## `rmt.scalars`
@@ -201,6 +201,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `ActivationExtractor.covariances(*, centered=True, unbiased=False) -> dict[str, np.ndarray]`
 - `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None) -> SVDResult`
 - `compute_activation_covariances(model, dataloader, *, device, module_filter=None, max_batches=None, centered=True, accumulation_device="auto", accumulation_dtype="auto", amp_dtype="float32") -> dict[str, np.ndarray]`
+- `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None, analysis_dtype="float64") -> SVDResult`; analysis precision is independent of model/autocast precision.
 - `lesion_matrix(weight, tranche, *, fraction=0.05, mode="count", reference_energy=None, generator=None, svd_backend="auto", svd_driver="gesvdj") -> tuple[Tensor, LesionInfo]`
 - `lesion_matrix_decile(weight, decile, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj") -> tuple[Tensor, LesionInfo]`
 - `spectral_lesion(model, parameter_names, tranche, *, fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj")` returns a restoring context manager.

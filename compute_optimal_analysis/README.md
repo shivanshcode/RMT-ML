@@ -19,7 +19,7 @@ Spectral-Chinchilla trains compute-allocation-controlled causal Transformers and
 
 The existing ESD jobs use `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`. `run_hpc.slurm` calls that interpreter directly by default; set `RMT_PYTHON` only to select a separately validated prefix or clone. It does not activate a project `.venv`, purge modules, load a Python module, or assume a CUDA module version. Set `RMT_CUDA_MODULE` only when the live environment inventory proves that a site module is required.
 
-Before changing packages, capture `pip freeze --all`, `pip check`, Conda's explicit package list, loaded modules, OS/architecture, compiler, driver, Torch CUDA build, GPU capability, BF16 support, and package versions as described in `other_requirements.md`. The live ESD stack must not be downgraded to the standalone pins: notably, this project's `numpy==1.26.4` conflicts with ESD's `np.trapezoid` path, which requires NumPy 2.0 or newer.
+Before changing packages, capture `pip freeze --all`, `pip check`, Conda's explicit package list, loaded modules, OS/architecture, compiler, driver, Torch CUDA build, GPU capability, BF16 support, and package versions as described in `other_requirements.md`. Do not downgrade the live ESD stack to the standalone pins without inventory and validation. The sibling Delta3 implementation supports both `np.trapezoid` and NumPy 1.x's `np.trapz`, so NumPy 1.26 is not by itself a known incompatibility; the complete live stack still requires validation.
 
 `requirements.txt` remains the original **standalone environment** contract. If the live inventory is incompatible, create a separate environment and an inventory-derived, reviewed `requirements-cluster.txt`; never invent that lock from the unpinned ESD requirements or install the standalone pins into `rmt_ml_env` in place. Build any wheelhouse on a connected Linux host matching the cluster's Python ABI, architecture, glibc/libstdc++, and selected Torch/CUDA build. See `other_requirements.md` for the optional standalone and wheelhouse procedures.
 
@@ -29,7 +29,7 @@ Before changing packages, capture `pip freeze --all`, `pip check`, Conda's expli
 python scripts/download_assets.py --assets all --allow-network
 ```
 
-This resolves the current dataset and tokenizer repositories to immutable commit SHAs, stages `Salesforce/wikitext` configuration `wikitext-103-raw-v1`, the `openai-community/gpt2` tokenizer, raw JSONL splits, a contiguous integer token array, cache directories, a deterministic synthetic corpus, and `data/asset_manifest.json` with source revisions and SHA-256 checksums.
+Before partial staging, the utility verifies every untouched asset family against the existing manifest; it refuses to silently re-certify modified files. Manifest paths are POSIX-relative and portable between Windows staging and Linux execution. This resolves the current dataset and tokenizer repositories to immutable commit SHAs, stages `Salesforce/wikitext` configuration `wikitext-103-raw-v1`, the `openai-community/gpt2` tokenizer, raw JSONL splits, a contiguous integer token array, cache directories, a deterministic synthetic corpus, and `data/asset_manifest.json` with source revisions and SHA-256 checksums.
 
 Verify a copied asset tree without network access:
 
@@ -83,7 +83,7 @@ The launcher requests one process and one GPU; it implements no DDP/FSDP. It val
 
 ### 4. Manifest-only configuration
 
-Omit `--execute` to write allocation and resolved-method manifests without loading data or training:
+Omit `--execute` to write allocation and resolved-method manifests without loading data or training. The runner requires an empty/fresh output directory for both manifest and execution modes:
 
 ```bash
 python run_experiments.py --output-dir results/manifest_check
@@ -119,7 +119,7 @@ python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-r
 
 ## Exhaustive CLI reference
 
-Boolean flags use paired `--flag` and `--no-flag` forms. Defaults shown are parser defaults; `reproduce_paper1` and `compute_optimal_rmt` enable lesions and activation overlap, while the other modes enable their required diagnostics.
+Boolean flags use paired `--flag` and `--no-flag` forms. Each paper mode applies its complete documented scientific-method preset; any explicitly supplied option (including `--no-*`) overrides that preset. `custom` uses parser defaults.
 
 ### Pipeline control and scaling
 
@@ -135,7 +135,8 @@ Boolean flags use paired `--flag` and `--no-flag` forms. Defaults shown are pars
 | `--allocation-ratios` | one or more positive floats | `0.25 1.0 4.0` | Undertrained, optimal, and overtrained token multipliers |
 | `--vocab-size` | integer | `50257` | Embedding and output vocabulary |
 | `--parameter-cap` | positive float or omitted | omitted | Explicit local model-size cap |
-| `--max-train-tokens` | positive float or omitted | omitted | Explicit local token cap |
+| `--max-train-tokens` | positive float or omitted | omitted | Authoritative successful-update target-token budget; finite loaders are recycled |
+| `--allow-collapsed-allocations` | boolean | false | Permit capped calibration cells whose realized N/D designs are identical; otherwise execution rejects them |
 
 ### Offline loading and training
 
@@ -163,6 +164,7 @@ Boolean flags use paired `--flag` and `--no-flag` forms. Defaults shown are pars
 | `--allow-tf32` | boolean | true | Permit TensorFloat-32 matrix multiplication |
 | `--svd-backend` | `auto`, `cuda`, `cpu` | `auto` | SVD execution backend outside the pure engine |
 | `--svd-driver` | `gesvdj`, `gesvd`, `gesvda`, `default` | `gesvdj` | CUDA linear-algebra driver |
+| `--analysis-dtype` | `float32`, `float64` | `float64` | Weight SVD/lesion factorization dtype, independent of training/autocast dtype |
 | `--covariance-device` | `auto`, `cuda`, `cpu` | `auto` | Activation moment-buffer placement |
 | `--covariance-dtype` | `float32`, `float64` | `float32` | Activation moment accumulation dtype |
 
@@ -263,6 +265,6 @@ The released reference convention is `Q = sampled_columns / sampled_rows`.
 
 ## Output contract
 
-Every run writes `allocation_manifest.json`, `spectral_method_config.json`, `run_config.json`, and `runtime_environment.json`. The environment record captures package versions, interpreter/platform details, requested precision, CUDA build/device metadata when execution is active, available SLURM identifiers, the staged dataset SHA-256 when present in the asset manifest, and UTC/elapsed timing. Execution additionally writes spectral and lesion CSV files, training JSON Lines, optional checkpoints, ESD/tail plots, spacing plots, overlap heatmaps, lesion-impact plots, and scaling trajectories.
+Every run writes `allocation_manifest.json`, `spectral_method_config.json`, `run_config.json`, and `runtime_environment.json`. Manifests distinguish requested and realized tokens-per-parameter ratios and flag collapsed interventions. Training records successful-update targets, attempted targets, forwarded input positions, skipped attempts, a clearly labeled `6ND` approximation, and a forwarded-position compute proxy. The environment record captures package versions, interpreter/platform details, requested precision, CUDA build/device metadata when execution is active, available SLURM identifiers, the staged dataset SHA-256 when present in the asset manifest, and UTC/elapsed timing. Execution additionally writes spectral and lesion CSV files, training JSON Lines, optional checkpoints, ESD/tail plots, spacing plots, overlap heatmaps, lesion-impact plots, and scaling trajectories.
 
 Synthetic tests calibrate formulas and software behavior; they do not guarantee a trained layer has a power law, a particular Brody parameter, or stronger bottom-than-bulk lesion damage. Those remain measured research outcomes.

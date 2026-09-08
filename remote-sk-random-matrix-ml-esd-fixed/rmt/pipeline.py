@@ -19,7 +19,8 @@ from typing import List, Tuple, Dict, Optional
 import numpy as np
 
 from .config import RunConfig, get_logger, OfflineGuard
-from .discovery import get_model_spec, discover_weight_matrices
+from .discovery import (get_model_spec, discover_weight_matrices,
+                        discover_weight_metadata, materialize_record)
 from .per_matrix import per_matrix_analysis, CSV_COLUMNS
 
 _log = get_logger("rmt.pipeline")
@@ -27,11 +28,47 @@ _log = get_logger("rmt.pipeline")
 
 def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                       **cfg_flags) -> Tuple[str, List[dict]]:
-    """Analyze one model → (csv_path, rows).
+    """Run in a fresh owned directory and finalize status after every stage."""
+    if os.path.isdir(output_dir) and os.listdir(output_dir):
+        raise FileExistsError(
+            f"output directory is not empty: {output_dir}; choose a fresh run directory")
+    os.makedirs(output_dir, exist_ok=True)
+    status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
+    _write_json(status_path, {"status": "running", "failures": []})
+    try:
+        csv_path, rows, failures = _analyze_one_model(
+            model, model_tag, output_dir, tokenizer=tokenizer, **cfg_flags)
+        state = "complete" if not failures else "partial"
+        allow_tokenizer = bool(cfg_flags.get("allow_fallback_tokenizer", False))
+        text_path = cfg_flags.get("text_path", RunConfig().text_path)
+        provenance = {
+            "tokenizer_source": ("real" if tokenizer is not None else
+                                 ("synthetic_hash_opt_in" if allow_tokenizer else "unavailable")),
+            "tokenizer_identity": (None if tokenizer is None else
+                                   getattr(tokenizer, "name_or_path", type(tokenizer).__name__)),
+            "text_source": ("file" if text_path and os.path.isfile(text_path)
+                            else ("fallback_opt_in" if cfg_flags.get("allow_fallback_text", False)
+                                  else "unavailable")),
+            "text_path": text_path,
+        }
+        _write_json(status_path, {"status": state, "usable_matrices": len(rows),
+                                  "failures": failures, "provenance": provenance})
+        return csv_path, rows
+    except BaseException as exc:
+        current = _read_status(status_path)
+        failures = list(current.get("failures", []))
+        failures.append({"stage": "run", "error": repr(exc)})
+        _write_json(status_path, {"status": "failed", "failures": failures})
+        raise
+
+
+def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
+                       **cfg_flags):
+    """Analyze one model → (csv_path, rows, failures).
 
     ``model`` may be an in-process module (tests) or a loaded local snapshot.
-    ``tokenizer`` (optional) is used for the activation-covariance and
-    perplexity text passes; if None a deterministic offline fallback is used.
+    ``tokenizer`` is used for text passes; synthetic token IDs require the
+    explicit ``allow_fallback_tokenizer`` test-only option.
     Extra keyword flags override :class:`RunConfig` defaults.
     """
     cfg = RunConfig(**{k: v for k, v in cfg_flags.items() if hasattr(RunConfig, k)
@@ -39,54 +76,77 @@ def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
     if cfg.offline:
         OfflineGuard.enable()
 
-    os.makedirs(output_dir, exist_ok=True)
     spec = get_model_spec(model)
     layer_filter = cfg.layers if cfg.layers else None
     # REPORT §0: materialise weights at float64 (the discovery default), not the
     # old hardcoded float32 which dropped the smallest singular values to noise.
-    records = discover_weight_matrices(model, layer_indices=layer_filter, spec=spec)
+    records = discover_weight_metadata(model, layer_indices=layer_filter, spec=spec)
     _log.info("[%s] discovered %d matrices", model_tag, len(records))
     if not records:
         raise ValueError("no analyzable matrices matched the model/layer selection")
 
-    # optional activation covariance (overlap / coincidence block)
-    fm_dict = None
-    if cfg.do_overlap:
-        fm_dict = _maybe_activation_cov(model, records, cfg, spec, tokenizer)
-
-    rows = []
     failures = []
-    svals = {}            # name -> descending singular values (for the plots)
-    ovmats = {}           # name -> overlap matrix (for the overlap heatmaps)
-    for rec in records:
-        try:
-            row = per_matrix_analysis(rec, fm_dict=fm_dict, cfg=cfg,
-                                      svals_out=svals, ovmat_out=ovmats)
-            rows.append(row)
-        except Exception as e:                                  # pragma: no cover
-            failures.append({"matrix": rec.name, "stage": "per_matrix", "error": repr(e)})
-            _log.warning("per_matrix failed for %s: %s", rec.name, e)
-        finally:
-            # release the materialized numpy weight; per_matrix already used it
-            # and the plots read the (small) stashed singular values instead.
-            rec.weight = None
+    # Activation covariances and overlap heatmaps are projection-at-a-time.
+    # A shared plan makes OOM-shortened windows a run-wide contract.  If a later
+    # projection tightens it, discard/replay earlier rows rather than comparing
+    # covariances captured from different token windows.
+    activation_plan = {"lengths": None, "revision": 0}
+    restart_count = 0
+    while True:
+        rows = []
+        svals = {}            # singular values are small O(min(n,m)) plot inputs
+        restart = False
+        pass_revision = int(activation_plan["revision"])
+        for rec in records:
+            live = None
+            try:
+                live = materialize_record(model, rec, spec=spec)
+                fm_dict = (_maybe_activation_cov(
+                    model, [rec], cfg, spec, tokenizer, failures=failures,
+                    window_plan=activation_plan)
+                    if cfg.do_overlap else None)
+                if rows and int(activation_plan["revision"]) != pass_revision:
+                    restart = True
+                    break
+                local_overlap = {}
+                row = per_matrix_analysis(live, fm_dict=fm_dict, cfg=cfg,
+                                          svals_out=svals, ovmat_out=local_overlap)
+                rows.append(row)
+                if cfg.do_overlap and local_overlap:
+                    _emit_overlap_plots(output_dir, local_overlap, cfg, failures)
+            except Exception as e:                              # pragma: no cover
+                failures.append({"matrix": rec.name, "stage": "per_matrix", "error": repr(e)})
+                _log.warning("per_matrix failed for %s: %s", rec.name, e)
+            finally:
+                if live is not None:
+                    live.weight = None
+        if not restart:
+            break
+        restart_count += 1
+        if restart_count > max(1, len(records) * cfg.max_oom):
+            raise RuntimeError("activation window plan did not stabilize")
+        _log.warning("activation window plan shortened; replaying all matrix analyses")
 
     if not rows:
-        status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
-        with open(status_path, "w") as f:
-            json.dump({"status": "failed", "failures": failures}, f, indent=2)
+        _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
+                    {"status": "failed", "usable_matrices": 0,
+                     "failures": failures})
         raise RuntimeError("all discovered matrices failed analysis")
     csv_path = os.path.join(output_dir, f"{model_tag}_matrix_metrics.csv")
     _write_csv(csv_path, rows, n_deciles=cfg.n_deciles)
     _write_summary(os.path.join(output_dir, f"{model_tag}_summary.json"), rows, model_tag)
-    with open(os.path.join(output_dir, f"{model_tag}_run_status.json"), "w") as f:
-        json.dump({"status": "complete" if not failures else "partial",
-                   "usable_matrices": len(rows), "failures": failures}, f, indent=2)
-    _maybe_plots(output_dir, model_tag, rows, records, cfg, svals=svals, ovmats=ovmats)
+    if failures and cfg.strict:
+        _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
+                    {"status": "failed", "usable_matrices": len(rows),
+                     "failures": failures})
+        raise RuntimeError(f"strict analysis failed for {len(failures)} matrix/stage(s)")
+    _maybe_plots(output_dir, model_tag, rows, records, cfg, svals=svals,
+                 ovmats=None, failures=failures)
 
     # optional perplexity-vs-decile ablation
     if cfg.do_perplexity:
-        _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenizer)
+        _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenizer,
+                          failures=failures)
 
     # optional WeightWatcher baseline (best-effort)
     if cfg.do_ww:
@@ -99,9 +159,12 @@ def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                           "w") as f:
                     json.dump(ww.get("summary", {}), f, indent=2, default=str)
         except Exception as e:                                  # pragma: no cover
+            failures.append({"stage": "weightwatcher", "error": repr(e)})
             _log.warning("weightwatcher baseline skipped: %s", e)
+            if cfg.strict:
+                raise
 
-    return csv_path, rows
+    return csv_path, rows, failures
 
 
 def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
@@ -119,17 +182,20 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
     for frac in checkpoint_fracs:
         model = checkpoint_loader(frac)
         spec = get_model_spec(model)
-        recs = discover_weight_matrices(model, layer_indices=list(probe_layers),
-                                        spec=spec)
+        recs = discover_weight_metadata(model, layer_indices=list(probe_layers),
+                                         spec=spec)
         from .scalars import stable_rank
         per_layer: Dict[int, List[float]] = {L: [] for L in probe_layers}
-        for r in recs:
-            if r.layer_idx in per_layer:
+        for meta in recs:
+            if meta.layer_idx in per_layer:
+                r = materialize_record(model, meta, spec=spec)
                 per_layer[r.layer_idx].append(stable_rank(s=np.linalg.svd(
                     np.asarray(r.weight, float), compute_uv=False)))
+                r.weight = None
         for L in probe_layers:
             vals = per_layer.get(L, [])
             srk_by_layer[L].append(float(np.mean(vals)) if vals else float("nan"))
+        del recs, model
 
     path = os.path.join(output_dir, f"{model_tag}_stable_rank_per_epoch.csv")
     with open(path, "w", newline="") as f:
@@ -152,25 +218,34 @@ def _model_device(model):
         return "cpu"
 
 
-def _maybe_activation_cov(model, records, cfg, spec, tokenizer=None):
+def _maybe_activation_cov(model, records, cfg, spec, tokenizer=None, failures=None,
+                          window_plan=None):
     try:
         from .activations import compute_activation_covariance
         device = _model_device(model)
         layer_idxs = sorted({r.layer_idx for r in records if r.layer_idx >= 0})
+        target_names = sorted({
+            r.name.split("[", 1)[0].removesuffix(".weight") for r in records
+        })
         return compute_activation_covariance(
             model, tokenizer=tokenizer, layer_indices=layer_idxs, device=device,
             dataset_name=cfg.fm_dataset, n_text_batches=cfg.n_text_batches,
             max_length=cfg.fm_max_length, stride=cfg.fm_stride,
             max_oom=cfg.max_oom, token_weighted=cfg.fm_token_weighted, spec=spec,
-            text_path=cfg.text_path, allow_fallback=cfg.allow_fallback_text)
+            text_path=cfg.text_path, allow_fallback=cfg.allow_fallback_text,
+            allow_tokenizer_fallback=cfg.allow_fallback_tokenizer,
+            target_names=target_names, window_plan=window_plan)
     except Exception as e:                                      # pragma: no cover
+        if failures is not None:
+            failures.append({"stage": "activation", "error": repr(e)})
         _log.warning("activation covariance failed (%s); overlap will be unavailable", e)
         if cfg.strict:
             raise
         return None
 
 
-def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenizer=None):
+def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenizer=None,
+                      failures=None):
     try:
         from .decile import perplexity_vs_decile
         device = _model_device(model)
@@ -181,7 +256,8 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
                                    text_path=cfg.text_path, stride=cfg.ppl_stride,
                                    backend=cfg.backend,
                                    gpu_min_dim=cfg.gpu_svd_min_dim,
-                                   allow_fallback=cfg.allow_fallback_text)
+                                   allow_fallback=cfg.allow_fallback_text,
+                                   allow_tokenizer_fallback=cfg.allow_fallback_tokenizer)
         # REPORT §3 A8: a missing text file silently falls back to a repeated
         # pangram and still returns a *finite* perplexity. Make that explicit so
         # the numbers are never mistaken for real wikitext perplexity.
@@ -192,8 +268,9 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
             _log.warning("perplexity text file %r not found — using the offline "
                          "fallback corpus; perplexity numbers are NOT wikitext "
                          "(tagged text_source=fallback)", cfg.text_path)
-        with open(os.path.join(output_dir, f"{model_tag}_perplexity.json"), "w") as f:
-            json.dump(res, f, indent=2)
+        res["tokenizer_source"] = ("real" if tokenizer is not None
+                                   else "synthetic_hash_opt_in")
+        _write_json(os.path.join(output_dir, f"{model_tag}_perplexity.json"), res)
         # the decile-vs-perplexity plot (REPORT §2 plot wiring)
         try:
             from .plots import plot_perplexity_vs_decile
@@ -201,11 +278,43 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
                 res, os.path.join(output_dir, "perplexity",
                                   f"{model_tag}_perplexity_vs_decile.png"))
         except Exception as pe:                                 # pragma: no cover
+            if failures is not None:
+                failures.append({"stage": "perplexity_plot", "error": repr(pe)})
             _log.warning("perplexity plot skipped: %s", pe)
+            if cfg.strict:
+                raise
     except Exception as e:                                      # pragma: no cover
+        if failures is not None:
+            failures.append({"stage": "perplexity", "error": repr(e)})
         _log.warning("perplexity-vs-decile failed: %s", e)
         if cfg.strict:
+            _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
+                        {"status": "failed", "failures": list(failures or [])})
             raise
+
+
+def _write_json(path, value):
+    """Write standards-compliant JSON; unavailable numeric values become null."""
+    def clean(obj):
+        if isinstance(obj, dict):
+            return {str(k): clean(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [clean(v) for v in obj]
+        if isinstance(obj, (float, np.floating)) and not np.isfinite(obj):
+            return None
+        if isinstance(obj, np.integer):
+            return int(obj)
+        return obj
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(clean(value), f, indent=2, allow_nan=False)
+
+
+def _read_status(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def _safe_plot_name(name: str) -> str:
@@ -217,7 +326,24 @@ def _safe_plot_name(name: str) -> str:
     return stem or "matrix"
 
 
-def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmats=None):
+def _emit_overlap_plots(output_dir, matrices, cfg, failures=None):
+    """Write and release each dense overlap artifact immediately."""
+    from .plots import plot_overlap_heatmap
+    for name, matrix in matrices.items():
+        try:
+            plot_overlap_heatmap(
+                matrix, os.path.join(output_dir, "overlap", f"{_safe_plot_name(name)}.png"))
+        except Exception as error:                              # pragma: no cover
+            if failures is not None:
+                failures.append({"stage": "overlap_plot", "matrix": name,
+                                 "error": repr(error)})
+            _log.warning("overlap plot skipped for %s: %s", name, error)
+            if cfg.strict:
+                raise
+
+
+def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None,
+                 ovmats=None, failures=None):
     """Emit the per-matrix plots the analyses imply (REPORT §2 plot wiring).
 
     Previously only ``summary.png`` was produced; ``per_matrix_analysis`` discarded
@@ -227,17 +353,25 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
     """
     svals = svals or {}
     ovmats = ovmats or {}
+
+    def failed(stage, error):
+        if failures is not None:
+            failures.append({"stage": stage, "error": repr(error)})
+        if cfg.strict:
+            raise error
     try:
         from .plots import plot_model_summary
         plot_model_summary(rows, os.path.join(output_dir, f"{model_tag}_summary.png"))
     except Exception as e:                                      # pragma: no cover
         _log.warning("summary plot skipped: %s", e)
+        failed("summary_plot", e)
 
     try:
         from .plots import (plot_esd, plot_hill, plot_nn_spacing,
                             plot_qkv_heatmap, plot_overlap_heatmap)
     except Exception as e:                                      # pragma: no cover
         _log.warning("per-matrix plots unavailable: %s", e)
+        failed("plot_import", e)
         return
 
     row_by_name = {r.get("name"): r for r in rows}
@@ -261,15 +395,18 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
                      domain="nu", N=N_cov)
         except Exception as e:                                  # pragma: no cover
             _log.warning("esd plot skipped for %s: %s", name, e)
+            failed("esd_plot", e)
         # Hill (gated on do_powerlaw)
         if cfg.do_powerlaw:
             try:
-                plot_hill(s, os.path.join(output_dir, "hill", f"{stem}.png"),
+                levels = (s ** 2) / float(N_cov)
+                plot_hill(levels, os.path.join(output_dir, "hill", f"{stem}.png"),
                           window=cfg.hill_window)
             except Exception as e:                              # pragma: no cover
                 _log.warning("hill plot skipped for %s: %s", name, e)
+                failed("hill_plot", e)
         # NN spacing (gated on do_spacing and enough levels)
-        if cfg.do_spacing and len(s) >= 50:
+        if cfg.do_spacing and len(s) >= 50 and r.get("spacing_available") == 1:
             try:
                 levels = (s ** 2) / float(N_cov)
                 levels = levels[(levels >= float(r.get("mp_minus_eig", -np.inf)))
@@ -280,6 +417,7 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
                                     deg=cfg.unfold_deg)
             except Exception as e:                              # pragma: no cover
                 _log.warning("spacing plot skipped for %s: %s", name, e)
+                failed("spacing_plot", e)
         # collect Q/K/V spectra per layer for the QKV heatmap
         short = r.get("short")
         li = r.get("layer_idx", -1)
@@ -297,6 +435,7 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
                                               f"layer{li:02d}_qkv.png"))
             except Exception as e:                              # pragma: no cover
                 _log.warning("qkv heatmap skipped for layer %s: %s", li, e)
+                failed("qkv_plot", e)
 
     # overlap heatmaps (gated on do_overlap) — one per overlap matrix
     if cfg.do_overlap:
@@ -307,6 +446,7 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None, ovmat
                                       f"{_safe_plot_name(name)}.png"))
             except Exception as e:                              # pragma: no cover
                 _log.warning("overlap heatmap skipped for %s: %s", name, e)
+                failed("overlap_plot", e)
 
 
 def _write_csv(path, rows, n_deciles=10):
