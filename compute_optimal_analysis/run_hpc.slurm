@@ -84,11 +84,19 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-${PROJECT_ROOT}/results/jobs/${SLURM_JOB_ID:?Missing
 if [[ "$OUTPUT_ROOT" != /* ]]; then
     OUTPUT_ROOT="${PROJECT_ROOT}/${OUTPUT_ROOT}"
 fi
-if [[ -e "$OUTPUT_ROOT" ]]; then
-    echo "Refusing to reuse existing OUTPUT_ROOT: $OUTPUT_ROOT" >&2
+mkdir -p "$OUTPUT_ROOT"
+OUTPUT_OWNER="$OUTPUT_ROOT/.job-owner"
+# Claim ownership atomically.  Directory creation alone cannot distinguish two
+# jobs racing on the same explicit root, and empty pre-created roots are valid.
+if ! ( set -o noclobber; printf '%s\n' "${SLURM_JOB_ID}" > "$OUTPUT_OWNER" ) 2>/dev/null; then
+    echo "Refusing to reuse already-owned OUTPUT_ROOT: $OUTPUT_ROOT" >&2
     exit 2
 fi
-mkdir -p "$OUTPUT_ROOT"
+if find "$OUTPUT_ROOT" -mindepth 1 -maxdepth 1 ! -name '.job-owner' -print -quit | grep -q .; then
+    rm -f "$OUTPUT_OWNER"
+    echo "Refusing to reuse nonempty OUTPUT_ROOT: $OUTPUT_ROOT" >&2
+    exit 2
+fi
 
 "$PYTHON" - "$PROJECT_ROOT" <<'PY'
 from pathlib import Path

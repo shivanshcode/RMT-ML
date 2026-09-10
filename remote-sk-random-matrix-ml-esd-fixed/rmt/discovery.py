@@ -322,8 +322,18 @@ def split_fused_qkv(weight, name, layer_idx, spec, *, num_heads=None,
     return recs
 
 
-_SKIP_SUBSTRINGS = ("embed", "lm_head", "embed_out", "embed_in", "embed_tokens",
-                    "wte", "wpe", "shared", "rotary", "norm", "ln_", "layernorm")
+_EXCLUDED_COMPONENTS = {
+    "embed", "embedding", "embeddings", "embed_out", "embed_in",
+    "embed_tokens", "lm_head", "pooler", "wte", "wpe", "shared",
+    "rotary", "norm", "layernorm",
+}
+
+
+def _excluded_projection(name, module) -> bool:
+    """Exclude actual embedding/normalization/head components, not substrings."""
+    components = {component.lower() for component in name.split(".")}
+    kind = type(module).__name__.lower()
+    return bool(components & _EXCLUDED_COMPONENTS) or "embedding" in kind or "layernorm" in kind
 
 
 def discover_weight_metadata(model, layer_indices=None, *, spec=None,
@@ -339,7 +349,7 @@ def discover_weight_metadata(model, layer_indices=None, *, spec=None,
         weight = getattr(module, "weight", None)
         if weight is None or getattr(weight, "dim", lambda: 0)() != 2:
             continue
-        if any(sk in name.lower() for sk in _SKIP_SUBSTRINGS):
+        if _excluded_projection(name, module):
             continue
         short = classify(name, spec)
         layer_idx = extract_layer_index(name, spec)
@@ -399,8 +409,7 @@ def discover_weight_matrices(model, layer_indices=None, *, spec=None,
     for name, module in model.named_modules():
         if not hasattr(module, "weight"):
             continue
-        lname = name.lower()
-        if any(sk in lname for sk in _SKIP_SUBSTRINGS):
+        if _excluded_projection(name, module):
             continue
         short = classify(name, spec)
         if short is None:

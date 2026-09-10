@@ -59,7 +59,7 @@ python -m rmt --models ./models/tiny-test --allow_fallback_text --allow_fallback
 - `<tag>_run_status.json` — initialized before work and finalized only after requested stages; strict partial failures exit nonzero.
 - `<tag>_perplexity.json` — decile-ablation perplexity (if `--do_perplexity`).
 - `<tag>_stable_rank_per_epoch.csv` — backend-dispatched epoch tracking with actual backend/dtype provenance (via `pipeline.analyze_checkpoints`).
-- `<tag>_weightwatcher_status.json` — truthful complete/unavailable/failed status whenever WeightWatcher is requested.
+- `<tag>_weightwatcher_status.json` — truthful complete/unavailable/failed status whenever WeightWatcher is requested; requested failures are enforced after all stages in strict mode.
 - plots under `<tag>/` (ESD, Hill, NN-spacing, heatmaps, summary).
 
 ## Tests
@@ -77,9 +77,10 @@ pytest                  # full suite (adds tiny in-process torch models)
 - Fused QKV uses architecture-verified layout: GPT-2 is contiguous and GPT-NeoX/Pythia is head-interleaved. Unknown fused layouts are rejected rather than guessed.
 - Exponents: CSN α is the **density** exponent; Hill α = 1/H is the **survival** exponent; for a pure law `α_csn = α_hill + 1` and `α(λ) = α(ν)/2` for Hill. A finite `xmax` uses a normalized bounded-Pareto likelihood/CDF. Random controls use the selected headline estimator and serialize their own kind/cutoff/support metadata. Headline windowed Hill is computed on `λ`; rank/window support is serialized instead of inventing a single cutoff.
 - Repeated levels retain zero spacing mass and the complete spacing sample is normalized to mean one. Continuous Brody fits are explicitly conditional on positive spacings.
-- Persistent SVD cache entries include actual backend/factorization dtype/degraded status; malformed/corrupt entries are cache misses and are recomputed. Degraded float32 fallbacks cannot satisfy the float64 contract. Independent decile factorizations enforce the same fail-closed contract and publish their precision status.
+- Persistent SVD cache entries include actual backend/factorization dtype/degraded status; array dtypes must agree with metadata and singular values must be descending. Malformed, contradictory, unsorted, or corrupt entries are cache misses and are recomputed. Degraded float32 fallbacks cannot satisfy the float64 contract. Independent decile factorizations enforce the same fail-closed contract and publish their precision status.
 - ESD histogram construction has a hard 400-bin bound, including nearly constant spectra whose empirical IQR is tiny.
 - Learned-position context limits account for positive reserved-position offsets as well as table size.
-- Discovery is metadata-first, analysis/covariance capture is projection-at-a-time, and decile interventions reuse one reversible pristine model to bound host/device memory. Exact projection targets under names such as `multihead_attention` remain valid; only actual embedding/output-head path components are excluded. Null or unresolved activation eigenspaces are marked unavailable, and borrowed models retain every submodule's original train/eval mode.
-- The mandatory analytic gate always uses the fixed calibrated `rmt.config.SEED`; experiment seed 0 and all other requested seeds remain unchanged for real randomized analyses.
+- Discovery is metadata-first, analysis/covariance capture is projection-at-a-time, and decile interventions prevalidate metadata then materialize one physical parameter at a time. Exact projection targets under names such as `multihead_attention`, `pre_norm_attention`, and `embed_projection` remain valid; only actual embedding/output-head path components are excluded. Null/unresolved activation eigenspaces and repeated/null weight singular subspaces are marked unavailable, and borrowed models retain every submodule's original train/eval mode.
+- Number-variance and rigidity window sampling receive and serialize `RunConfig.seed`. The mandatory analytic gate alone uses fixed `rmt.config.SEED` calibration.
+- Modified-MP fitting rejects degenerate support, direct overlap honors `do_overlap=False`, checkpoint iterables are materialized once, and requested optional power-law adapter failures carry explicit status/reason fields into strict run status.
 - `rmt_pipeline_glm.py` is a non-executable archive. The supported entry point is `python -m rmt`.

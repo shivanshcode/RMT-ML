@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from scipy.integrate import quad
 from scipy.optimize import minimize, minimize_scalar
-from scipy.special import erfc
+from scipy.stats import chi2
 
 
 @dataclass(frozen=True)
@@ -78,10 +78,17 @@ def _pareto_fit(tail: np.ndarray, xmin: float, xmax: float | None) -> PowerLawFi
             return None
         beta = float(np.exp(optimum.x))
         normalization = float(-np.expm1(-beta * ratio_log))
-        exp_term = float(np.exp(beta * ratio_log))
-        information = tail.size / beta ** 2 - (
-            tail.size * ratio_log ** 2 * exp_term / np.expm1(beta * ratio_log) ** 2
-        )
+        scaled = beta * ratio_log
+        if abs(scaled) < 1e-3:
+            # 1/x² terms cancel analytically; use the Bernoulli expansion.
+            information = tail.size * ratio_log ** 2 * (
+                1.0 / 12.0 - scaled ** 2 / 240.0 + scaled ** 4 / 6048.0
+            )
+        else:
+            decaying = float(np.exp(-scaled))
+            denominator = float(-np.expm1(-scaled))
+            correction = decaying / denominator ** 2
+            information = tail.size / beta ** 2 - tail.size * ratio_log ** 2 * correction
         standard_error = float(1.0 / np.sqrt(information)) if information > 0.0 else float("nan")
     alpha = 1.0 + beta
     model = (1.0 - np.exp(-beta * logs)) / normalization
@@ -523,10 +530,12 @@ def select_tail_estimator(
 
 
 def powerlaw_pkg_fit(values: np.ndarray, xmax: float | None = None) -> dict[str, float] | None:
-    """Compare pure and exponentially truncated tails with a Vuong statistic.
+    """Compare nested pure and exponentially truncated Pareto tails.
 
-    The historical function name is retained, but the implementation is
-    internal so the numerical package keeps its dependency boundary.
+    A finite ``xmax`` conditions both models and cutoff selection on the same
+    bounded observation interval.  ``LR_p`` uses the one-sided 50:50
+    chi-square boundary law for the truncation-rate null (rate = 0), not the
+    invalid nonnested Vuong approximation.
     """
 
     data = _clean_positive(values)
@@ -541,6 +550,7 @@ def powerlaw_pkg_fit(values: np.ndarray, xmax: float | None = None) -> dict[str,
         data,
         min_tail=max(10, min(50, data.size // 4)),
         max_xmin_candidates=100,
+        xmax=xmax,
     )
     alpha = float(fit["alpha"])
     xmin = float(fit["xmin"])
@@ -548,13 +558,17 @@ def powerlaw_pkg_fit(values: np.ndarray, xmax: float | None = None) -> dict[str,
         return None
     tail = data[data >= xmin]
     log_ratio = np.log(tail / xmin)
-    pure_log_density = np.log(alpha - 1.0) - np.log(xmin) - alpha * log_ratio
+    upper_ratio = np.inf if xmax is None else float(xmax) / xmin
+    pure_normalizer = (1.0 if not np.isfinite(upper_ratio)
+                       else 1.0 - upper_ratio ** (1.0 - alpha))
+    pure_log_density = (np.log(alpha - 1.0) - np.log(xmin) - alpha * log_ratio
+                        - np.log(pure_normalizer))
 
     def truncated_normalizer(truncated_alpha: float, cutoff: float) -> float:
         value, _ = quad(
             lambda scaled: scaled ** (-truncated_alpha) * np.exp(-cutoff * (scaled - 1.0)),
             1.0,
-            np.inf,
+            upper_ratio,
             epsabs=1e-9,
             epsrel=1e-8,
             limit=200,
@@ -592,12 +606,11 @@ def powerlaw_pkg_fit(values: np.ndarray, xmax: float | None = None) -> dict[str,
     )
     differences = pure_log_density - truncated_log_density
     likelihood_ratio = float(np.sum(differences))
-    deviation = float(np.std(differences, ddof=1)) if differences.size > 1 else 0.0
-    if deviation > 0.0:
-        z_score = likelihood_ratio / (np.sqrt(differences.size) * deviation)
-        probability = float(erfc(abs(z_score) / np.sqrt(2.0)))
-    else:
-        probability = 1.0
+    # LR is log L_pure - log L_truncated.  The larger model adds a
+    # nonnegative cutoff whose null value lies on the boundary.
+    test_statistic = max(0.0, -2.0 * likelihood_ratio)
+    probability = (1.0 if test_statistic == 0.0
+                   else float(0.5 * chi2.sf(test_statistic, df=1)))
     return {
         "LR_trunc": likelihood_ratio,
         "LR_p": probability,

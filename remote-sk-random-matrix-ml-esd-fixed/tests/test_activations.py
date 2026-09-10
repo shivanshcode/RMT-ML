@@ -6,7 +6,7 @@ import torch.nn as nn
 
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
-from _synthetic_models import tiny_llama, tiny_causal_lm        # noqa: E402
+from tests.synthetic_models import tiny_llama, tiny_causal_lm        # noqa: E402
 
 from rmt import activations as A                                 # noqa: E402
 

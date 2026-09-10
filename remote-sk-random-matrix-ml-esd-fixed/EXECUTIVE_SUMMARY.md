@@ -26,7 +26,7 @@ spacing KS vs Wigner-GOE / Poisson, Dyson–Mehta Δ₃(L) and number variance �
 at L=10, 50, plus the complex spacing ratio for the Ginibre test on square matrices.
 
 **Activation-covariance overlap (Paper 3).** When activations are captured, the
-overlap O_k = maxⱼ|v_k·f_j| between right singular vectors and identifiable positive activation-covariance eigenvectors, plus the eigenvector/eigenvalue coincidence summaries. Rank-zero and unresolved repeated positive eigenspaces are explicitly unavailable rather than basis-dependent.
+overlap O_k = maxⱼ|v_k·f_j| between right singular vectors and identifiable positive activation-covariance eigenvectors, plus the eigenvector/eigenvalue coincidence summaries. Rank-zero/unresolved activation eigenspaces and repeated/null weight singular subspaces are explicitly unavailable rather than basis-dependent.
 
 **Decile ablation + epoch tracking.** Perplexity after zeroing each singular-value
 decile (scope = all-matrices-of-type or only-analyzed), and backend-dispatched stable-rank tracking with actual backend/dtype provenance across training checkpoints (every ~10% of iterations). Tied parameter aliases are lesioned once and oversized partition counts fail before mutation.
@@ -70,10 +70,10 @@ MP bulk (`sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig],
 n_*_outliers, frac_*_outliers`) · small-SV (`ks_lower, n_below_minus,
 frac_mass_below_minus, excess_small_sv`) · tail (`alpha, xmin, ks_D, n_tail,
 alpha_on_nu, alpha_hill_nu, alpha_hill_lambda, hill_plateau_alpha/width/start/end/window/support,
-hill_is_powerlaw, LR_trunc, LR_p, alpha_rand plus estimator/kind/cutoff/support/KS metadata, max_ev_rand`) · scalars
+hill_is_powerlaw, LR_trunc, LR_p, powerlaw_pkg_status/reason, alpha_rand plus estimator/kind/cutoff/plateau-union-support/KS metadata, max_ev_rand`) · scalars
 (`row_wise_entropy, spectral_entropy, stable_rank, mp_softrank, bulk_mass_frac,
 max/min/mean/median_sval, ipr_top10_mean, ipr_bulk_mean, pt_ks_mean,
-pt_frac_random`) · bulk stats (`r_statistic_mean, nn_KS_GOE, nn_KS_Poisson,
+pt_frac_random`) · bulk stats (`spacing_seed, r_statistic_mean, nn_KS_GOE, nn_KS_Poisson,
 delta3_L10/L50, sigma2_L10/L50, complex_r_abs_mean, complex_r_cos_mean`) ·
 overlap (`max/mean_overlap, overlap_at_top/bottom_sval, rho_*,
 max_overlap_with_top_eigenvector, argmax_singular_for_top_eigenvector,

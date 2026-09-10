@@ -76,7 +76,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `hill_estimator_windowed(values, *, window=20, k_min=5) -> tuple[np.ndarray, np.ndarray]`
 - `hill_plateau(values, *, window=20, flat_tol=0.15) -> dict`
 - `select_tail_estimator(values, estimator="csn", **kwargs) -> dict`; accepted canonical names are `clauset_mle`, `hill_estimator`, `hill_windowed`, `fixed_cutoff_mle`, `rank_ordered_mle`, and `all`, with legacy `csn`/`hill` aliases. Windowed-Hill reports start/end rank, window width, and union support; its inapplicable single-cutoff `xmin`/`n_tail` fields remain unavailable.
-- `powerlaw_pkg_fit(values, xmax=None) -> dict | None`
+- `powerlaw_pkg_fit(values, xmax=None) -> dict | None`; both nested models use the same finite support, `LR_trunc = log L_pure - log L_truncated`, and `LR_p` uses the one-sided boundary chi-square law for a nonnegative truncation rate.
 
 ## `rmt.scalars`
 
@@ -133,9 +133,9 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `reference_max_cosine_overlap(weight_vectors, activation_vectors, *, absolute=False, squared=False) -> np.ndarray`
 - `evaluate_overlap_metric(weight_vectors, activation_vectors, *, metric="staats_dual_end") -> dict`
 - `tranche_indices(n_values, *, top_fraction=0.1, bottom_fraction=0.1) -> dict[str, np.ndarray]`
-- `dual_end_alignment(svd, covariance, *, activation_fraction=0.1, top_fraction=0.1, bottom_fraction=0.1, metric="staats_dual_end") -> dict`; returns availability/rank status, excludes covariance null modes, and does not split a tied positive cluster at the target cutoff.
-- `overlap_analysis(weight, feature_matrix, *, svd=None) -> dict`
-- `eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None) -> dict`
+- `dual_end_alignment(svd, covariance, *, activation_fraction=0.1, top_fraction=0.1, bottom_fraction=0.1, metric="staats_dual_end") -> dict`; returns availability/rank status, uses source-array precision for covariance qualification, rejects significant indefiniteness, excludes null modes, does not split a tied positive cluster at the target cutoff, and marks nonidentifiable weight singular subspaces unavailable.
+- `overlap_analysis(weight, feature_matrix, *, svd=None) -> dict`; legacy convention with the same covariance/weight qualification and explicit availability status.
+- `eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None) -> dict`; legacy convention with the same qualification/status contract.
 - `three_sigma_band(N, sigma_level=3.0) -> tuple[float, float]`
 - `resolve_fm_key(record_name, fm_keys) -> str | None`
 
@@ -156,7 +156,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `covariance_linear_operator(factor, *, normalization=None) -> scipy.sparse.linalg.LinearOperator`
 - `default_lanczos_steps(dimension) -> int`
 - `lanczos_tridiagonalize(matrix, *, dimension=None, steps=None, probe=None, reorthogonalization="full", tolerance=None, adaptive=False, convergence_tolerance=None, sequence_length=None, check_interval=2, rng=0, return_basis=False) -> LanczosResult`
-- `jacobi_cholesky(lanczos, *, ridge=0.0, pivot_tolerance=1e-14) -> JacobiCholesky`
+- `jacobi_cholesky(lanczos, *, ridge=0.0, pivot_tolerance=None) -> JacobiCholesky`; the default pivot threshold is operator-scale-relative.
 - `estimate_constant_tail(cholesky, *, tail_window=None) -> tuple[float, float, float, float]`
 - `reference_modified_cholesky(lanczos, *, tail_window=None, ridge=0.0) -> tuple[JacobiCholesky, dict[str, float | int | str]]`
 - `support_from_cholesky_tail(alpha, beta) -> tuple[float, float]`
@@ -191,8 +191,9 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `isoflop_grid(compute_budgets, kappas=(0.25, 1.0, 4.0), law=ScalingLaw(), *, target_tokens_per_parameter=20.0) -> list[Allocation]`
 - `estimate_transformer_parameters(config) -> int`
 - `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64) -> dict`
+- `CovarianceEstimate(array, *, observation_count, accumulation_dtype, centered)` is an `np.ndarray` subclass carrying rank/precision provenance into overlap qualification.
 - `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains a stable running mean and centered M2 matrix on one device (historical buffer attribute names are retained).
-- `CovarianceAccumulator.update(activations, *, max_samples=None) -> None`
+- `CovarianceAccumulator.update(activations, *, valid_mask=None, max_samples=None) -> None`; moment arithmetic explicitly disables an enclosing autocast context.
 - `CovarianceAccumulator.second_moment() -> Tensor`
 - `CovarianceAccumulator.covariance(*, centered=True, unbiased=False) -> Tensor`
 - `ActivationExtractor(model, module_filter=None, *, capture=("pre", "post"), max_samples_per_hook=None, accumulation_device="auto", accumulation_dtype="auto")`

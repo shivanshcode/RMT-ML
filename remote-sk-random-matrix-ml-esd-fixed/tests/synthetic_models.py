@@ -2,15 +2,16 @@
 
 Used by the torch-tagged test groups (discovery, activations, decile, pipeline).
 """
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
 class _Cfg:
-    def __init__(self, model_type):
+    def __init__(self, model_type, num_attention_heads=None):
         self.model_type = model_type
         self.architectures = [model_type]
+        if num_attention_heads is not None:
+            self.num_attention_heads = int(num_attention_heads)
 
 
 def tiny_llama(n_layers=2, d=32):
@@ -43,7 +44,7 @@ def tiny_pythia(n_layers=2, d=48):
     """gpt_neox.layers.{i}.attention.query_key_value (rows=3d), attention.dense,
     mlp.dense_h_to_4h, mlp.dense_4h_to_h."""
     m = nn.Module()
-    m.config = _Cfg("gpt_neox")
+    m.config = _Cfg("gpt_neox", num_attention_heads=4)
     m.gpt_neox = nn.Module()
     m.gpt_neox.embed_in = nn.Embedding(50, d)
     layers = nn.ModuleList()
@@ -115,7 +116,7 @@ class TinyPythiaCausalLM(nn.Module):
     """Runnable pythia-named causal LM with fused QKV (model-swap smoke test)."""
     def __init__(self, n_layers=2, d=48, vocab=50):
         super().__init__()
-        self.config = _Cfg("gpt_neox")
+        self.config = _Cfg("gpt_neox", num_attention_heads=4)
         self.gpt_neox = nn.Module()
         self.gpt_neox.embed_in = nn.Embedding(vocab, d)
         layers = nn.ModuleList()
@@ -139,8 +140,11 @@ class TinyPythiaCausalLM(nn.Module):
         h = self.gpt_neox.embed_in(input_ids)
         for blk in self.gpt_neox.layers:
             qkv = blk.attention.query_key_value(h)
+            batch, sequence, _ = qkv.shape
+            qkv = qkv.view(batch, sequence, 4, 3 * (self.d // 4))
             q, k, v = qkv.chunk(3, dim=-1)
-            h = h + blk.attention.dense(q + k + v)
+            merged = (q + k + v).reshape(batch, sequence, self.d)
+            h = h + blk.attention.dense(merged)
             h = h + blk.mlp.dense_4h_to_h(F.relu(blk.mlp.dense_h_to_4h(h)))
         logits = self.embed_out(h)
         out = type("Out", (), {})()

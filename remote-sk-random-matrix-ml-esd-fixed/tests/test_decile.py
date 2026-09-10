@@ -5,7 +5,7 @@ torch = pytest.importorskip("torch")
 
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
-from _synthetic_models import tiny_llama, tiny_pythia, tiny_causal_lm   # noqa: E402
+from tests.synthetic_models import tiny_llama, tiny_pythia, tiny_causal_lm   # noqa: E402
 
 from rmt import decile as DEC                                   # noqa: E402
 from rmt import discovery as D                                   # noqa: E402

@@ -13,6 +13,25 @@ from torch import Tensor, nn
 from rmt.svd_result import SVDResult
 
 
+class CovarianceEstimate(np.ndarray):
+    """Array-compatible covariance carrying accumulation/rank provenance."""
+
+    def __new__(cls, array: np.ndarray, *, observation_count: int,
+                accumulation_dtype: str, centered: bool):
+        result = np.asarray(array).view(cls)
+        result.observation_count = int(observation_count)
+        result.accumulation_dtype = str(accumulation_dtype)
+        result.centered = bool(centered)
+        return result
+
+    def __array_finalize__(self, source: object) -> None:
+        if source is None:
+            return
+        self.observation_count = getattr(source, "observation_count", None)
+        self.accumulation_dtype = getattr(source, "accumulation_dtype", None)
+        self.centered = getattr(source, "centered", None)
+
+
 @dataclass
 class CovarianceAccumulator:
     """Accumulate stable centered moments on one device without retaining batches.
@@ -74,22 +93,30 @@ class CovarianceAccumulator:
         if flattened.shape[0] == 0:
             return
         batch_count = int(flattened.shape[0])
-        batch_mean = flattened.mean(dim=0)
-        centered = flattened - batch_mean
-        batch_m2 = centered.T @ centered
-        if self.count == 0:
-            self.sum_vector.copy_(batch_mean)
-            self.gram_matrix.copy_(batch_m2)
-            self.count = batch_count
-            return
-        old_count = self.count
-        combined = old_count + batch_count
-        delta = batch_mean - self.sum_vector
-        self.gram_matrix.add_(batch_m2)
-        self.gram_matrix.add_(
-            torch.outer(delta, delta), alpha=(old_count * batch_count) / combined)
-        self.sum_vector.add_(delta, alpha=batch_count / combined)
-        self.count = combined
+        # Hooks execute inside the model's autocast context.  Disable it
+        # explicitly: casting the input buffer alone does not stop matmul from
+        # being downcast to BF16/FP16.
+        autocast_off = (
+            torch.autocast(device_type=self.sum_vector.device.type, enabled=False)
+            if self.sum_vector.device.type in {"cpu", "cuda"} else nullcontext()
+        )
+        with autocast_off:
+            batch_mean = flattened.mean(dim=0)
+            centered = flattened - batch_mean
+            batch_m2 = centered.T @ centered
+            if self.count == 0:
+                self.sum_vector.copy_(batch_mean)
+                self.gram_matrix.copy_(batch_m2)
+                self.count = batch_count
+                return
+            old_count = self.count
+            combined = old_count + batch_count
+            delta = batch_mean - self.sum_vector
+            self.gram_matrix.add_(batch_m2)
+            self.gram_matrix.add_(
+                torch.outer(delta, delta), alpha=(old_count * batch_count) / combined)
+            self.sum_vector.add_(delta, alpha=batch_count / combined)
+            self.count = combined
 
     def second_moment(self) -> Tensor:
         if self.count < 1:
@@ -231,13 +258,18 @@ class ActivationExtractor:
         centered: bool = True,
         unbiased: bool = False,
     ) -> dict[str, np.ndarray]:
-        return {
-            name: accumulator.covariance(
-                centered=centered,
-                unbiased=unbiased,
+        results: dict[str, np.ndarray] = {}
+        for name, accumulator in self.accumulators.items():
+            array = accumulator.covariance(
+                centered=centered, unbiased=unbiased,
             ).detach().cpu().numpy()
-            for name, accumulator in self.accumulators.items()
-        }
+            results[name] = CovarianceEstimate(
+                array,
+                observation_count=accumulator.count,
+                accumulation_dtype=str(accumulator.dtype),
+                centered=centered,
+            )
+        return results
 
     def second_moments(self) -> dict[str, np.ndarray]:
         return {
@@ -349,6 +381,7 @@ def compute_activation_covariances(
 __all__ = [
     "ActivationExtractor",
     "CovarianceAccumulator",
+    "CovarianceEstimate",
     "compute_activation_covariances",
     "compute_tensor_svd",
 ]

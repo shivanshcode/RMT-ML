@@ -1,6 +1,8 @@
 """Data, training, activation, and lesion pipelines."""
 
-from .activation_extractor import ActivationExtractor, CovarianceAccumulator, compute_tensor_svd
+from .activation_extractor import (
+    ActivationExtractor, CovarianceAccumulator, CovarianceEstimate, compute_tensor_svd,
+)
 from .cli_config import (
     SpectralCLIConfig,
     add_pipeline_cli_arguments,
@@ -14,6 +16,7 @@ __all__ = [
     "ActivationExtractor",
     "CharTokenizer",
     "CovarianceAccumulator",
+    "CovarianceEstimate",
     "LanguageModelTrainer",
     "TokenSequenceDataset",
     "TrainConfig",

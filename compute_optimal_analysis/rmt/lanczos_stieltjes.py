@@ -339,12 +339,8 @@ def lanczos_tridiagonalize(
         raise ValueError("steps must lie between two and the operator dimension")
     if reorthogonalization not in {"none", "partial", "full"}:
         raise ValueError("reorthogonalization must be none, partial, or full")
-    threshold = (
-        np.finfo(np.float64).eps * max(1.0, float(size))
-        if tolerance is None
-        else float(tolerance)
-    )
-    if not np.isfinite(threshold) or threshold < 0.0:
+    threshold = None if tolerance is None else float(tolerance)
+    if threshold is not None and (not np.isfinite(threshold) or threshold < 0.0):
         raise ValueError("tolerance must be finite and nonnegative")
     window = (
         max(1, int(np.floor(np.log(size) / 2.0)))
@@ -363,10 +359,9 @@ def lanczos_tridiagonalize(
     )
     if convergence_threshold is None and isinstance(matrix, np.ndarray):
         dense = np.asarray(matrix, dtype=np.float64)
-        convergence_threshold = max(
-            3.0 * float(np.sum(np.abs(np.diag(dense)))) / (size * np.sqrt(size)),
-            np.finfo(float).eps,
-        )
+        convergence_threshold = (
+            3.0 * float(np.sum(np.abs(np.diag(dense)))) / (size * np.sqrt(size))
+        ) or None
     if convergence_threshold is not None and (
         not np.isfinite(convergence_threshold) or convergence_threshold <= 0.0
     ):
@@ -411,7 +406,11 @@ def lanczos_tridiagonalize(
             break
         if index == iterations - 1:
             break
-        if not np.isfinite(beta) or beta <= threshold:
+        active_breakdown_tolerance = (
+            np.finfo(float).eps * size * max(abs(alpha), beta, np.finfo(float).tiny)
+            if threshold is None else threshold
+        )
+        if not np.isfinite(beta) or beta <= active_breakdown_tolerance:
             breakdown = True
             break
         off_diagonal.append(beta)
@@ -431,7 +430,7 @@ def lanczos_tridiagonalize(
                 else 0.0
             )
             active_tolerance = (
-                3.0 * max(abs(diagonal_mean), np.finfo(float).eps) / np.sqrt(size)
+                3.0 * max(abs(diagonal_mean), abs(off_mean), np.finfo(float).tiny) / np.sqrt(size)
                 if convergence_threshold is None
                 else convergence_threshold
             )
@@ -483,17 +482,21 @@ def jacobi_cholesky(
     lanczos: LanczosResult,
     *,
     ridge: float = 0.0,
-    pivot_tolerance: float = 1e-14,
+    pivot_tolerance: float | None = None,
 ) -> JacobiCholesky:
     """Cholesky-factorize a positive Jacobi matrix in bidiagonal form."""
 
     ridge = float(ridge)
-    pivot_tolerance = float(pivot_tolerance)
     if ridge < 0.0 or not np.isfinite(ridge):
         raise ValueError("ridge must be finite and nonnegative")
+    source_diagonal = lanczos.diagonal + ridge
+    if pivot_tolerance is None:
+        pivot_tolerance = (np.finfo(float).eps * max(source_diagonal.size, 1)
+                           * max(float(np.max(np.abs(source_diagonal))), np.finfo(float).tiny))
+    else:
+        pivot_tolerance = float(pivot_tolerance)
     if pivot_tolerance < 0.0 or not np.isfinite(pivot_tolerance):
         raise ValueError("pivot_tolerance must be finite and nonnegative")
-    source_diagonal = lanczos.diagonal + ridge
     diagonal = np.empty_like(source_diagonal)
     sub = np.empty_like(lanczos.off_diagonal)
     first = float(source_diagonal[0])

@@ -138,7 +138,7 @@ def test_feature_layers_inert_after_capture():
     are switched off.
     """
     torch = pytest.importorskip("torch")
-    from _synthetic_models import tiny_causal_lm
+    from tests.synthetic_models import tiny_causal_lm
     from rmt.activations import compute_activation_covariance, FeatureLayer
     from rmt.discovery import get_model_spec
 
@@ -167,7 +167,7 @@ def test_perplexity_snapshot_is_weight_only():
     used to restore weights between deciles must contain only weights.
     """
     torch = pytest.importorskip("torch")
-    from _synthetic_models import tiny_causal_lm
+    from tests.synthetic_models import tiny_causal_lm
     from rmt.activations import compute_activation_covariance
     from rmt.discovery import get_model_spec, discover_weight_matrices
     from rmt.decile import perplexity_vs_decile
@@ -273,7 +273,7 @@ def test_per_matrix_plots_are_emitted(tmp_path):
     """Flaws 1.2/1.3/1.6: enabling the analyses must emit their plots."""
     pytest.importorskip("torch")
     pytest.importorskip("matplotlib")
-    from _synthetic_models import tiny_causal_lm
+    from tests.synthetic_models import tiny_causal_lm
     from rmt.pipeline import analyze_one_model
 
     m = tiny_causal_lm(n_layers=2, d=64, vocab=64)

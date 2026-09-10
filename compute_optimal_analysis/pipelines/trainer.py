@@ -39,6 +39,10 @@ class TrainConfig:
     seed: int = 0
 
     def __post_init__(self) -> None:
+        finite = (self.learning_rate, self.min_learning_rate_ratio, self.weight_decay,
+                  self.beta1, self.beta2, self.gradient_clip)
+        if any(not math.isfinite(float(value)) for value in finite):
+            raise ValueError("training numeric settings must be finite")
         if self.epochs < 1 or (self.max_steps is not None and self.max_steps < 1):
             raise ValueError("epochs and max_steps must be positive")
         if self.learning_rate <= 0.0 or not 0.0 <= self.min_learning_rate_ratio <= 1.0:
@@ -305,7 +309,6 @@ class LanguageModelTrainer:
                     mask = moved["attention_mask"].to(torch.bool)
                     valid = valid & mask[:, 1:] & mask[:, :-1]
                 original_batch_tokens = int(torch.count_nonzero(valid).item())
-                self.attempted_target_tokens += original_batch_tokens
                 batch_tokens = original_batch_tokens
                 if self.config.max_train_tokens is not None:
                     remaining = self.config.max_train_tokens - self.processed_train_tokens
@@ -330,11 +333,14 @@ class LanguageModelTrainer:
                                     moved[key] = value[:row_stop, :col_stop]
                             labels = moved["labels"]
                         batch_tokens = remaining
+                if batch_tokens < 1:
+                    continue
+                # Attempted work is the work actually presented to a forward,
+                # after final-budget masking—not merely fetched/eligible work.
+                self.attempted_target_tokens += batch_tokens
                 input_ids = moved.get("input_ids")
                 if input_ids is not None:
                     self.forwarded_input_positions += int(input_ids.numel())
-                if batch_tokens < 1:
-                    continue
                 self.attempted_steps += 1
                 self.optimizer.zero_grad(set_to_none=True)
                 with self._autocast():
@@ -349,8 +355,10 @@ class LanguageModelTrainer:
                     if parameter.grad is not None
                 ]
                 if parameters_with_grad:
+                    # FP32 sum-of-squares can overflow even when every FP32
+                    # gradient entry is finite.  FP64 safely spans that range.
                     component_norms = torch.stack([
-                        torch.linalg.vector_norm(parameter.grad.detach().float())
+                        torch.linalg.vector_norm(parameter.grad.detach().double())
                         for parameter in parameters_with_grad
                     ])
                     raw_gradient_norm = torch.linalg.vector_norm(component_norms)
@@ -371,6 +379,7 @@ class LanguageModelTrainer:
                     self.optimizer.zero_grad(set_to_none=True)
                     raise FloatingPointError(
                         f"non-finite gradient norm at attempted step {self.attempted_steps}")
+                applied_learning_rate = float(self.optimizer.param_groups[0]["lr"])
                 previous_scale = float(self.scaler.get_scale())
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
@@ -399,10 +408,15 @@ class LanguageModelTrainer:
                     "forwarded_input_positions": self.forwarded_input_positions,
                     "epoch": epoch,
                     "train_loss": float(loss.detach().cpu()),
-                    "learning_rate": float(self.optimizer.param_groups[0]["lr"]),
+                    "learning_rate": applied_learning_rate,
                     "gradient_norm": float(torch.as_tensor(gradient_norm).detach().cpu()),
                 }
-                should_log = self.global_step % self.config.log_every == 0 or self.global_step == total_steps
+                budget_complete = (
+                    token_budget is not None
+                    and self.processed_train_tokens >= token_budget
+                )
+                should_log = (self.global_step % self.config.log_every == 0
+                              or self.global_step == total_steps or budget_complete)
                 if validation_dataloader is not None and should_log:
                     validation = evaluate_language_model(
                         self.execution_model,

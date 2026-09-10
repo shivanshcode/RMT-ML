@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -94,24 +96,35 @@ def _download_tokenizer(
     except ImportError as error:
         raise RuntimeError("install the pinned staging requirements before prefetching") from error
     destination = paths["tokenizers"] / "gpt2"
-    snapshot_download(
-        repo_id=TOKENIZER_ID,
-        repo_type="model",
-        revision=revision,
-        local_dir=destination,
-        local_dir_use_symlinks=False,
-        allow_patterns=(
-            "config.json",
-            "added_tokens.json",
-            "LICENSE*",
-            "README.md",
-            "merges.txt",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "vocab.json",
-            "special_tokens_map.json",
-        ),
-    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".gpt2-stage-", dir=destination.parent))
+    try:
+        snapshot_download(
+            repo_id=TOKENIZER_ID,
+            repo_type="model",
+            revision=revision,
+            local_dir=staging,
+            local_dir_use_symlinks=False,
+            allow_patterns=(
+                "config.json",
+                "added_tokens.json",
+                "LICENSE*",
+                "README.md",
+                "merges.txt",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "vocab.json",
+                "special_tokens_map.json",
+            ),
+        )
+        # A fresh tree prevents files removed by a newer revision from staying
+        # active under the new revision's provenance.
+        if destination.exists():
+            shutil.rmtree(destination)
+        os.replace(staging, destination)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
     return destination
 
 
@@ -323,11 +336,31 @@ def _verify_manifest(root: Path) -> int:
 
 def _verify_untouched_records(root: Path, manifest: dict[str, Any],
                               replaced_prefixes: tuple[str, ...]) -> None:
-    """Refuse to re-certify modified files from asset families not being staged."""
+    """Refuse to re-certify membership or content changes in untouched families."""
+    def replaced(portable: str) -> bool:
+        return any(portable == prefix.rstrip("/") or portable.startswith(prefix)
+                   for prefix in replaced_prefixes)
+
+    recorded_untouched = {
+        str(record.get("path", "")).replace("\\", "/")
+        for record in manifest.get("files", [])
+        if not replaced(str(record.get("path", "")).replace("\\", "/"))
+    }
+    current_untouched = {
+        str(record["path"]).replace("\\", "/")
+        for record in _file_manifest(root)
+        if not replaced(str(record["path"]).replace("\\", "/"))
+    }
+    if current_untouched != recorded_untouched:
+        added = sorted(current_untouched - recorded_untouched)
+        removed = sorted(recorded_untouched - current_untouched)
+        raise ValueError(
+            f"untouched staged asset membership changed; added={added}, removed={removed}; "
+            "restore it or explicitly restage that asset family"
+        )
     for record in manifest.get("files", []):
         portable = str(record.get("path", "")).replace("\\", "/")
-        if any(portable == prefix.rstrip("/") or portable.startswith(prefix)
-               for prefix in replaced_prefixes):
+        if replaced(portable):
             continue
         target = (root / Path(portable)).resolve()
         if (not target.is_file() or target.stat().st_size != int(record.get("bytes", -1))

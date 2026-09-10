@@ -14,15 +14,15 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
 import tempfile
 from datetime import datetime, timezone
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 
 import numpy as np
 
 from .config import RunConfig, get_logger, OfflineGuard
-from .discovery import (get_model_spec, discover_weight_matrices,
-                        discover_weight_metadata, materialize_record)
+from .discovery import get_model_spec, discover_weight_metadata, materialize_record
 from .per_matrix import per_matrix_analysis, CSV_COLUMNS
 
 _log = get_logger("rmt.pipeline")
@@ -31,6 +31,8 @@ _log = get_logger("rmt.pipeline")
 def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                       **cfg_flags) -> Tuple[str, List[dict]]:
     """Run in a fresh owned directory and finalize status after every stage."""
+    # Validate library callers before claiming a directory or writing artifacts.
+    RunConfig(**cfg_flags)
     _acquire_output_directory(output_dir)
     status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
     _write_json(status_path, {"status": "running", "failures": []})
@@ -70,8 +72,7 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
     explicit ``allow_fallback_tokenizer`` test-only option.
     Extra keyword flags override :class:`RunConfig` defaults.
     """
-    cfg = RunConfig(**{k: v for k, v in cfg_flags.items() if hasattr(RunConfig, k)
-                       or k in RunConfig().__dict__})
+    cfg = RunConfig(**cfg_flags)
     if cfg.offline:
         OfflineGuard.enable()
 
@@ -94,14 +95,16 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
     while True:
         rows = []
         svals = {}            # singular values are small O(min(n,m)) plot inputs
+        pass_failures = []
         restart = False
         pass_revision = int(activation_plan["revision"])
+        artifact_stage = tempfile.mkdtemp(prefix=".activation-pass-", dir=output_dir)
         for rec in records:
             live = None
             try:
                 live = materialize_record(model, rec, spec=spec)
                 fm_dict = (_maybe_activation_cov(
-                    model, [rec], cfg, spec, tokenizer, failures=failures,
+                    model, [rec], cfg, spec, tokenizer, failures=pass_failures,
                     window_plan=activation_plan)
                     if cfg.do_overlap else None)
                 if rows and int(activation_plan["revision"]) != pass_revision:
@@ -111,20 +114,34 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                 row = per_matrix_analysis(live, fm_dict=fm_dict, cfg=cfg,
                                           svals_out=svals, ovmat_out=local_overlap)
                 rows.append(row)
+                if (cfg.use_powerlaw_pkg
+                        and row.get("powerlaw_pkg_status") == "failed"):
+                    pass_failures.append({"matrix": rec.name, "stage": "powerlaw_pkg",
+                                         "error": row.get("powerlaw_pkg_reason", "unknown failure")})
                 if cfg.do_overlap and local_overlap:
-                    _emit_overlap_plots(output_dir, local_overlap, cfg, failures)
+                    _emit_overlap_plots(artifact_stage, local_overlap, cfg, pass_failures)
             except Exception as e:                              # pragma: no cover
-                failures.append({"matrix": rec.name, "stage": "per_matrix", "error": repr(e)})
+                pass_failures.append({"matrix": rec.name, "stage": "per_matrix", "error": repr(e)})
                 _log.warning("per_matrix failed for %s: %s", rec.name, e)
             finally:
                 if live is not None:
                     live.weight = None
-        if not restart:
-            break
-        restart_count += 1
-        if restart_count > max(1, len(records) * cfg.max_oom):
-            raise RuntimeError("activation window plan did not stabilize")
-        _log.warning("activation window plan shortened; replaying all matrix analyses")
+        if restart:
+            shutil.rmtree(artifact_stage, ignore_errors=True)
+            restart_count += 1
+            if restart_count > max(1, len(records) * cfg.max_oom):
+                raise RuntimeError("activation window plan did not stabilize")
+            _log.warning("activation window plan shortened; replaying all matrix analyses")
+            continue
+        failures.extend(pass_failures)
+        staged_overlap = os.path.join(artifact_stage, "overlap")
+        final_overlap = os.path.join(output_dir, "overlap")
+        if os.path.isdir(staged_overlap):
+            if os.path.isdir(final_overlap):
+                shutil.rmtree(final_overlap)
+            os.replace(staged_overlap, final_overlap)
+        shutil.rmtree(artifact_stage, ignore_errors=True)
+        break
 
     if not rows:
         _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
@@ -134,11 +151,6 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
     csv_path = os.path.join(output_dir, f"{model_tag}_matrix_metrics.csv")
     _write_csv(csv_path, rows, n_deciles=cfg.n_deciles)
     _write_summary(os.path.join(output_dir, f"{model_tag}_summary.json"), rows, model_tag)
-    if failures and cfg.strict:
-        _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
-                    {"status": "failed", "usable_matrices": len(rows),
-                     "failures": failures})
-        raise RuntimeError(f"strict analysis failed for {len(failures)} matrix/stage(s)")
     _maybe_plots(output_dir, model_tag, rows, records, cfg, svals=svals,
                  ovmats=None, failures=failures)
 
@@ -176,6 +188,13 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
             baseline_status,
         )
 
+    # Enforce strictness after *all* requested stages, including plotting,
+    # perplexity, optional adapters, and WeightWatcher.
+    if failures and cfg.strict:
+        _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
+                    {"status": "failed", "usable_matrices": len(rows),
+                     "failures": failures})
+        raise RuntimeError(f"strict analysis failed for {len(failures)} matrix/stage(s)")
     return csv_path, rows, failures
 
 
@@ -189,6 +208,12 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
     """
     cfg = RunConfig(**{k: v for k, v in cfg_flags.items()
                        if k in RunConfig().__dict__})
+    checkpoint_fracs = list(checkpoint_fracs)
+    probe_layers = list(probe_layers)
+    if not checkpoint_fracs:
+        raise ValueError("checkpoint_fracs must not be empty")
+    if not probe_layers:
+        raise ValueError("probe_layers must not be empty")
     os.makedirs(output_dir, exist_ok=True)
     srk_by_layer: Dict[int, List[float]] = {L: [] for L in probe_layers}
     backend_by_layer: Dict[int, List[str]] = {L: [] for L in probe_layers}
@@ -248,7 +273,6 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
 def _model_device(model):
     """The device the model's parameters actually live on (not an assumption)."""
     try:
-        import torch
         return next(model.parameters()).device
     except StopIteration:                                       # pragma: no cover
         return "cpu"
@@ -322,16 +346,10 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
             if failures is not None:
                 failures.append({"stage": "perplexity_plot", "error": repr(pe)})
             _log.warning("perplexity plot skipped: %s", pe)
-            if cfg.strict:
-                raise
     except Exception as e:                                      # pragma: no cover
         if failures is not None:
             failures.append({"stage": "perplexity", "error": repr(e)})
         _log.warning("perplexity-vs-decile failed: %s", e)
-        if cfg.strict:
-            _write_json(os.path.join(output_dir, f"{model_tag}_run_status.json"),
-                        {"status": "failed", "failures": list(failures or [])})
-            raise
 
 
 def _acquire_output_directory(output_dir):
@@ -427,8 +445,6 @@ def _maybe_plots(output_dir, model_tag, rows, records, cfg, *, svals=None,
     def failed(stage, error):
         if failures is not None:
             failures.append({"stage": stage, "error": repr(error)})
-        if cfg.strict:
-            raise error
     try:
         from .plots import plot_model_summary
         plot_model_summary(rows, os.path.join(output_dir, f"{model_tag}_summary.png"))

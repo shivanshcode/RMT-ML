@@ -20,7 +20,7 @@ def test_missing_returns_none(tmp_path):
 
 
 def test_fused_tag_filename_sanitized(tmp_path):
-    s = np.array([1.0, 2.0])
+    s = np.array([2.0, 1.0])
     p = SC.save_svd(str(tmp_path), "gpt_neox.layers.0.attention.query_key_value.weight[Q]",
                     np.zeros((2, 2)), s, np.zeros((2, 2)))
     assert "[" not in p and "]" not in p and "'" not in p and " " not in p

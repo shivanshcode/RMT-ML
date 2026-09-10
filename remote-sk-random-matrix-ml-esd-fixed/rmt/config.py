@@ -6,6 +6,7 @@ torch-free and unit-testable in milliseconds.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional
@@ -103,12 +104,34 @@ class RunConfig:
     seed: int = 0
 
     def __post_init__(self) -> None:
-        if self.n_deciles < 1:
-            raise ValueError("n_deciles must be positive")
-        if self.ppl_stride < 1 or self.fm_stride < 1:
-            raise ValueError("perplexity and activation strides must be positive")
-        if self.fm_max_length < 2 or self.n_text_batches < 1 or self.perplexity_tokens < 2:
-            raise ValueError("text window and token counts are invalid")
+        choices = {
+            "backend": {"auto", "numpy", "torch"},
+            "dtype": {"fp16", "bf16", "fp32"},
+            "sigma_estimator": {"gd_median"},
+            "N_cov_mode": {"cols", "rows", "max"},
+            "alpha_estimator": {"csn", "hill", "hill_windowed", "all"},
+            "decile_scope": {"all", "analyzed"},
+        }
+        for name, allowed in choices.items():
+            value = getattr(self, name)
+            if value not in allowed:
+                raise ValueError(f"unsupported {name}={value!r}; expected one of {sorted(allowed)}")
+        if self.n_deciles < 1 or self.hill_window < 1 or self.unfold_deg < 1:
+            raise ValueError("n_deciles, hill_window, and unfold_deg must be positive")
+        if self.ppl_stride < 1 or self.fm_stride < 1 or self.gpu_svd_min_dim < 1:
+            raise ValueError("strides and gpu_svd_min_dim must be positive")
+        if (self.fm_max_length < 2 or self.n_text_batches < 1
+                or self.perplexity_tokens < 2 or self.max_oom < 0
+                or self.ft_steps < 1):
+            raise ValueError("text window, token-count, or OOM settings are invalid")
+        finite_fields = ("epoch_checkpoint_every_frac",)
+        if any(not math.isfinite(float(getattr(self, name))) for name in finite_fields):
+            raise ValueError("numeric configuration values must be finite")
+        if not 0.0 < self.epoch_checkpoint_every_frac <= 1.0:
+            raise ValueError("epoch_checkpoint_every_frac must be in (0, 1]")
+        if (any(not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0
+                for value in self.epoch_probe_fracs)):
+            raise ValueError("epoch_probe_fracs must be finite values in [0, 1]")
         if self.fm_dataset != "wikitext" or self.ppl_dataset != "wikitext":
             raise ValueError("only the local wikitext text source is implemented")
         if self.do_finetune_recovery:

@@ -17,6 +17,19 @@ def _svd_of(weight, svd):
     return Vh.astype(np.float64), s.astype(np.float64)
 
 
+def _weight_singular_vectors_identifiable(s, dimension):
+    """Return an unavailable reason when individual weight vectors can rotate."""
+    values = np.asarray(s, dtype=np.float64)
+    scale = float(np.max(np.abs(values))) if values.size else 0.0
+    tolerance = np.finfo(float).eps * max(int(dimension), 1) * scale
+    if scale == 0.0 or np.any(values <= tolerance):
+        return "weight has a nonidentifiable null singular subspace"
+    ordered = np.sort(values)[::-1]
+    if ordered.size > 1 and np.any(np.abs(np.diff(ordered)) <= tolerance):
+        return "weight has an unresolved repeated singular-value subspace"
+    return None
+
+
 def _qualified_activation_eigensystem(feature_matrix, eig=None):
     """Return identifiable positive covariance modes or an unavailable reason."""
 
@@ -58,14 +71,17 @@ def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
     evals, evecs, unavailable = _qualified_activation_eigensystem(
         feature_matrix, eig=eig
     )
-    if unavailable is not None:
+    weight_unavailable = _weight_singular_vectors_identifiable(s, Vh.shape[1])
+    if unavailable is not None or weight_unavailable is not None:
+        reason = unavailable or weight_unavailable
         return {
-            "available": False, "status": f"unavailable: {unavailable}",
+            "available": False, "status": f"unavailable: {reason}",
             "svals": s.copy(), "overlap": np.asarray([], dtype=np.float64),
             "overlap_matrix": np.empty((len(s), 0), dtype=np.float64),
             "evals": np.asarray([], dtype=np.float64),
             "mp_min": float("nan"), "mp_max": float("nan"),
             "sigma_med": float("nan"), "right_outliers": 0, "left_outliers": 0,
+            "activation_rank": 0 if evals is None else int(len(evals)),
         }
 
     # Null covariance directions are excluded from signal-overlap claims.
@@ -73,7 +89,6 @@ def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
     ov_mat = np.abs(Vh[:k] @ evecs)
     overlap = np.max(ov_mat, axis=1)
 
-    n = Vh.shape[1] if Vh.ndim == 2 else len(Vh)  # in-features
     # n_rows (out-features): prefer the weight, else the SVD's U, else min-dim
     if weight is not None:
         n_rows = weight.shape[0]
@@ -110,8 +125,10 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
     evals_desc, evecs, unavailable = _qualified_activation_eigensystem(
         feature_matrix, eig=eig
     )
-    if unavailable is not None:
-        return {"available": False, "status": f"unavailable: {unavailable}"}
+    weight_unavailable = _weight_singular_vectors_identifiable(s, Vh.shape[1])
+    if unavailable is not None or weight_unavailable is not None:
+        reason = unavailable or weight_unavailable
+        return {"available": False, "status": f"unavailable: {reason}"}
 
     n_singular = min(Vh.shape[0], len(s))
     k = min(n_singular, evecs.shape[1])

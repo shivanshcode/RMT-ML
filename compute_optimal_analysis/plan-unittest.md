@@ -2,7 +2,7 @@
 
 All stochastic tests use fixed seeds. Pure tests import only NumPy, SciPy, pytest, and `rmt`. Torch tests use tiny in-process models and no network or package installation.
 
-Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/support/reference-Ritz calibration, `test_farms_aspect_ratio.py` owns reference geometry/sampling and fixed-ratio invariance, `test_activation_hooks.py` owns device reduction and the tensor-to-pure SVD bridge, and `test_cli_dispatch.py` owns source isolation, four-track parsing, and SLURM/offline static contracts. Existing `test_pure_rmt_*` files own alternative MP, tail, spacing, scalar, and overlap methods. Model, allocator, and lesion tests remain separated from pure numerical tests.
+Phase III file ownership is explicit: `test_bug_report_regressions.py` owns focused static-audit triggers (autocast moments, executable-design collapse, finite config, degenerate availability, and steep bounded tails); `test_lanczos_stieltjes.py` owns VEST/support/reference-Ritz calibration, `test_farms_aspect_ratio.py` owns reference geometry/sampling and fixed-ratio invariance, `test_activation_hooks.py` owns device reduction and the tensor-to-pure SVD bridge, and `test_cli_dispatch.py` owns source isolation, four-track parsing, and SLURM/offline static contracts. Existing `test_pure_rmt_*` files own alternative MP, tail, spacing, scalar, and overlap methods. Model, allocator, and lesion tests remain separated from pure numerical tests.
 
 ## MP calibration
 

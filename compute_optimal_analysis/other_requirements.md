@@ -176,7 +176,7 @@ Create submission-time directories before `sbatch`:
 mkdir -p logs results cache/torch cache/huggingface
 ```
 
-This is mandatory for `logs/`, because SLURM opens `#SBATCH --output` and `--error` before the batch shell can execute. Production outputs use a fresh `results/jobs/$SLURM_JOB_ID` root. A custom `OUTPUT_ROOT` may be absent or intentionally pre-created and empty; the runner atomically claims it with `.run-owner.json` and rejects nonempty/already-owned targets.
+This is mandatory for `logs/`, because SLURM opens `#SBATCH --output` and `--error` before the batch shell can execute. Production outputs use a fresh `results/jobs/$SLURM_JOB_ID` root. A custom `OUTPUT_ROOT` may be absent or intentionally pre-created and empty; the SLURM launcher atomically claims it with `.job-owner`, and each track runner claims its child directory with `.run-owner.json`. Nonempty or already-owned targets are rejected.
 
 ## 6. Accelerator and numerical validation
 

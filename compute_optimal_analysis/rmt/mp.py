@@ -556,7 +556,8 @@ def fit_marchenko_pastur_kde(
         else np.unique(np.linspace(0, retained.size - 1, size, dtype=int))
     )
     grid = retained[grid_indices]
-    empirical_cdf = (grid_indices.astype(np.float64) + 0.5) / values.size
+    zero_count = int(complete.size - values.size)
+    empirical_cdf = (zero_count + grid_indices.astype(np.float64) + 0.5) / complete.size
     initial = fit_marchenko_pastur(retained, q, trim_upper=0.0).variance
     lower_log = np.log(max(initial * 0.05, np.finfo(float).tiny))
     upper_log = np.log(initial * 20.0)
@@ -588,6 +589,7 @@ def fit_marchenko_pastur_kde(
             "bandwidth": width,
             "trim_upper": trim,
             "retained_count": int(retained.size),
+            "zero_observation_count": zero_count,
             "objective": float(optimum.fun),
             "objective_kind": "complete_sample_ecdf_cvm",
             "optimizer_success": bool(optimum.success),

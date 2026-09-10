@@ -67,7 +67,18 @@ def fit_modified_mp(svals, *, win: int = 15, n_grid: int = 4000,
     the fit.
     """
     s = np.sort(np.asarray(svals, dtype=np.float64))
+    if (s.ndim != 1 or s.size < 4 or not np.all(np.isfinite(s))
+            or np.any(s < 0.0)):
+        raise ValueError("modified-MP fitting requires at least four finite nonnegative values")
+    if not 0 <= int(i_nu_min) < s.size:
+        raise ValueError("i_nu_min is outside the singular-value sample")
+    span = float(s[-1] - s[0])
+    scale = max(float(np.max(np.abs(s))), 1.0)
+    if span <= np.sqrt(np.finfo(float).eps) * scale:
+        raise ValueError("modified-MP fitting requires a nondegenerate spectrum")
     nu_min = float(max(s[i_nu_min], x_min))
+    if nu_min >= s[-1]:
+        raise ValueError("modified-MP lower support edge leaves no positive width")
 
     x = np.linspace(max(s[0], x_min), s[-1], n_grid)
     pdf = gaussian_broaden(x, s, win=win)
@@ -79,12 +90,17 @@ def fit_modified_mp(svals, *, win: int = 15, n_grid: int = 4000,
     keep = (x <= x_peak) | (pdf > range_of_y_to_fit * pdf.max())
     x_fit, pdf_fit = x[keep], pdf[keep]
 
-    p0 = np.array([0.5, float(np.percentile(s, 95))])
-    (a, nu_max), _ = curve_fit(
-        lambda xx, aa, nn: modified_mp(xx, aa, nn, nu_min),
-        x_fit, pdf_fit, p0=p0, bounds=((0.0, 0.0), (np.inf, np.inf)),
-        maxfev=20000,
+    min_width = max(np.finfo(float).eps * max(abs(nu_min), 1.0), 1e-15)
+    initial_width = max(float(np.percentile(s, 95)) - nu_min, 10.0 * min_width)
+    p0 = np.array([0.5, initial_width])
+    (a, width), _ = curve_fit(
+        lambda xx, aa, ww: modified_mp(xx, aa, nu_min + ww, nu_min),
+        x_fit, pdf_fit, p0=p0,
+        bounds=((0.0, min_width), (np.inf, np.inf)), maxfev=20000,
     )
+    nu_max = nu_min + float(width)
+    if not np.isfinite(a) or not np.isfinite(nu_max) or nu_max <= nu_min:
+        raise RuntimeError("modified-MP optimizer returned an invalid support")
     return float(a), float(nu_min), float(nu_max)
 
 

@@ -9,7 +9,7 @@ torch imported lazily inside functions.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 import tempfile
 from pathlib import Path
 import numpy as np
@@ -97,10 +97,9 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
     if n_deciles < 1:
         raise ValueError("n_deciles must be positive")
 
-    # Resolve and validate the complete physical scope before any mutation.
-    # Exact aliases share a full-parameter scope and are intervened once, while
-    # Q/K/V blocks of a fused parameter retain distinct physical scopes.
-    prepared = []
+    # Resolve the complete scope using metadata only.  In particular, do not
+    # retain one float64 host copy per selected projection during prevalidation.
+    groups = {}
     seen_scopes = set()
     for rec in records:
         name = rec.name
@@ -110,58 +109,69 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
         module = model.get_submodule(modname)
         w = module.weight
         cls = type(module).__name__
-        full = w.detach().cpu().to(torch.float64).numpy()
-        pristine_mat = np.ascontiguousarray(full.T if cls == "Conv1D" else full)
+        logical_shape = tuple(reversed(tuple(w.shape))) if cls == "Conv1D" else tuple(w.shape)
         tag = name[name.index("[") + 1: -1] if is_fused else None
         scope = (id(w), tag if is_fused else "__full_parameter__")
         if scope in seen_scopes:
             continue
         seen_scopes.add(scope)
         idx = interleaved = nh = None
-        pristine_block = pristine_mat
+        block_shape = logical_shape
         if is_fused:
+            if logical_shape[0] % 3:
+                raise ValueError(f"fused QKV rows are not divisible by three for {name}")
             idx = list(spec.fused_qkv_order).index(tag)
             interleaved = qkv_is_interleaved(base, spec)
             nh = get_num_heads(model) if interleaved else None
             if interleaved and nh is None:
                 raise ValueError("num_heads is required for interleaved fused QKV")
-            pristine_block = extract_qkv_block(
-                pristine_mat, idx, num_heads=nh, interleaved=interleaved)
-        rank = min(pristine_block.shape)
+            block_shape = (logical_shape[0] // 3, logical_shape[1])
+        if (int(rec.n), int(rec.m)) != tuple(map(int, block_shape)):
+            raise ValueError(f"matrix shape changed for {name}")
+        rank = min(block_shape)
         if n_deciles > rank:
             raise ValueError(
                 f"n_deciles={n_deciles} exceeds singular count {rank} for {name}"
             )
-        prepared.append((scope, w, cls, is_fused, idx, interleaved, nh,
-                         pristine_mat, pristine_block))
+        groups.setdefault(id(w), {"weight": w, "class": cls, "items": []})["items"].append(
+            (scope, is_fused, idx, interleaved, nh)
+        )
 
     with torch.no_grad():
-        for (scope, w, cls, is_fused, idx, interleaved, nh,
-             pristine_mat, pristine_block) in prepared:
-            lo, hi = decile_index_ranges(
-                min(pristine_block.shape), n_deciles, ascending=True
-            )[decile - 1]
-            factors = None if factor_cache is None else factor_cache.get(scope)
-            if factors is None:
-                factors = _qualified_factors(
-                    pristine_block, backend=backend, gpu_min_dim=gpu_min_dim)
-                if factor_cache is not None:
-                    factor_cache[scope] = factors
-            reconstructed = _reconstruct_zeroed(
-                pristine_block, lo, hi, factors=factors, backend=backend,
-                gpu_min_dim=gpu_min_dim,
-            )
-            if is_fused:
-                # Preserve modifications already made to other disjoint blocks,
-                # but always derive this block's factors from the pristine copy.
-                live = w.detach().cpu().to(torch.float64).numpy()
-                mat = np.ascontiguousarray(live.T if cls == "Conv1D" else live)
-                assign_qkv_block(mat, idx, reconstructed, num_heads=nh,
-                                 interleaved=interleaved)
-            else:
-                mat = reconstructed
+        # Materialize and release one physical parameter at a time.  Q/K/V
+        # records sharing a fused parameter are reconstructed from this one
+        # pristine copy and committed together.
+        for group in groups.values():
+            w, cls, items = group["weight"], group["class"], group["items"]
+            full = w.detach().cpu().to(torch.float64).numpy()
+            pristine_mat = np.ascontiguousarray(full.T if cls == "Conv1D" else full)
+            has_full = any(not item[1] for item in items)
+            if has_full and len(items) > 1:
+                raise ValueError("a parameter cannot be selected as both full and fused scopes")
+            mat = pristine_mat.copy()
+            for scope, is_fused, idx, interleaved, nh in items:
+                pristine_block = (extract_qkv_block(
+                    pristine_mat, idx, num_heads=nh, interleaved=interleaved)
+                    if is_fused else pristine_mat)
+                lo, hi = decile_index_ranges(
+                    min(pristine_block.shape), n_deciles, ascending=True
+                )[decile - 1]
+                factors = None if factor_cache is None else factor_cache.get(scope)
+                if factors is None:
+                    factors = _qualified_factors(
+                        pristine_block, backend=backend, gpu_min_dim=gpu_min_dim)
+                    if factor_cache is not None:
+                        factor_cache[scope] = factors
+                reconstructed = _reconstruct_zeroed(
+                    pristine_block, lo, hi, factors=factors, backend=backend,
+                    gpu_min_dim=gpu_min_dim,
+                )
+                if is_fused:
+                    assign_qkv_block(mat, idx, reconstructed, num_heads=nh,
+                                     interleaved=interleaved)
+                else:
+                    mat = reconstructed
             out = mat.T if cls == "Conv1D" else mat
-            # Preserve Parameter identity/ties and the model execution dtype.
             w.copy_(torch.as_tensor(out, dtype=w.dtype, device=w.device))
 
 
@@ -289,8 +299,12 @@ def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
 
 
 def _rebind_records(model, records, *, spec=None):
-    """Re-discover records by name on a fresh model while preserving its spec."""
+    """Re-discover every requested record by exact name on the active model."""
     wanted = {r.name for r in records}
     resolved = spec or get_model_spec(model)
     fresh = discover_weight_metadata(model, spec=resolved)
-    return [r for r in fresh if r.name in wanted]
+    by_name = {r.name: r for r in fresh}
+    missing = sorted(wanted - by_name.keys())
+    if missing:
+        raise ValueError(f"requested analyzed decile matrices are missing: {missing}")
+    return [by_name[name] for name in sorted(wanted)]

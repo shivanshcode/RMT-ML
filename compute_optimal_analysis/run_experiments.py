@@ -272,9 +272,18 @@ def build_manifest(
 ) -> list[dict[str, Any]]:
     """Build the exact three-by-three IsoFLOP manifest with realized caps labeled."""
 
+    budget_values = tuple(float(value) for value in compute_budgets)
+    ratio_values = tuple(float(value) for value in allocation_ratios)
+    if not budget_values or any(not math.isfinite(value) or value <= 0.0 for value in budget_values):
+        raise ValueError("compute_budgets must contain finite positive values")
+    if not ratio_values or any(not math.isfinite(value) or value <= 0.0 for value in ratio_values):
+        raise ValueError("allocation_ratios must contain finite positive values")
+    for name, value in (("parameter_cap", parameter_cap), ("token_cap", token_cap)):
+        if value is not None and (not math.isfinite(float(value)) or float(value) <= 0.0):
+            raise ValueError(f"{name} must be finite and positive when supplied")
     allocations = isoflop_grid(
-        tuple(float(value) for value in compute_budgets),
-        tuple(float(value) for value in allocation_ratios),
+        budget_values,
+        ratio_values,
         law,
         target_tokens_per_parameter=20.0,
     )
@@ -293,7 +302,13 @@ def build_manifest(
         isoflop_tokens = allocation.compute_budget / (
             law.flops_per_parameter_token * realized_parameters
         )
-        realized_tokens = isoflop_tokens if token_cap is None else min(isoflop_tokens, float(token_cap))
+        continuous_tokens = isoflop_tokens if token_cap is None else min(isoflop_tokens, float(token_cap))
+        target_tokens = int(math.floor(continuous_tokens))
+        if target_tokens < 1:
+            raise ValueError(
+                "requested compute/caps cannot fund one next-token training target"
+            )
+        realized_tokens = float(target_tokens)
         manifest.append(
             {
                 "cell_index": cell_index,
@@ -302,7 +317,9 @@ def build_manifest(
                 "requested_tokens": allocation.tokens,
                 "architecture_target_parameters": architecture_target,
                 "realized_parameters": realized_parameters,
-                "realized_tokens": float(realized_tokens),
+                "realized_tokens": realized_tokens,
+                "training_target_tokens": target_tokens,
+                "continuous_affordable_tokens": float(continuous_tokens),
                 "requested_tokens_per_parameter": float(allocation.tokens / allocation.parameters),
                 "realized_tokens_per_parameter": float(realized_tokens / realized_parameters),
                 "realized_allocation_ratio": float(
@@ -318,10 +335,12 @@ def build_manifest(
             }
         )
     # Flag designs where caps/discretization erase the requested intervention.
-    signatures: dict[tuple[float, float, float], list[int]] = defaultdict(list)
+    signatures: dict[tuple[float, int], list[int]] = defaultdict(list)
     for index, cell in enumerate(manifest):
-        signature = (float(cell["compute_budget"]), float(cell["realized_parameters"]),
-                     float(cell["realized_tokens"]))
+        # Requested budget is intervention metadata, not executable design
+        # identity.  Compare the discretized architecture and integer target.
+        signature = (float(cell["realized_parameters"]),
+                     int(cell["training_target_tokens"]))
         signatures[signature].append(index)
     for indices in signatures.values():
         collapsed = len(indices) > 1
@@ -537,6 +556,8 @@ def analyze_model(
         top_alignment = bulk_alignment = bottom_alignment = float("nan")
         overlap_status = "not_requested_or_unavailable"
         activation_rank = 0
+        activation_observation_count = 0
+        activation_accumulation_dtype = "unavailable"
         overlap_matrix: np.ndarray | None = None
         activation_eigenvalues: np.ndarray | None = None
         if (
@@ -557,6 +578,10 @@ def analyze_model(
             activation_eigenvalues = np.asarray(alignment["activation_eigenvalues"])
             overlap_status = str(alignment.get("status", "available"))
             activation_rank = int(alignment.get("activation_rank", 0))
+            activation_observation_count = int(alignment.get("activation_observation_count") or 0)
+            activation_accumulation_dtype = str(
+                alignment.get("activation_accumulation_dtype", "unknown")
+            )
         role, layer = _role_and_layer(parameter_name)
         porter_thomas_ks = float("nan")
         porter_thomas_fraction = float("nan")
@@ -645,7 +670,7 @@ def analyze_model(
                 "raw_operator_poles"
                 if method_config.spike_detector == "lanczos_poles"
                 else "pooled_observations_at_per_operator_threshold"
-                if prepared.farms is not None
+                if prepared.farms is not None and not mp_is_raw
                 else "single_operator_observations"
             ),
             "spike_threshold": spike_fit.threshold,
@@ -700,6 +725,8 @@ def analyze_model(
             "overlap_metric": method_config.overlap_metric,
             "overlap_status": overlap_status,
             "activation_covariance_rank": activation_rank,
+            "activation_observation_count": activation_observation_count,
+            "activation_accumulation_dtype": activation_accumulation_dtype,
         }
         rows.append(row)
         artifacts.append(
@@ -943,7 +970,7 @@ def execute_cell(
         allow_tf32=args.allow_tf32,
         log_every=max(1, args.log_every),
         validation_max_batches=args.validation_batches,
-        max_train_tokens=max(1, int(math.floor(float(cell["realized_tokens"])))),
+        max_train_tokens=int(cell["training_target_tokens"]),
         seed=seed,
     )
     trainer = LanguageModelTrainer(model, train_config)
@@ -1113,28 +1140,37 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
     if args.device == "auto":
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
-    if args.execute and args.device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA execution was requested but no CUDA device is available")
-    if args.execute and args.svd_backend == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA SVD was requested but no CUDA device is available")
-    if args.execute and args.covariance_device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA covariance accumulation was requested but CUDA is unavailable")
-    if not args.scaling_budget_flops or any(value <= 0.0 for value in args.scaling_budget_flops):
+    if not args.scaling_budget_flops or any(
+        not math.isfinite(value) or value <= 0.0 for value in args.scaling_budget_flops
+    ):
         raise ValueError("scaling-budget-flops must contain positive values")
-    if not args.allocation_ratios or any(value <= 0.0 for value in args.allocation_ratios):
+    if not args.allocation_ratios or any(
+        not math.isfinite(value) or value <= 0.0 for value in args.allocation_ratios
+    ):
         raise ValueError("allocation-ratios must contain positive values")
-    if args.parameter_cap is not None and args.parameter_cap <= 0.0:
-        raise ValueError("parameter-cap must be positive when supplied")
-    if args.max_train_tokens is not None and args.max_train_tokens <= 0.0:
-        raise ValueError("max-train-tokens must be positive when supplied")
+    if (args.parameter_cap is not None
+            and (not math.isfinite(args.parameter_cap) or args.parameter_cap <= 0.0)):
+        raise ValueError("parameter-cap must be finite and positive when supplied")
+    if (args.max_train_tokens is not None
+            and (not math.isfinite(args.max_train_tokens) or args.max_train_tokens <= 0.0)):
+        raise ValueError("max-train-tokens must be finite and positive when supplied")
+    if (not math.isfinite(args.learning_rate) or args.learning_rate <= 0.0
+            or not math.isfinite(args.gradient_clip) or args.gradient_clip <= 0.0):
+        raise ValueError("learning-rate and gradient-clip must be finite and positive")
+    if args.warmup_steps < 0 or args.log_every < 1:
+        raise ValueError("warmup-steps must be nonnegative and log-every positive")
     if args.dataloader_workers < 0 or args.prefetch_factor < 1:
         raise ValueError("dataloader-workers must be nonnegative and prefetch-factor positive")
     if args.sequence_length < 2 or args.batch_size < 1 or args.vocab_size < 2:
         raise ValueError("sequence length, batch size, and vocabulary size are invalid")
     if args.activation_batches < 1 or args.validation_batches < 1:
         raise ValueError("activation and validation batch limits must be positive")
-    if not 0.0 < args.lesion_fraction <= 1.0:
-        raise ValueError("lesion-fraction must lie in (0, 1]")
+    if not math.isfinite(args.lesion_fraction) or not 0.0 < args.lesion_fraction <= 1.0:
+        raise ValueError("lesion-fraction must be finite and lie in (0, 1]")
+    tranches = tuple(name.strip().lower() for name in args.lesion_tranches.split(",") if name.strip())
+    if (args.run_spectral_lesioning
+            and (not tranches or any(name not in {"top", "bulk", "bottom"} for name in tranches))):
+        raise ValueError("lesion-tranches must be a comma-separated subset of top,bulk,bottom")
     explicit_destinations = set(getattr(args, "_explicit_destinations", ()))
     def preset(attribute: str, value: Any) -> None:
         if attribute not in explicit_destinations:
@@ -1169,6 +1205,16 @@ def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
     }
     for attribute, value in method_presets.get(args.experiment_mode, {}).items():
         preset(attribute, value)
+
+    # Constructing the shared config performs selector, numeric, and cross-method
+    # compatibility validation before data/model/output acquisition.
+    rmt_config_from_namespace(args)
+    if args.execute and args.device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA execution was requested but no CUDA device is available")
+    if args.execute and args.svd_backend == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA SVD was requested but no CUDA device is available")
+    if args.execute and args.covariance_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA covariance accumulation was requested but CUDA is unavailable")
 
 
 def main(argv: Iterable[str] | None = None) -> int:

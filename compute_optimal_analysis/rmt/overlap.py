@@ -27,6 +27,38 @@ def activation_eigensystem(covariance: np.ndarray) -> tuple[np.ndarray, np.ndarr
     return eigenvalues[order], eigenvectors[:, order]
 
 
+def _covariance_tolerance(covariance: np.ndarray, eigenvalues: np.ndarray) -> float:
+    source = np.asarray(covariance)
+    source_dtype = source.dtype if np.issubdtype(source.dtype, np.floating) else np.dtype("float64")
+    # Promotion for eigh does not improve the precision with which covariance
+    # entries were accumulated.
+    epsilon = np.finfo(source_dtype).eps
+    scale = float(np.max(np.abs(eigenvalues))) if eigenvalues.size else 0.0
+    return float(epsilon * max(source.shape) * scale)
+
+
+def _positive_covariance_rank(covariance: np.ndarray, eigenvalues: np.ndarray,
+                              tolerance: float) -> int:
+    rank = int(np.count_nonzero(eigenvalues > tolerance))
+    count = getattr(covariance, "observation_count", None)
+    if count is not None:
+        centered = bool(getattr(covariance, "centered", True))
+        identifiable = max(0, int(count) - (1 if centered else 0))
+        rank = min(rank, identifiable)
+    return rank
+
+
+def _weight_vectors_identifiable(svd: SVDResult) -> str | None:
+    values = np.asarray(svd.s, dtype=np.float64)
+    scale = float(np.max(np.abs(values))) if values.size else 0.0
+    tolerance = np.finfo(float).eps * max(svd.n, svd.m) * scale
+    if scale == 0.0 or np.any(values <= tolerance):
+        return "weight has a nonidentifiable null singular subspace"
+    if values.size > 1 and np.any(np.abs(np.diff(values)) <= tolerance):
+        return "weight has an unresolved repeated singular-value subspace"
+    return None
+
+
 def _normalized_columns(vectors: np.ndarray) -> np.ndarray:
     array = np.asarray(vectors, dtype=np.float64)
     if array.ndim != 2 or not np.all(np.isfinite(array)):
@@ -211,14 +243,22 @@ def dual_end_alignment(
     if not 0.0 < activation_fraction <= 1.0:
         raise ValueError("activation_fraction must lie in (0, 1]")
     scale = float(np.max(np.abs(eigenvalues)))
-    tolerance = np.finfo(float).eps * max(covariance.shape) * scale
-    positive_rank = int(np.count_nonzero(eigenvalues > tolerance)) if scale > 0.0 else 0
+    tolerance = _covariance_tolerance(covariance, eigenvalues)
+    positive_rank = (_positive_covariance_rank(covariance, eigenvalues, tolerance)
+                     if scale > 0.0 else 0)
     tranches = tranche_indices(
         svd.s.size,
         top_fraction=top_fraction,
         bottom_fraction=bottom_fraction,
     )
-    if positive_rank == 0:
+    weight_reason = _weight_vectors_identifiable(svd)
+    covariance_reason = (
+        "activation covariance is significantly indefinite"
+        if np.any(eigenvalues < -tolerance) else None
+    )
+    unavailable_reason = covariance_reason or weight_reason
+    if positive_rank == 0 or unavailable_reason is not None:
+        reason = unavailable_reason or "activation covariance has numerical rank zero"
         return {
             "activation_eigenvalues": eigenvalues,
             "overlap_matrix": np.empty((svd.s.size, 0), dtype=np.float64),
@@ -228,8 +268,10 @@ def dual_end_alignment(
             "tranche_indices": tranches,
             "metric": str(metric),
             "available": False,
-            "status": "unavailable: activation covariance has numerical rank zero",
-            "activation_rank": 0,
+            "status": f"unavailable: {reason}",
+            "activation_rank": positive_rank,
+            "activation_observation_count": getattr(covariance, "observation_count", None),
+            "activation_accumulation_dtype": getattr(covariance, "accumulation_dtype", str(np.asarray(covariance).dtype)),
         }
     signal_vectors = activation_vectors[:, :positive_rank]
     target_count = max(1, int(np.ceil(activation_fraction * positive_rank)))
@@ -266,6 +308,8 @@ def dual_end_alignment(
         "status": "available",
         "activation_rank": positive_rank,
         "activation_target_dimension": target_count,
+        "activation_observation_count": getattr(covariance, "observation_count", None),
+        "activation_accumulation_dtype": getattr(covariance, "accumulation_dtype", str(np.asarray(covariance).dtype)),
     }
 
 
@@ -282,6 +326,18 @@ def overlap_analysis(
             raise ValueError("weight is required when svd is omitted")
         svd = compute_svd(weight)
     eigenvalues, activation_vectors = activation_eigensystem(feature_matrix)
+    tolerance = _covariance_tolerance(feature_matrix, eigenvalues)
+    positive_rank = _positive_covariance_rank(feature_matrix, eigenvalues, tolerance)
+    reason = (_weight_vectors_identifiable(svd)
+              or ("activation covariance is significantly indefinite"
+                  if np.any(eigenvalues < -tolerance) else None)
+              or ("activation covariance has numerical rank zero" if positive_rank == 0 else None))
+    if reason is not None:
+        return {"svals": svd.s.copy(), "overlap": np.asarray([]),
+                "overlap_matrix": np.empty((svd.s.size, 0)), "evals": eigenvalues,
+                "available": False, "status": f"unavailable: {reason}",
+                "activation_rank": positive_rank}
+    activation_vectors = activation_vectors[:, :positive_rank]
     right_vectors = svd.V[:, : svd.s.size]
     matrix = projection_overlap(right_vectors, activation_vectors)
     per_vector = np.max(matrix, axis=1)
@@ -296,7 +352,8 @@ def overlap_analysis(
         "sigma_med": sigma,
         "right_outliers": svd.s > upper,
         "left_outliers": svd.s < lower,
-        "evals": eigenvalues,
+        "evals": eigenvalues, "available": True, "status": "available",
+        "activation_rank": positive_rank,
     }
 
 
@@ -320,6 +377,17 @@ def eigenvector_eigenvalue_coincidence(
             raise ValueError("weight is required when svd is omitted")
         svd = compute_svd(weight)
     eigenvalues, activation_vectors = activation_eigensystem(feature_matrix)
+    tolerance = _covariance_tolerance(feature_matrix, eigenvalues)
+    positive_rank = _positive_covariance_rank(feature_matrix, eigenvalues, tolerance)
+    reason = (_weight_vectors_identifiable(svd)
+              or ("activation covariance is significantly indefinite"
+                  if np.any(eigenvalues < -tolerance) else None)
+              or ("activation covariance has numerical rank zero" if positive_rank == 0 else None))
+    if reason is not None:
+        return {"available": False, "status": f"unavailable: {reason}",
+                "activation_rank": positive_rank}
+    activation_vectors = activation_vectors[:, :positive_rank]
+    eigenvalues = eigenvalues[:positive_rank]
     right_vectors = _normalized_columns(svd.V[:, : svd.s.size])
     activation_vectors = _normalized_columns(activation_vectors)
     if right_vectors.shape[0] != activation_vectors.shape[0]:
@@ -341,6 +409,7 @@ def eigenvector_eigenvalue_coincidence(
         "max_overlap_with_top_eigenvector": float(np.max(top_column)),
         "argmax_singular_for_top_eigenvector": int(np.argmax(top_column)),
         "diagonal_coincidence": diagonal_coincidence,
+        "available": True, "status": "available", "activation_rank": positive_rank,
     }
 
 

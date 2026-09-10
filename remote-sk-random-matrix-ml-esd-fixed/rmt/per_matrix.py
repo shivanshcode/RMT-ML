@@ -71,7 +71,17 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
         raise RuntimeError(
             f"{record.name}: float64 SVD precision contract was not satisfied "
             f"(backend={svd.backend}, dtype={svd.factorization_dtype})")
-    s = np.sort(svd.s)[::-1]                       # descending
+    # Keep values and vectors coupled even for a directly supplied/nonstandard
+    # backend result.  Sorting only ``s`` corrupts every vector-ranked metric.
+    order = np.argsort(np.asarray(svd.s))[::-1]
+    if not np.array_equal(order, np.arange(len(order))):
+        svd = SVDResult(U=np.asarray(svd.U)[:, order],
+                        s=np.asarray(svd.s)[order],
+                        Vh=np.asarray(svd.Vh)[order, :], n=n, m=m,
+                        backend=svd.backend,
+                        factorization_dtype=svd.factorization_dtype,
+                        degraded=svd.degraded)
+    s = np.asarray(svd.s)
     if svals_out is not None:
         svals_out[record.name] = s
     Vh = svd.Vh
@@ -156,16 +166,26 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
         # optional powerlaw-pkg LR test
         if cfg.use_powerlaw_pkg:
             pk = TAIL.powerlaw_pkg_fit(lam)
-            row["LR_trunc"] = pk["LR_trunc"] if pk else _nan()
-            row["LR_p"] = pk["LR_p"] if pk else _nan()
+            row["LR_trunc"] = pk["LR_trunc"]
+            row["LR_p"] = pk["LR_p"]
+            row["powerlaw_pkg_status"] = pk["status"]
+            row["powerlaw_pkg_reason"] = pk.get("reason", "")
         else:
             row["LR_trunc"] = _nan(); row["LR_p"] = _nan()
+            row["powerlaw_pkg_status"] = "disabled"
+            row["powerlaw_pkg_reason"] = ""
         # Optional randomized control uses the same estimator, exponent
         # convention, and support-selection policy as the headline alpha.
         row.update({
             "alpha_rand": _nan(), "alpha_rand_estimator": selected_name,
             "alpha_rand_kind": row["alpha_kind"], "alpha_rand_xmin": _nan(),
             "alpha_rand_n_tail": 0, "alpha_rand_ks_D": _nan(),
+            "alpha_rand_plateau_width": 0,
+            "alpha_rand_plateau_start_rank": 0,
+            "alpha_rand_plateau_end_rank": 0,
+            "alpha_rand_window": int(cfg.hill_window),
+            "alpha_rand_support_observations": 0,
+            "alpha_rand_is_powerlaw": 0,
             "max_ev_rand": _nan(),
         })
         if cfg.do_randomize:
@@ -192,6 +212,12 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
             else:
                 random_plateau = TAIL.hill_plateau(random_lam, window=cfg.hill_window)
                 row["alpha_rand"] = random_plateau["hill_plateau_alpha"]
+                row["alpha_rand_plateau_width"] = random_plateau["hill_plateau_width"]
+                row["alpha_rand_plateau_start_rank"] = random_plateau["hill_plateau_start_rank"]
+                row["alpha_rand_plateau_end_rank"] = random_plateau["hill_plateau_end_rank"]
+                row["alpha_rand_window"] = random_plateau["hill_window"]
+                row["alpha_rand_support_observations"] = random_plateau["hill_support_observations"]
+                row["alpha_rand_is_powerlaw"] = int(bool(random_plateau["hill_is_powerlaw"]))
     else:
         for kx in ("alpha", "xmin", "ks_D", "n_tail", "alpha_on_nu",
                    "alpha_hill_nu", "alpha_hill_lambda", "hill_plateau_alpha",
@@ -199,12 +225,18 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
                    "hill_plateau_end_rank", "hill_window",
                    "hill_support_observations", "hill_is_powerlaw",
                    "LR_trunc", "LR_p", "alpha_rand", "alpha_rand_xmin",
-                   "alpha_rand_n_tail", "alpha_rand_ks_D", "max_ev_rand"):
+                   "alpha_rand_n_tail", "alpha_rand_ks_D",
+                   "alpha_rand_plateau_width", "alpha_rand_plateau_start_rank",
+                   "alpha_rand_plateau_end_rank", "alpha_rand_window",
+                   "alpha_rand_support_observations", "alpha_rand_is_powerlaw",
+                   "max_ev_rand"):
             row[kx] = _nan()
         row["alpha_estimator"] = "disabled"
         row["alpha_kind"] = "unavailable"
         row["alpha_rand_estimator"] = "disabled"
         row["alpha_rand_kind"] = "unavailable"
+        row["powerlaw_pkg_status"] = "disabled"
+        row["powerlaw_pkg_reason"] = ""
 
     # --- scalars ----------------------------------------------------------- #
     row["row_wise_entropy"] = SC.row_wise_entropy(W)
@@ -231,6 +263,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     # --- RMT bulk (on covariance eigenvalues inside the fitted support) ---- #
     bulk_lam = lam[(lam >= mp_minus_eig) & (lam <= mp_plus_eig)]
     row["spacing_level_count"] = int(bulk_lam.size)
+    row["spacing_seed"] = int(cfg.seed)
     row["spacing_available"] = 0
     row["spacing_status"] = "disabled" if not cfg.do_spacing else "insufficient_levels"
     for kx in ("r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
@@ -244,10 +277,14 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
             ks = SP.nn_spacing_ks(bulk_lam, deg=cfg.unfold_deg)
             row["nn_KS_GOE"] = ks["nn_KS_GOE"]
             row["nn_KS_Poisson"] = ks["nn_KS_Poisson"]
-            row["delta3_L10"] = SP.delta3(bulk_lam, 10, deg=cfg.unfold_deg)
-            row["delta3_L50"] = SP.delta3(bulk_lam, 50, deg=cfg.unfold_deg)
-            row["sigma2_L10"] = SP.sigma2(bulk_lam, 10, deg=cfg.unfold_deg)
-            row["sigma2_L50"] = SP.sigma2(bulk_lam, 50, deg=cfg.unfold_deg)
+            row["delta3_L10"] = SP.delta3(bulk_lam, 10, deg=cfg.unfold_deg,
+                                             seed=cfg.seed)
+            row["delta3_L50"] = SP.delta3(bulk_lam, 50, deg=cfg.unfold_deg,
+                                             seed=cfg.seed)
+            row["sigma2_L10"] = SP.sigma2(bulk_lam, 10, deg=cfg.unfold_deg,
+                                             seed=cfg.seed)
+            row["sigma2_L50"] = SP.sigma2(bulk_lam, 50, deg=cfg.unfold_deg,
+                                             seed=cfg.seed)
             row["spacing_available"] = 1
             row["spacing_status"] = "available"
         except (ValueError, np.linalg.LinAlgError) as error:
@@ -261,7 +298,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
 
     # --- overlap / coincidence (only if a feature matrix is available) ----- #
     _set_overlap_nans(row)
-    if fm_dict is not None:
+    if cfg.do_overlap and fm_dict is not None:
         key = OV.resolve_fm_key(record.name, list(fm_dict.keys()))
         if key is not None:
             C = np.asarray(fm_dict[key]["FM"], dtype=np.float64)
@@ -336,13 +373,17 @@ CSV_COLUMNS = (
      "hill_plateau_alpha", "hill_plateau_width", "hill_plateau_start_rank",
      "hill_plateau_end_rank", "hill_window", "hill_support_observations",
      "hill_is_powerlaw",
-     "LR_trunc", "LR_p", "alpha_rand", "alpha_rand_estimator",
+     "LR_trunc", "LR_p", "powerlaw_pkg_status", "powerlaw_pkg_reason",
+     "alpha_rand", "alpha_rand_estimator",
      "alpha_rand_kind", "alpha_rand_xmin", "alpha_rand_n_tail",
-     "alpha_rand_ks_D", "max_ev_rand",
+     "alpha_rand_ks_D", "alpha_rand_plateau_width",
+     "alpha_rand_plateau_start_rank", "alpha_rand_plateau_end_rank",
+     "alpha_rand_window", "alpha_rand_support_observations",
+     "alpha_rand_is_powerlaw", "max_ev_rand",
      "row_wise_entropy", "spectral_entropy", "stable_rank", "mp_softrank",
      "bulk_mass_frac", "max_sval", "min_sval", "mean_sval", "median_sval",
      "ipr_top10_mean", "ipr_bulk_mean", "pt_ks_mean", "pt_frac_random",
-     "spacing_level_count", "spacing_available", "spacing_status",
+     "spacing_level_count", "spacing_seed", "spacing_available", "spacing_status",
      "r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
      "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50",
      "complex_r_abs_mean", "complex_r_cos_mean",

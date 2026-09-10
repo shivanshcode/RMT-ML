@@ -43,7 +43,6 @@ def unfold(levels, deg=7) -> np.ndarray:
     N = x.size
     if N < 3:
         raise ValueError("at least three finite levels are required")
-    stair = np.arange(1, N + 1, dtype=np.float64)
     unique, first, counts = np.unique(x, return_index=True, return_counts=True)
     if unique.size < 2:
         raise ValueError("unfolding requires at least two distinct levels")
@@ -118,9 +117,10 @@ def nn_spacing_ks(levels, deg=7) -> dict:
 # --------------------------------------------------------------------------- #
 # number variance Σ²(L) and spectral rigidity Δ₃(L)                            #
 # --------------------------------------------------------------------------- #
-def sigma2(levels, L, deg=7) -> float:
-    """Number variance Σ²(L): variance of the level count in windows of width L.
+def sigma2(levels, L, deg=7, *, seed=None, rng=None) -> float:
+    """Number variance Σ²(L) over random windows.
 
+    ``seed``/``rng`` makes the sampling part of run-level reproducibility.
     GOE: Σ²(L) ≈ (2/π²)[ln(2πL)+γ+1−π²/8].
     """
     xi = np.sort(unfold(levels, deg=deg))
@@ -129,15 +129,17 @@ def sigma2(levels, L, deg=7) -> float:
     if span <= L:
         return float("nan")
     n_windows = max(200, int(10 * span / L))
-    starts = np.random.default_rng(0).uniform(lo, hi - L, size=n_windows)
+    generator = rng if rng is not None else np.random.default_rng(seed)
+    starts = generator.uniform(lo, hi - L, size=n_windows)
     counts = np.array([np.count_nonzero((xi >= a) & (xi < a + L)) for a in starts],
                       dtype=np.float64)
     return float(np.var(counts))
 
 
-def delta3(levels, L, deg=7) -> float:
+def delta3(levels, L, deg=7, *, seed=None, rng=None) -> float:
     """Dyson–Mehta spectral rigidity Δ₃(L) via least-squares staircase fit.
 
+    ``seed``/``rng`` makes the random windows part of run-level reproducibility.
     Δ₃(L) = ⟨ min_{a,b} (1/L)∫_x^{x+L}(N(ξ)−a−bξ)² dξ ⟩.
     GOE: Δ₃(L) ≈ (1/π²)[ln(2πL)+γ−5/4−π²/8].
     """
@@ -146,9 +148,9 @@ def delta3(levels, L, deg=7) -> float:
     span = hi - lo
     if span <= L:
         return float("nan")
-    rng = np.random.default_rng(1)
+    generator = rng if rng is not None else np.random.default_rng(seed)
     n_windows = max(150, int(8 * span / L))
-    starts = rng.uniform(lo, hi - L, size=n_windows)
+    starts = generator.uniform(lo, hi - L, size=n_windows)
     vals = []
     for a in starts:
         b = a + L

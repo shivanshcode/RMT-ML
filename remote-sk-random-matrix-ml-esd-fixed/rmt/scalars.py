@@ -153,6 +153,13 @@ def per_decile(s, n_deciles=10) -> dict:
     """
     sv = np.sort(np.asarray(s, dtype=np.float64))      # ascending
     k = sv.size
+    n_deciles = int(n_deciles)
+    if n_deciles < 1:
+        raise ValueError("n_deciles must be positive")
+    if n_deciles > k:
+        raise ValueError(
+            f"n_deciles={n_deciles} exceeds singular count {k}; empty groups are not measurements"
+        )
     ranges = decile_index_ranges(k, n_deciles, ascending=True)
     out = {}
     energy = np.square(sv)

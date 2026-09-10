@@ -239,8 +239,7 @@ def test_all_declared_choice_values_construct_together() -> None:
                 for overlap in OVERLAP_METRICS:
                     for aspect in ASPECT_RATIO_MODES:
                         for spike in SPIKE_DETECTORS:
-                            configured = replace(
-                                base,
+                            arguments = dict(
                                 mp_fit_method=mp_method,
                                 unfolding_strategy=unfolding,
                                 tail_solver=tail,
@@ -248,4 +247,10 @@ def test_all_declared_choice_values_construct_together() -> None:
                                 aspect_ratio_mode=aspect,
                                 spike_detector=spike,
                             )
-                            assert configured.mp_fit_method == mp_method
+                            if (mp_method == "farms_unbiased"
+                                    and aspect not in {"farms_normalized", "farms_unbiased"}):
+                                with pytest.raises(ValueError, match="FARMS aspect"):
+                                    replace(base, **arguments)
+                            else:
+                                configured = replace(base, **arguments)
+                                assert configured.mp_fit_method == mp_method

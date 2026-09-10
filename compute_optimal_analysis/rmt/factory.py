@@ -213,6 +213,11 @@ class RMTMethodConfig:
             raise ValueError("lanczos_check_interval must be positive")
         if self.lanczos_pole_method not in {"reference_ritz", "constant_tail"}:
             raise ValueError("unsupported Lanczos pole method")
+        if (self.mp_fit_method == "farms_unbiased"
+                and self.aspect_ratio_mode not in {"farms_normalized", "farms_unbiased"}):
+            raise ValueError(
+                "farms_unbiased MP fitting requires a FARMS aspect-ratio mode"
+            )
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -288,8 +293,10 @@ def prepare_spectrum(
 
 
 def _unavailable_mp_fit(matrix: np.ndarray, method: str, reason: str,
-                        eigenvalues: np.ndarray | None = None) -> MPFitResult:
-    q = min(matrix.shape) / max(matrix.shape)
+                        eigenvalues: np.ndarray | None = None,
+                        aspect_ratio: float | None = None) -> MPFitResult:
+    q = (min(matrix.shape) / max(matrix.shape)
+         if aspect_ratio is None else float(aspect_ratio))
     values = (mp_eigenvalues(matrix) if eigenvalues is None
               else np.asarray(eigenvalues, dtype=np.float64).ravel())
     return MPFitResult(
@@ -318,6 +325,27 @@ def dispatch_mp_fit(
     if not np.any(matrix):
         return _unavailable_mp_fit(matrix, method, "zero matrix",
                                    None if svd is None else svd.covariance_eigenvalues)
+    if (svd is not None and method in {"lanczos_stieltjes", "thamm_modified_singular"}
+            and not np.isclose(float(svd.normalization), float(max(matrix.shape)))):
+        raise ValueError(
+            f"{method} requires cached SVD normalization=max(weight.shape) to match operator units"
+        )
+    cached_values = (mp_eigenvalues(matrix) if svd is None
+                     else np.asarray(svd.covariance_eigenvalues, dtype=np.float64))
+    positive_count = int(np.count_nonzero(cached_values > 0.0))
+    minimum_positive = {"analytic_mp": 4, "kde_bulk_fit": 8}.get(method)
+    if minimum_positive is not None and positive_count < minimum_positive:
+        return _unavailable_mp_fit(
+            matrix, method,
+            f"fewer than {minimum_positive} positive eigenvalues",
+            cached_values,
+        )
+    if method == "thamm_modified_singular":
+        singular = np.asarray(svd.s if svd is not None else np.linalg.svd(matrix, compute_uv=False))
+        if singular.size < 2 * config.gaussian_kernel_window + 4:
+            return _unavailable_mp_fit(matrix, method, "singular spectrum is too short", cached_values)
+        if np.unique(singular).size < 2:
+            return _unavailable_mp_fit(matrix, method, "degenerate singular spectrum", cached_values)
     if method == "lanczos_stieltjes":
         try:
             return fit_marchenko_pastur_lanczos(
@@ -343,13 +371,19 @@ def dispatch_mp_fit(
                 None if svd is None else svd.covariance_eigenvalues,
             )
     if method == "farms_unbiased" and prepared is not None and prepared.farms is not None:
+        prepared_positive = int(np.count_nonzero(prepared.eigenvalues > 0.0))
+        if 0 < prepared_positive < 4:
+            return _unavailable_mp_fit(
+                matrix, method, "fewer than four positive pooled eigenvalues",
+                prepared.eigenvalues, prepared.aspect_ratio,
+            )
         fitted = fit_marchenko_pastur(
             prepared.eigenvalues, prepared.aspect_ratio,
             trim_upper=config.mp_trim_upper,
         )
         return MPFitResult(
             **{**fitted.as_dict(), "method": "farms_unbiased",
-               "diagnostics": {**prepared.diagnostics,
+               "diagnostics": {**fitted.diagnostics, **prepared.diagnostics,
                                "spectral_max": float(np.max(prepared.eigenvalues))}}
         )
     if method == "farms_unbiased":
@@ -358,13 +392,19 @@ def dispatch_mp_fit(
                 "farms_unbiased MP fitting requires aspect_ratio_mode="
                 "farms_normalized or farms_unbiased")
         compatible = prepare_spectrum(matrix, config, svd=svd)
+        compatible_positive = int(np.count_nonzero(compatible.eigenvalues > 0.0))
+        if 0 < compatible_positive < 4:
+            return _unavailable_mp_fit(
+                matrix, method, "fewer than four positive pooled eigenvalues",
+                compatible.eigenvalues, compatible.aspect_ratio,
+            )
         fitted = fit_marchenko_pastur(
             compatible.eigenvalues, compatible.aspect_ratio,
             trim_upper=config.mp_trim_upper,
         )
         return MPFitResult(
             **{**fitted.as_dict(), "method": "farms_unbiased",
-               "diagnostics": {**compatible.diagnostics,
+               "diagnostics": {**fitted.diagnostics, **compatible.diagnostics,
                                "spectral_max": float(np.max(compatible.eigenvalues))}}
         )
     if method == "thamm_modified_singular":

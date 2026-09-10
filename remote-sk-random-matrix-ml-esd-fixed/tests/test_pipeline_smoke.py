@@ -7,7 +7,7 @@ torch = pytest.importorskip("torch")
 
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
-from _synthetic_models import tiny_causal_lm, TinyPythiaCausalLM   # noqa: E402
+from tests.synthetic_models import tiny_causal_lm, TinyPythiaCausalLM   # noqa: E402
 
 from rmt import pipeline as P                                   # noqa: E402
 from rmt.per_matrix import CSV_COLUMNS                          # noqa: E402

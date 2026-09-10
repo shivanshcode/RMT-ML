@@ -76,6 +76,15 @@ def load_svd(cache_dir, name, *, digest=None, required_dtype=None,
             if degraded and not allow_degraded:
                 return None
             U, s, Vh = d["U"], d["s"], d["Vh"]
+            factor_dtypes = (U.dtype, s.dtype, Vh.dtype)
+            if (not all(np.issubdtype(dtype, np.floating) for dtype in factor_dtypes)
+                    or len(set(factor_dtypes)) != 1):
+                return None
+            actual_dtype = str(s.dtype)
+            if cached_dtype is not None and cached_dtype != actual_dtype:
+                return None
+            if required_dtype is not None and actual_dtype != str(required_dtype):
+                return None
             if U.ndim != 2 or s.ndim != 1 or Vh.ndim != 2:
                 return None
             if (U.shape[1] != s.size or Vh.shape[0] != s.size
@@ -90,6 +99,11 @@ def load_svd(cache_dir, name, *, digest=None, required_dtype=None,
                     return None
             if (not np.all(np.isfinite(U)) or not np.all(np.isfinite(s))
                     or not np.all(np.isfinite(Vh)) or np.any(s < 0.0)):
+                return None
+            # Every vector-associated diagnostic assumes LAPACK's descending
+            # singular-value convention.  A consistently permuted cache can
+            # reconstruct the weight while violating that semantic invariant.
+            if s.size > 1 and np.any(s[:-1] < s[1:]):
                 return None
             if return_metadata:
                 backend = str(d["backend"].item()) if "backend" in d else "unknown-cache"

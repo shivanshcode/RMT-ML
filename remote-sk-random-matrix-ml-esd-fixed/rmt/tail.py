@@ -239,23 +239,26 @@ def hill_plateau(svals, *, window=20, flat_tol=0.20) -> dict:
 
 
 def powerlaw_pkg_fit(values, xmax=None):
-    """Delegate to the local `powerlaw` package if installed (LR test R, p)."""
+    """Run the optional ``powerlaw`` adapter with explicit stage status."""
     try:
         import powerlaw  # local, optional
-    except Exception:
-        return None
+    except Exception as error:
+        return {"status": "failed", "reason": f"dependency unavailable: {error!r}",
+                "LR_trunc": float("nan"), "LR_p": float("nan")}
     x = np.asarray(values, dtype=np.float64)
     x = x[np.isfinite(x) & (x > 0)]
     if x.size < 50:
-        return None
+        return {"status": "unavailable", "reason": "fewer than 50 positive observations",
+                "LR_trunc": float("nan"), "LR_p": float("nan")}
     try:
         fit = powerlaw.Fit(x, xmax=xmax, verbose=False)
         R, p = fit.distribution_compare("truncated_power_law", "power_law",
                                         normalized_ratio=True)
-        return {"alpha": float(fit.alpha), "xmin": float(fit.xmin),
-                "LR_trunc": float(R), "LR_p": float(p)}
-    except Exception:
-        return None
+        return {"status": "complete", "reason": "", "alpha": float(fit.alpha),
+                "xmin": float(fit.xmin), "LR_trunc": float(R), "LR_p": float(p)}
+    except Exception as error:
+        return {"status": "failed", "reason": f"comparison failed: {error!r}",
+                "LR_trunc": float("nan"), "LR_p": float("nan")}
 
 
 # --------------------------------------------------------------------------- #
