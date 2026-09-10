@@ -28,13 +28,17 @@
 - [x] `run_hpc.slurm` uses the recorded `rmt_ml_env` interpreter and `gpulong` partition, isolates local imports, creates per-job outputs/caches, and contains all four fail-closed tracks.
 - [x] Every runner invocation records package, platform, precision, accelerator, and scheduler provenance in `runtime_environment.json`.
 - [x] Phase III governing documents describe the implemented defaults and signatures.
+- [x] Pooled FARMS ESD/tail observations are separated from single-operator spacing, with per-domain geometry and normalization provenance.
+- [x] Tracy--Widom uses operator/window dimensions; production Lanczos margins are scale-relative and serialized.
+- [x] Training, evaluation, lesions, activation covariance, CLI aliases, scaling grouping, and Hill support have v3/v4 regressions.
+- [x] All CO-01..CO-10 findings in `bug_report.md` are fixed: hard-edge-safe MP fitting, scaler recovery, budget-aware scheduling, small-bulk/Lanczos containment, bounded/scale-free tails, qualified overlap, selected-cell collapse checks, and atomic run ownership.
 
 ## Human execution gates
 
 - [ ] Inventory and validate `/home/shivansh/.conda/envs/rmt_ml_env`; do not install standalone `requirements.txt` pins into it in place.
 - [ ] If the live stack is incompatible, create a separate environment and archive its reviewed `requirements-cluster.txt` and wheel inventory.
 - [ ] Confirm a case-insensitive source search finds zero occurrences of the prohibited framework name under `rmt/`, including comments and docstrings.
-- [ ] Run the full pytest suite with zero failures.
+- [ ] Re-run the full pytest suite with zero failures in the selected cluster environment (local CPU verification is recorded in `bug_report.md`).
 - [ ] Record the exact NumPy/SciPy/platform versions used for numerical calibration.
 - [ ] Confirm the seeded three-spike detector returns three poles and the edge tolerance is met on the operator's BLAS/LAPACK stack.
 - [ ] Confirm the six-ratio FARMS edge calibration meets the declared two-percent tolerance.

@@ -54,10 +54,8 @@ The eigenvalue domain is `λ = ν²/N` with `C = WWᵀ/N`. The default `N = #col
 standard MP normalization. `mp_minus_eig/mp_plus_eig` are the exact images
 `ν±²/N` of the singular-value edges (no separate fit).
 
-## 7. CSV column count
-The realized schema is **88 columns** (identity 7 + MP 11 + small-SV 4 + tail 14
-+ scalars 13 + bulk 9 + overlap 10 + per-decile 20). This matches plan §5 exactly
-once the labelled exponents and both ν/λ MP edges are included.
+## 7. CSV schema
+The realized schema includes identity/precision, MP, small-SV, selected and randomized-tail provenance, scalar, bulk, qualified-overlap, capture-provenance, and configurable per-decile groups. Columns are generated from `CSV_COLUMNS` plus the configured partition count; no historical fixed column total is normative.
 
 ## 8. Tolerances
 All numeric tolerances live in `rmt.config.TOL` (single source of truth, imported
@@ -96,4 +94,22 @@ asserts the analyzed weights are restored/non-degenerate and at least one
   (it re-sorts internally).
 - `overlap.overlap_analysis`: when `weight=None`, `n_rows` now comes from
   `svd.U.shape[0]` instead of silently collapsing to `min(n,m)`.
-- Test counts corrected: 76 pure-science, 105 total (1 GPU-only skip).
+- Historical test counts were removed from user guidance; current findings and resolution status are recorded in `bug_report.md`.
+
+## 10. v3/v4 remediation contracts
+
+- Full overlap matrices are emitted/released projection-at-a-time; activation OOM replay uses one shared window plan across selected projections.
+- Per-matrix cache consumers and independent decile factorizations require qualified, non-degraded float64 SVDs. Decile outputs publish precision status.
+- Effective context resolution includes both ordinary learned-position table limits and positive reserved-position offsets. Exact target names remain capturable when discovery cannot infer a numeric layer index.
+- Activation/perplexity/decile measurement preserves every borrowed submodule's original train/eval flag and restores weights on failure.
+- ESD histogram construction bounds the total edge count before allocation, including tiny-IQR near-constant spectra.
+- Windowed-Hill observation support includes the final boundary observation consumed by its adjacent log-spacings.
+
+## 11. Current bug-report remediation
+
+- Physical decile scopes deduplicate tied full parameters while retaining separate fused Q/K/V blocks; all selected singular counts are validated before mutation.
+- Activation selection excludes exact output/embedding components rather than arbitrary `head` substrings. Covariance nullspaces are excluded, while rank-zero or repeated positive eigenspaces make basis-dependent overlap unavailable.
+- CLI selftests use the fixed calibrated seed independently of the requested experiment seed.
+- Random controls dispatch the selected alpha estimator and serialize matching convention/support metadata. Finite `xmax` invokes a normalized bounded-Pareto likelihood and CDF.
+- Corrupt SVD cache files become misses and are atomically replaced after recomputation. Requested WeightWatcher stages always emit status and make an unavailable run partial.
+- Checkpoint SVDs use `cached_svd` with configured backend/threshold and record actual backend/dtype. Per-model output roots are atomically claimed and JSON replacement uses unique temporary files.

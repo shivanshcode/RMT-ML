@@ -67,10 +67,10 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 
 ## `rmt.tail`
 
-- `fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02, max_xmin_candidates=200, xmax=None) -> dict`
+- `fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02, max_xmin_candidates=200, xmax=None) -> dict`; finite `xmax` uses the normalized bounded-Pareto likelihood and conditional CDF.
 - `csn_goodness_of_fit(values, *, n_bootstrap=250, min_tail=50, tail_frac=0.02, max_xmin_candidates=200, rng=0) -> dict`
-- `fixed_cutoff_mle(values, *, xmin=None, tail_fraction=0.1, xmax=None) -> dict`
-- `rank_ordered_mle(values, *, xmin=None, tail_fraction=0.1) -> dict`
+- `fixed_cutoff_mle(values, *, xmin=None, tail_fraction=0.1, xmax=None) -> dict`; finite `xmax` uses the same bounded likelihood/CDF contract.
+- `rank_ordered_mle(values, *, xmin=None, tail_fraction=0.1) -> dict`; degeneracy detection is exact/relative rather than absolute-scale dependent.
 - `hill_estimator(values, k_min=5) -> tuple[np.ndarray, np.ndarray]`
 - `hill_alpha_at(values, k) -> float`
 - `hill_estimator_windowed(values, *, window=20, k_min=5) -> tuple[np.ndarray, np.ndarray]`
@@ -112,7 +112,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `brody_cdf(s, beta) -> np.ndarray`
 - `fit_brody(spacings, *, method="mle", n_bootstrap=0, rng=0) -> BrodyFit`
 - `fit_brody_cdf_nls(spacings, *, n_bootstrap=0, rng=0) -> BrodyFit`
-- `r_statistic(levels) -> float`
+- `r_statistic(levels) -> float`; three finite levels are sufficient for one adjacent-gap ratio.
 - `number_variance(levels, L, *, unfolded=False, degree=7, n_windows=None, method="sliding", tolerance=1e-4, rng=0) -> float`
 - `sigma2(levels, L, deg=7) -> float`
 - `dyson_mehta_delta3(levels, L, *, unfolded=False, degree=7, n_windows=None) -> float`
@@ -133,7 +133,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `reference_max_cosine_overlap(weight_vectors, activation_vectors, *, absolute=False, squared=False) -> np.ndarray`
 - `evaluate_overlap_metric(weight_vectors, activation_vectors, *, metric="staats_dual_end") -> dict`
 - `tranche_indices(n_values, *, top_fraction=0.1, bottom_fraction=0.1) -> dict[str, np.ndarray]`
-- `dual_end_alignment(svd, covariance, *, activation_fraction=0.1, top_fraction=0.1, bottom_fraction=0.1, metric="staats_dual_end") -> dict`
+- `dual_end_alignment(svd, covariance, *, activation_fraction=0.1, top_fraction=0.1, bottom_fraction=0.1, metric="staats_dual_end") -> dict`; returns availability/rank status, excludes covariance null modes, and does not split a tied positive cluster at the target cutoff.
 - `overlap_analysis(weight, feature_matrix, *, svd=None) -> dict`
 - `eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None) -> dict`
 - `three_sigma_band(N, sigma_level=3.0) -> tuple[float, float]`
@@ -142,7 +142,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 ## `rmt.farms_aspect_ratio`
 
 - `FARMSConfig(target_aspect_ratio=1.0, window_size=None, row_windows=5, column_windows=5, sampling="reference_fixed", n_submatrices=None, step_size=10, normalization="canonical", orient_tall=False, seed=0)` is frozen. The target ratio is sampled columns divided by sampled rows, and `window_size` is the sampled row count.
-- `FARMSResult` is a frozen dataclass containing the descending pooled spectrum, source/oriented/window shapes, starts, reference and canonical aspect ratios, normalization, transpose state, coverage, and window counts.
+- `FARMSResult` is a frozen dataclass containing the descending pooled spectrum, source/oriented/window shapes, starts, reference and canonical aspect ratios, normalization and one exact normalization denominator per window, transpose state, coverage, and window counts.
 - `fixed_ratio_window_shape(source_shape, target_aspect_ratio=1.0, window_size=None) -> tuple[int, int]`
 - `farms_window_starts(source_shape, window_shape, *, row_windows=5, column_windows=5, sampling="reference_fixed", n_submatrices=None, step_size=10, rng=0) -> np.ndarray`
 - `iter_farms_submatrices(weight, window_shape, starts) -> Iterator[np.ndarray]`
@@ -152,7 +152,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 
 ## `rmt.lanczos_stieltjes`
 
-- `LanczosResult`, `JacobiCholesky`, and `LanczosSpikeResult` are frozen dataclasses. Results include adaptive stopping state, per-probe recurrence lengths, pole method, and per-probe VEST recurrences.
+- `LanczosResult`, `JacobiCholesky`, and `LanczosSpikeResult` are frozen dataclasses. Results include adaptive stopping state, per-probe recurrence lengths, pole method, per-probe VEST recurrences, and the effective scale-relative threshold margin.
 - `covariance_linear_operator(factor, *, normalization=None) -> scipy.sparse.linalg.LinearOperator`
 - `default_lanczos_steps(dimension) -> int`
 - `lanczos_tridiagonalize(matrix, *, dimension=None, steps=None, probe=None, reorthogonalization="full", tolerance=None, adaptive=False, convergence_tolerance=None, sequence_length=None, check_interval=2, rng=0, return_basis=False) -> LanczosResult`
@@ -165,8 +165,8 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `asymptotic_spectral_density(result, energies, *, eta=1e-3) -> np.ndarray`
 - `finite_section_poles(cholesky, *, tail_alpha, tail_beta, threshold, residue_threshold=0.0, tail_window=None, extension_size=None) -> tuple[np.ndarray, np.ndarray]`
 - `finite_vest_poles(lanczos, *, threshold, residue_threshold=0.0) -> tuple[np.ndarray, np.ndarray]`
-- `detect_spikes_lanczos(matrix, *, dimension=None, steps=None, n_probes=1, reorthogonalization="full", tail_window=None, threshold_c=1.0, threshold_delta=0.25, residue_threshold=0.0, ridge=0.0, extension_size=None, adaptive=True, convergence_tolerance=None, sequence_length=None, check_interval=2, pole_method="reference_ritz", rng=0) -> LanczosSpikeResult`
-- `detect_spikes_from_factor(factor, **kwargs) -> LanczosSpikeResult`
+- `detect_spikes_lanczos(matrix, *, dimension=None, steps=None, n_probes=1, reorthogonalization="full", tail_window=None, threshold_c=1.0, threshold_delta=0.25, threshold_mode="absolute", residue_threshold=0.0, ridge=0.0, extension_size=None, adaptive=True, convergence_tolerance=None, sequence_length=None, check_interval=2, pole_method="reference_ritz", rng=0) -> LanczosSpikeResult`
+- `detect_spikes_from_factor(factor, **kwargs) -> LanczosSpikeResult`; the production factor adapter defaults `threshold_mode` to `bulk_edge_relative`, while direct operator calls retain the reference absolute convention.
 - `lanczos_tridiagonalization`, `vector_empirical_stieltjes_transform`, and `lanczos_stieltjes_detector` are compatibility aliases.
 
 ## `rmt.factory`
@@ -179,7 +179,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `dispatch_tail_solver(eigenvalues, config=RMTMethodConfig(), **overrides) -> dict`
 - `dispatch_unfolding(levels, config=RMTMethodConfig()) -> np.ndarray`
 - `dispatch_overlap(weight_vectors, activation_vectors, config=RMTMethodConfig()) -> dict`
-- `dispatch_spike_detector(weight, config=RMTMethodConfig(), *, variance=1.0) -> SpikeDetectionResult`
+- `dispatch_spike_detector(weight, config=RMTMethodConfig(), *, variance=1.0, eigenvalues=None, aspect_ratio=None, operator_shape=None) -> SpikeDetectionResult`; Tracy--Widom finite-size corrections use `operator_shape`, never pooled observation count, and Lanczos assumption failures return a structured unavailable result.
 
 ## Model and pipeline contracts
 
@@ -191,7 +191,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `isoflop_grid(compute_budgets, kappas=(0.25, 1.0, 4.0), law=ScalingLaw(), *, target_tokens_per_parameter=20.0) -> list[Allocation]`
 - `estimate_transformer_parameters(config) -> int`
 - `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64) -> dict`
-- `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains first and second moments on one device.
+- `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains a stable running mean and centered M2 matrix on one device (historical buffer attribute names are retained).
 - `CovarianceAccumulator.update(activations, *, max_samples=None) -> None`
 - `CovarianceAccumulator.second_moment() -> Tensor`
 - `CovarianceAccumulator.covariance(*, centered=True, unbiased=False) -> Tensor`
@@ -233,5 +233,5 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `build_synthetic_corpus(length, vocab_size, *, seed=0, noise_probability=0.05) -> np.ndarray`
 - `TrainConfig` is a frozen optimizer/schedule/accelerator dataclass containing AMP dtype, compile mode, TF32 policy, and nonblocking-transfer policy.
 - `evaluate_language_model(model, dataloader, device, *, max_batches=None, amp_dtype="float32", non_blocking_transfers=True) -> dict[str, float]`
-- `LanguageModelTrainer.fit(train_dataloader, validation_dataloader=None, *, callback=None) -> list[dict]`
+- `LanguageModelTrainer.fit(train_dataloader, validation_dataloader=None, *, callback=None) -> list[dict]`; token-budget schedules follow successful target-token progress across recycled loader passes, and recoverable GradScaler overflows back off without advancing tokens, scheduler, or optimizer-update counters.
 - `LanguageModelTrainer.save_checkpoint(path, *, metadata=None) -> None`

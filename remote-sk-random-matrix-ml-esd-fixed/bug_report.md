@@ -1,334 +1,230 @@
-# Static bug report — remote-sk-random-matrix-ml-esd-fixed
+# Static-analysis bug report — remote-sk-random-matrix-ml-esd-fixed
 
-## Scope, validation, and the recorded HPC run
+## Scope and verification
 
-Reviewed the current `rmt/` package, tests, packaging, plots, launcher, requirements, saved job logs, and the older `rmt_pipeline_glm.py`. Locations below are relative to this directory.
+Reviewed the **current working tree**, including the pre-existing uncommitted repairs and `tests/test_bugfix_v4.py`, against base commit `c359c9c`. This report records remaining issues; it does not assume deleted historical bug reports are still applicable. The findings are retained below as an audit trail; implementation fixes are now included in the working tree.
 
-This is a **static review**, not a rerun of your cluster job. Of 48 Python files, 47 parse with Python 3.10 grammar using the local Python 3.13.2 AST parser. The legacy monolith fails at its notebook magic on line 1. `bash -n run_rmt.slurm` succeeds. No pytest suite, numerical experiments, installations, downloads, or HPC jobs were executed. Example triggers/regression checks below are source-derived, not claimed test outcomes. Static review cannot guarantee discovery of every possible defect.
+Scope: supported `python -m rmt` entry point, discovery/model loading, matrix aggregation, activation capture, decile intervention/perplexity, numerical core, persistent caching, plots, optional baselines, checkpoint tracking, launcher, and related tests. The explicitly non-executable `rmt_pipeline_glm.py` archive is not treated as a production entry point. Paths/line numbers below are relative to this directory and refer to the reviewed tree.
 
-The saved evidence is important:
+Supplemental verification, isolated from the sibling package:
 
-- `RMT_All_Models_376402.log:1-4` records `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`, a successful selftest gate, and the completion message.
-- `RMT_All_Models_376402.error:2-3` records a **missing WikiText file**, fallback perplexity text, and a written metrics CSV with **18 rows**.
-- This establishes a successful exercised path, not correctness of every metric or every optional branch. The CSV/perplexity outputs themselves are not present in this checkout. Exact installed dependency versions, driver, CUDA toolkit, and GPU memory are not recorded.
-- `run_rmt.slurm` runs `python -m rmt`, **not** the legacy monolith. Legacy defects below must not be attributed to that successful job.
+- After remediation, `python -m pytest -q -p no:cacheprovider`: **130 passed, 1 skipped**; the skipped test requires CUDA.
+- Ruff checks `F821,F822,F823`: passed. `bash -n run_rmt.slurm`: passed.
+- Small CPU-only probes reproduced the failures identified as reproduced below.
+- Environment: Python 3.13.2, NumPy 2.4.4, SciPy 1.17.1, Torch 2.13.0+cpu. Transformers and CUDA were unavailable. No real snapshot download/load, accelerator run, or cluster submission was performed.
+- The existing tests wrote into the tracked `svd_cache/` directory. Only those test-generated cache changes were restored to their previously clean state; pre-existing user changes were preserved.
 
-**Severity:** High = incorrect important scientific output, model corruption, substantial lost computation, or an execution blocker; Medium = configuration-dependent incorrect behavior; Low = narrower robustness/documentation problem.
+Severity: **P1** = high-impact incorrect result/intervention; **P2** = conditional correctness/reliability defect; **P3** = lower-priority execution-contract defect. Static-only findings are explicitly labeled.
 
-## Current package: activation capture and ablation
+## Resolution status
 
-### ESD-01 — High: activation wrapping is not exception-safe
+- [x] **ESD-01 — Fixed**
+- [x] **ESD-02 — Fixed**
+- [x] **ESD-03 — Fixed**
+- [x] **ESD-04 — Fixed**
+- [x] **ESD-05 — Fixed**
+- [x] **ESD-06 — Fixed**
+- [x] **ESD-07 — Fixed**
+- [x] **ESD-08 — Fixed**
+- [x] **ESD-09 — Fixed**
+- [x] **ESD-10 — Fixed**
+- [x] **ESD-11 — Fixed**
 
-- **Locations:** `rmt/activations.py:193-227`; `rmt/pipeline.py:143-156`.
-- Linears are replaced before text loading/forwards, but restored only at the successful end. Tokenization errors, exhausted OOM retries, failed covariance copies, or even allocation failures halfway through replacement leave some/all `FeatureLayer`s installed. The pipeline catches the error and proceeds, so later perplexity/discovery/baseline work runs on a modified model with potentially huge active covariance buffers.
-- The function also switches the supplied model to eval mode and never restores its original training state, even on success.
-- **Fix/check:** wrap the complete replacement/capture lifecycle in `try/finally`, restore modules and mode after any exit, and make partial replacement transactional. Inject failures during replacement, tokenization, both passes, and collection.
+## Prioritized findings
 
-### ESD-02 — High: OOM retries double-count partial forwards and can use different data for mean/covariance
+| ID | Severity | Finding | Evidence |
+|---|---|---|---|
+| ESD-01 | P1 | Tied projection parameters are lesioned multiple times | CPU reproduction |
+| ESD-02 | P2 | Activation name blacklist contradicts discovery and exact targeting | CPU reproduction |
+| ESD-03 | P2 | Valid experiment seeds can fail the stochastic selftest gate | CPU reproduction |
+| ESD-04 | P2 | Degenerate covariance eigenbases create arbitrary overlap results | CPU reproduction + linear-algebra analysis |
+| ESD-05 | P2 | More deciles than singular values creates successful no-op interventions | CPU reproduction |
+| ESD-06 | P2 | Random-control alpha does not follow the selected estimator/convention | CPU reproduction |
+| ESD-07 | P2 | Corrupt optional cache files prevent recomputation and fail matrices | CPU reproduction |
+| ESD-08 | P2 | `xmax` tail fitting uses an unbounded likelihood/CDF | Deterministic numerical reproduction |
+| ESD-09 | P2 | Missing/failed requested baseline is silently reported as complete | Injected optional-stage reproduction |
+| ESD-10 | P3 | Checkpoint tracking ignores the requested SVD backend | Static call-path analysis |
+| ESD-11 | P2 | Fresh output-directory ownership is not atomic | Static concurrency trace |
 
-- **Locations:** `rmt/activations.py:65-99,211-221,230-243`.
-- Earlier layers update accumulators before a later layer throws OOM. `_safe_forward` retries a shortened input without rolling those updates back, so earlier layers receive both failed-prefix samples and the retry. Mean and FM passes retry independently, and shortened successful windows are not saved for replay. The frozen mean can therefore describe different samples from the covariance pass.
-- **Fix/check:** preselect safe windows before collecting statistics, or stage/commit accumulators only after successful complete forwards and replay exactly the same windows for both passes. Test an OOM raised after an early captured layer has executed.
+## ESD-01 — FIXED — Tied projection weights receive multiple, cumulative lesions
 
-### ESD-03 — High: sliding-window perplexity counts overlapping targets repeatedly
+**Locations:** `rmt/decile.py:97-154,208-218`; discovery at `rmt/discovery.py:337-367`.
 
-- **Locations:** `rmt/perplexity.py:52-68`; `rmt/pipeline.py:159-166`.
-- Every window passes `labels=ids` and scores all `length-1` targets. With default `max_length=1024`, stride 512, interior targets are counted twice, sometimes with different available context, while edge targets receive different weighting. The output is not the advertised strided corpus likelihood.
-- **Fix/check:** track the previous scored end, mask already-scored targets with `-100`, and count valid **shifted** labels exactly. Validate stride/context bounds. Use a deterministic fake loss/tokenizer and verify every eligible target is scored once.
+**Trigger/root cause:** Different projection modules can share the same `Parameter`. Discovery returns one record per module name. `set_layer_svd_decile` processes every record, reading the current live weight and caching factors by **record name**. A second alias therefore factors an already-lesioned parameter and removes another tranche. The benchmark deduplicates snapshot storage by parameter identity, but not the actual interventions or factor-cache identity.
 
-### ESD-04 — High: ablation promotes only the weight and breaks half-precision models
+**Reproduction:** Create separate `q_proj` and `k_proj` linear modules, assign `k_proj.weight = q_proj.weight`, and initialize the shared float64 weight to `diag(4, 3, 2, 1)`. Discover both records and call:
 
-- **Locations:** `rmt/decile.py:76-87`; `rmt/model_io.py:9-38`; `rmt/config.py:46`; `rmt/cli.py:28`.
-- FP16/BF16 weights are replaced with new float32 Parameters while input activations and bias remain half precision. Ordinary `F.linear`/Conv1D execution without autocast can then fail with dtype mismatches. Restoration through `load_state_dict` copies values into the new float32 parameter and does not restore dtype, parameter identity, ties, or external optimizer references.
-- The supplied job explicitly uses FP32, so it does not exercise this defect. The library loader's own default is still FP16, unlike the CLI's FP32 default.
-- **Fix/check:** make the whole ablation evaluation consistently FP32, or preserve execution dtype with a clearly labeled precision limitation; do not silently replace only selected Parameters. Test an actual forward after FP16 and BF16 ablation and verify dtype/identity restoration.
+```python
+set_layer_svd_decile(model, records, decile=4,
+                     n_deciles=4, factor_cache={})
+```
 
-### ESD-05 — High: failed decile evaluation leaves the model ablated
+Observed singular values: **`[2, 1, 0, 0]`**. Removing the largest quarter once should leave `[3, 2, 1, 0]`.
 
-- **Locations:** `rmt/decile.py:111-137`; `rmt/pipeline.py:159-189`.
-- Pristine weights are restored only after the loop, not in `finally`. An SVD, assignment, or perplexity failure leaves the currently supplied model modified; the production factory is `lambda: model`, and the pipeline catches the failure and continues. A subsequent WeightWatcher baseline can therefore analyze an unintentionally ablated model.
-- The final restoration also suppresses restoration errors, hiding an invalid state.
-- **Fix/check:** use a reversible context for each decile and an unconditional restoration boundary. Report restoration failures prominently. Test evaluation failure halfway through the sweep against exact original weights.
+**Impact:** Ablation magnitude and perplexity deltas are wrong for tied projections. In a multi-decile sweep, cached factors for later aliases can also originate from the first decile's already-modified state. Correct final restoration does not make the intermediate experiments valid.
 
-### ESD-06 — Medium: `decile_scope='all'` ignores the requested matrix types
+**Fix direction:** Identify unique physical parameter/block interventions and factor them from pristine weights. Deduplicate exact aliases while preserving distinct Q/K/V blocks sharing a fused parameter; simply deduplicating the whole fused parameter would incorrectly drop legitimate blocks. Record logical aliases and actual physical intervention scope.
 
-- **Locations:** `rmt/decile.py:100-127`; `EXECUTIVE_SUMMARY.md`, “Decile ablation”.
-- The documented scope is all layers of the **analyzed types**, but the implementation rediscovers every supported matrix and never filters by the supplied records' roles. Passing only Q records still ablates K/V/O/MLP weights. `_rebind_records` also ignores an explicitly supplied custom spec by resolving its own.
-- **Fix/check:** preserve the selected roles/spec when expanding scope across layers. Test Q-only records and assert every touched record is Q, rather than only checking that the all-scope count is larger.
+**Regression tests:** Tied separate modules, ordinary untied modules, and fused Q/K/V block records. Verify each intended physical tranche is removed once, changing record order does not change the result, every decile uses pristine factors, and all bytes are restored after evaluation failure.
 
-### ESD-07 — Medium: ablation output cannot measure pristine perplexity impact
+## ESD-02 — FIXED — Legitimate `multihead_*` projections are discovered but cannot be captured
 
-- **Locations:** `rmt/decile.py:109-138`; `rmt/plots/perplexity.py:6-15`.
-- Only lesioned perplexities are evaluated/saved. There is no pristine baseline, delta, or actual token-count metadata. All selected roles are lesioned together rather than producing independently attributable role-wise effects. The raw plot is correctly labeled perplexity, but these outputs alone cannot reproduce a baseline-relative, role-wise lesion-impact comparison.
-- **Fix/check:** evaluate and save the pristine baseline on exactly the same tokens, add deltas and the precise affected role/layer scope, and expose independent role-wise sweeps if paper reproduction is intended.
+**Locations:** `rmt/activations.py:121,138-145,255-267`; contrast `rmt/discovery.py:325-347` and the exact-target adapter in `rmt/pipeline.py:224-242`.
 
-### ESD-08 — High/resource-dependent: ablation bypasses the SVD backend/cache and repeatedly materializes all weights
+**Trigger/root cause:** Activation capture rejects any module whose full name contains `"head"`. Weight discovery does not use that broad exclusion. Both activation target collection and wrapper replacement apply the blacklist even when `target_names` explicitly names a supported projection.
 
-- **Locations:** `rmt/decile.py:21-28,111-145`; `rmt/discovery.py:298-330`; `rmt/svd_cache.py`; `rmt/config.py:80-81`.
-- Each decile rediscovers float64 copies of all weights (also in analyzed scope, before filtering), then reconstructs by a new **NumPy CPU SVD** from the live module. Ten deciles repeat expensive decompositions. `backend`, `gpu_svd_min_dim`, `use_svd_cache`, and `svd_cache_dir` never control this path.
-- The pristine snapshot clones every `.weight` entry on its existing device, including embeddings/head that are not ablated; tied state-dict names can also be cloned separately. This adds roughly another model's weight footprint on GPU. The float64 discovery arrays are unnecessary because the ablator rereads module weights.
-- **Fix/check:** snapshot only touched unique Parameters, use CPU/disk snapshots when appropriate, reuse pristine SVD factors across deciles, and discover lightweight metadata without duplicate arrays. Respect configured backends/cache and measure peak RAM/VRAM on the target model.
+**Reproduction:** A model with an ordinary `nn.Linear` at `multihead_attention.q_proj` is discovered as `multihead_attention.q_proj.weight` by the generic spec. Calling `compute_activation_covariance` with that exact target, valid synthetic input opt-ins, and a short window raises `ValueError: no supported projection modules selected for activation capture`.
 
-### ESD-09 — High/resource-dependent: activation covariance allocates all selected dense buffers simultaneously
+**Impact:** Default overlap-enabled analysis fails in strict mode for otherwise supported generic projections solely because an ancestor's name contains `head`. In non-strict mode it loses requested activation diagnostics.
 
-- **Locations:** `rmt/activations.py:44-59,114-141,180-190`; `rmt/discovery.py:298-330`; `rmt/pipeline.py:43-53`.
-- Every selected linear receives a float64 `d_in x d_in` buffer on the model device before a forward; all float64 weight records are already materialized on the host. For an MLP input width 14336, a single covariance buffer is about **1.53 GiB**, before temporaries and model weights. Selecting all layers can OOM during wrapper construction; shortening text cannot reduce that fixed allocation.
-- **Fix/check:** capture a bounded group of layers/modules at a time, share identical input covariances where valid, support CPU accumulation, and preflight quadratic buffer memory. Combine with ESD-01 so allocation failure does not corrupt the model. The small saved Pythia run does not validate large-model memory safety.
+**Fix direction:** Share a precise projection-selection contract with discovery. Exclude actual output heads/embeddings by module role or exact path component, not arbitrary ancestor substrings. Honor explicit validated targets consistently in both capture selection and replacement.
 
-### ESD-10 — Medium: GPT-2 weights are supported, but GPT-2 activation overlap is not
+**Regression tests:** Exact and discovery-driven capture for `multihead_attention.q_proj` and `multihead_attn.out_proj`; ensure a real `lm_head` remains excluded and unindexed exact targets continue working.
 
-- **Locations:** `rmt/discovery.py:109-117,197-214`; `rmt/activations.py:123-125`.
-- Discovery supports transposed HF `Conv1D` projections, but activation capture wraps only `nn.Linear`. GPT-2 therefore produces no projection covariance/overlap despite `do_overlap=True`, without a specific unsupported-module error.
-- **Fix/check:** use input hooks that preserve original module forwards for both Linear and Conv1D, or implement a correctly oriented Conv1D adapter. Test nonempty GPT-2 overlap results, not only discovery shapes.
+## ESD-03 — FIXED — Changing an analysis seed can prevent the model from being loaded
 
-## Configuration, loading, failure reporting, and HPC
+**Locations:** `rmt/cli.py:108-118`; `rmt/selftest.py:20-57`; tolerances in `rmt/config.py:17-24`.
 
-### ESD-11 — Medium: multiple accepted CLI/config switches have no implementation
+**Trigger/root cause:** The mandatory analytic selftest uses the requested experiment seed. Its pass/fail decision includes single finite random-matrix samples with fixed tolerance bands. An ordinary statistical fluctuation is therefore treated as an implementation failure, and the CLI aborts before loading the requested model.
 
-- **Locations:** `rmt/config.py:55-96`; `rmt/cli.py:45-89`; `rmt/pipeline.py:95-128,143-166`; `rmt/activations.py:193-208`.
-- The automatically generated parser exposes options simply because fields exist. Source searches show:
-  - `ppl_stride`, `ppl_dataset`: never forwarded/read by evaluation.
-  - `fm_dataset`, `fm_token_weighted`: forwarded as arguments, but capture ignores `dataset_name`/`token_weighted` and always loads `text_path` with token-weighted accumulation.
-  - `use_svd_cache`, `svd_cache_dir`: not wired to analysis/ablation.
-  - `do_finetune_recovery`, `ft_method`, `ft_steps`, `ft_task`: no recovery implementation.
-  - `pythia_steps`, `epoch_probe_fracs`, `epoch_checkpoint_every_frac`: not used by the CLI to load checkpoints or dispatch epoch tracking. The separate library helper does not make those CLI switches effective.
-- **Fix/check:** implement each promised behavior or remove/reject the flags. Add behavioral tests, including a spy proving the requested perplexity stride reaches evaluation.
+**Reproduction:** `rmt.selftest.run(seed=7)` returned False on the review environment: only `r_goe` failed; all other checks passed. Consequently `python -m rmt --seed 7 ...` reaches the gate and returns 1 before the real analysis. The default calibration seed passed. Additionally, `seed=0` is silently changed to 1234 by `seed or 1234`.
 
-### ESD-12 — Medium: arbitrary decile counts are written through a hard-coded ten-decile CSV schema
+**Impact:** Valid experiment configurations are arbitrarily rejected. Seed sweeps can look like numerical/environment failures even though the implementation and assets are unchanged.
 
-- **Locations:** `rmt/per_matrix.py:197-198,210-233`; `rmt/pipeline.py:294-299`; `rmt/config.py:76`.
-- `n_deciles` controls computed fields, but CSV columns always contain groups 1–10 and `extrasaction='ignore'` silently discards later groups. Values greater than ten lose data; smaller values retain meaningless empty columns. Invalid zero/negative values are not rejected early.
-- **Fix/check:** build the schema from configuration or enforce exactly ten. Test actual CSV contents for 4, 10, and 12 groups, not only returned dictionaries.
+**Fix direction:** Decouple a fixed, calibrated selftest seed set from the experiment's randomness. If randomized gate testing is retained, use a statistically qualified multi-sample procedure and report its uncertainty rather than treating one fluctuation as a broken core. Do not loosen tolerances indiscriminately to hide errors.
 
-### ESD-13 — High for affected installations: NumPy 2-only code is allowed with NumPy 1.x dependencies
+**Regression tests:** Spy on gate invocation for experiment seeds 0, 7, and the default: calibration inputs should be stable, while the actual randomized analysis still receives the requested seed. Keep deterministic ground-truth failure tests so genuine core regressions still abort.
 
-- **Locations:** `rmt/spacing.py:133`; `pyproject.toml:10`; `requirements.txt:7`; `rmt/selftest.py:20-69`.
-- `np.trapezoid` was added in NumPy 2.0, but package metadata/requirements have no minimum. NumPy 1.26 satisfies the declared dependencies yet raises `AttributeError` in Delta3. Since default per-matrix spacing invokes Delta3, rows can be dropped by the broad exception handler.
-- The selftest never calls Delta3, so its gate can succeed in precisely such an environment. **Do not downgrade the working ESD environment to the sibling project's NumPy 1.26.4 pin.**
-- **Fix/check:** declare an appropriate NumPy minimum or use a compatible integration function, and add API/minimum-version coverage to the gate. The logged 18 rows are consistent with this exercised API being available, but do not establish the exact installed NumPy version.
+## ESD-04 — FIXED — Overlap with zero/degenerate activation eigenspaces is not identifiable
 
-### ESD-14 — Medium: only the first logger is configured
+**Locations:** `rmt/overlap.py:32-41,77-109`; `rmt/per_matrix.py:239-266`.
 
-- **Locations:** `rmt/config.py:136-151`; `rmt/cli.py:20`; `rmt/selftest.py:17`; `rmt/pipeline.py:25`.
-- One global `_LOGGER_CONFIGURED` flag is shared across different named loggers, but the handler and INFO level are attached to only the first logger. In CLI execution that is normally `rmt.cli`; sibling `rmt.selftest`/`rmt.pipeline` loggers do not inherit from it. INFO diagnostics disappear and warnings can use the unformatted last-resort handler. This matches the sparse saved log, but is independently evident from the configuration.
-- **Fix/check:** configure the common `rmt` parent once and allow child propagation, or configure each named logger idempotently. Test capture of both selftest and pipeline INFO records.
+**Trigger/root cause:** The overlap maximum uses every activation eigenvector, including zero-eigenvalue directions, and coincidence metrics assume individual eigenvectors are identifiable. Within a repeated eigenspace, an eigensolver may choose any orthonormal basis. Absolute cosine removes sign ambiguity but **not rotation ambiguity**. No covariance-rank/eigengap check qualifies these statistics.
 
-### ESD-15 — High: empty/failed analyses can still exit successfully
+**Reproduction:** Use `W = diag(4, 3, 2, 1)` and `C = zeros((4, 4))`. Both identity and a normalized 4x4 Hadamard matrix are valid covariance eigenvector bases. Passing these through the existing `eig` reuse argument to `overlap_analysis` yields respectively:
 
-- **Locations:** `rmt/pipeline.py:58-74,159-189`; `rmt/cli.py:124-131`.
-- Any exception in an individual metric drops the entire row. No discovered matrices, invalid layer selections, or all rows failing still produce header-only CSV/summary output and return success. Requested overlap/perplexity failures are swallowed as warnings, with no structured run-status artifact or CLI failure policy.
-- **Fix/check:** record failed matrix names/stages and requested-feature status, reject zero usable matrices, and provide a strict mode for production. Do not silently discard valid earlier metrics because one optional diagnostic failed. Test missing layers, all-row failure, and requested perplexity failure.
+- `overlap = [1, 1, 1, 1]`;
+- `overlap = [0.5, 0.5, 0.5, 0.5]`.
 
-### ESD-16 — High/conditional: the SLURM script can report success after a failed main command
+The weight and activation covariance are unchanged, and there is no activation signal.
 
-- **Locations:** `run_rmt.slurm:25,35-49,63-93`.
-- There is no strict shell mode. `cd`, Conda activation, and interpreter probing can fail without aborting. The selftest has an explicit guard, but the main analysis command does not; the final successful `echo` can leave the batch exit status zero after Python fails.
-- The fallback interpreter is `$CONDA_BASE/envs/rmt/bin/python`, inconsistent with the activated `rmt_ml_env` and the actual recorded `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`.
-- **Fix/check:** use strict mode and validated paths, explicitly select the known environment, and propagate the main command's exit status. Do not hide all module errors without verifying CUDA afterward.
+**Impact:** Constant/dead activations and rank-deficient or repeated-eigenvalue covariance can produce arbitrary alignment/coincidence claims. This is relevant beyond zero matrices: covariance from fewer independent observations than input features necessarily has a nullspace, and all of it currently participates in the maximum.
 
-### ESD-17 — Medium: model-loading fallback can load a different snapshot than requested
+**Fix direction:** Track covariance numerical rank and unresolved eigenvalue clusters. Exclude null directions from signal-overlap claims; use projector/cluster-level comparisons for repeated eigenspaces or explicitly mark basis-dependent metrics unavailable. Rank-zero capture should not become a finite successful overlap result. Keep raw paper-style metrics distinctly labeled if retained for reference.
 
-- **Locations:** `rmt/model_io.py:53-59`; `rmt/cli.py:124-129`.
-- A missing explicit `model_path` falls back to `./models/<basename(name_or_path)>`, even when the operator intended the explicit path. Also one global `model_path` is reused for every `--models` tag, so multiple differently named output directories can contain repeated analysis of the same snapshot.
-- **Fix/check:** fail for an invalid explicit path, restrict a single explicit path to a single model or support a tag-to-path mapping, and record the resolved snapshot/revision in every output. Test a misspelled path beside a valid basename fallback directory.
+**Regression tests:** Rotate only a covariance nullspace or repeated positive eigenspace while holding `C` fixed. Qualified results must be invariant or explicitly unavailable; nondegenerate reference cases should retain their current convention. Add an end-to-end constant-activation case.
 
-### ESD-18 — Medium/resource-dependent: multi-model loading retains the previous GPU model
+## ESD-05 — FIXED — Oversized decile counts silently create no-op experiments
 
-- **Locations:** `rmt/cli.py:124-130`; `rmt/pipeline.py:108-120`.
-- In `model = load_model(...)`, the previous `model` remains referenced while the next loader constructs and moves the next model to GPU. Thus two models can briefly coexist and OOM even when each fits individually. Checkpoint loading has the analogous assignment pattern, plus retained discovery arrays.
-- **Fix/check:** explicitly release old models/records and any references before loading the next model, or isolate each model in a subprocess. Test multi-model peak memory.
+**Locations:** `rmt/decile.py:92-93,122-123,136-137,177-181`; `rmt/scalars.py:133-146`.
 
-### ESD-19 — Medium: fallback tokenization is nondeterministic and provenance is incomplete
+**Trigger/root cause:** Configuration only checks that `n_deciles` is positive. If it exceeds a matrix's reduced singular count, floor-rounded partition boundaries repeat and some ranges satisfy `lo == hi`. Reconstruction then removes no singular values, yet the benchmark reports those entries as ordinary completed decile interventions.
 
-- **Locations:** `rmt/activations.py:252-266,275-281`; `rmt/perplexity.py:23-37,74-79`; `rmt/model_io.py:41-50`; `rmt/pipeline.py:167-181`.
-- The claimed deterministic tokenizer uses Python `hash(word)`, which changes between processes unless `PYTHONHASHSEED` is fixed; `cfg.seed` does not control it. A missing real tokenizer silently turns real-model evaluation into modulo-hashed word IDs.
-- Only perplexity text-file existence is tagged. A present text file with a missing tokenizer is still marked `text_source='file'`, concealing synthetic token IDs. Activation overlap has no equivalent fallback-text/tokenizer provenance. The saved run demonstrably used fallback text for perplexity.
-- **Fix/check:** require real assets for production, reserve fallback mode for explicit tests, use a stable hash when needed, and save text/tokenizer identities, checksums, token counts, and fallback status for both analyses.
+**Reproduction:** A 4x4 `diag(4, 3, 2, 1)` projection, `n_deciles=10`, `decile=1`. The singular spectrum/weight is unchanged; no exception or no-op status is produced. The first range is `(0, 0)`.
 
-### ESD-20 — Medium: empty activation data becomes a valid-looking zero covariance
+**Impact:** Small calibration models or large configured partition counts produce baseline-like perplexity deltas that can be misinterpreted as evidence that a singular-value tranche is unimportant. Models with unequal projection ranks can have inconsistent no-op subsets.
 
-- **Locations:** `rmt/activations.py:193-227,265-272,180-190`.
-- Empty/very-short text, zero batches, or invalid stride/window settings can yield no usable batches. Capture still returns zero-initialized covariance matrices and overlap is then computed against an arbitrary eigenbasis of the zero matrix. Numeric finiteness is not evidence that observations existed.
-- **Fix/check:** validate all counts/lengths/strides, require positive sample counts for every returned covariance, and represent missing data as unavailable diagnostics rather than zero covariance.
+**Fix direction:** Validate a common meaningful partition count against all selected matrix ranks before taking snapshots or mutating anything. Alternatively provide explicit per-matrix empty-tranche metadata and do not label an entirely empty intervention as a successful lesion. Do not silently change the partition count independently per matrix.
 
-### ESD-21 — High when co-imported: the two repository projects collide on package name `rmt`
+**Regression tests:** Rank smaller than, equal to, and larger than `n_deciles`, including mixed ranks/GQA. Validate the full scope before any matrix mutation and verify coverage of every singular index.
 
-- **Locations:** `pyproject.toml:6,21-25`; `rmt/__init__.py`; sibling `compute_optimal_analysis/rmt/__init__.py`.
-- Both projects expose different packages named `rmt`, with different APIs and conventions. Combined test collection, wrong PYTHONPATH order, or reuse of a process that already imported the other package can cause import errors or wrong helper resolution.
-- **Fix/check:** use distinct package namespaces; until then run from the correct project directory in separate Python processes and assert `rmt.__file__`. The sibling `to_change_env.md` explains safe environment reuse without mixing packages.
+## ESD-06 — FIXED — Randomized-control alpha is silently a different estimator from headline alpha
 
-## Current package: discovery and scientific metrics
+**Locations:** `rmt/per_matrix.py:138-154,163-170`; CSV schema at `rmt/per_matrix.py:300-307`.
 
-### ESD-22 — Medium: BERT attention output is misclassified as an MLP down projection
+**Trigger/root cause:** `alpha` follows `cfg.alpha_estimator` and publishes density/survival metadata. `alpha_rand`, however, always uses CSN on covariance eigenvalues, regardless of whether the headline estimator is Hill or windowed Hill. It has no independent estimator/kind metadata.
 
-- **Locations:** `rmt/discovery.py:98-106,177-184`.
-- BERT's `attention.output.dense` matches both the specific O pattern and the broad D pattern `output.dense`. Classification checks D **before** O, so O becomes D. Role summaries and type-scoped interventions are wrong.
-- **Fix/check:** prefer the most specific full pattern or context-aware classification. Assert that `bert.encoder.layer.0.attention.output.dense` is O and the block's separate `output.dense` is D.
+**Reproduction:** A seeded 64x64 Gaussian factor with `RunConfig(alpha_estimator="hill", do_randomize=True, do_overlap=False, do_spacing=False, use_svd_cache=False)` produced a row with `alpha_kind="survival"`, headline alpha approximately 11.24, and `alpha_rand` approximately 1.56 from the CSN **density** estimator. These two numbers are not a matched estimator comparison.
 
-### ESD-23 — Medium: unsupported fused-QKV layouts are guessed rather than rejected
+**Impact:** Users comparing a matrix with its control can attribute estimator/cutoff/convention differences to learned structure. Adding or subtracting one is not a valid repair for arbitrary non-power-law samples with different fitted support.
 
-- **Locations:** `rmt/discovery.py:119-129,220-291`; `rmt/decile.py:62-65`.
-- The corrected registered GPT-NeoX path handles known head-interleaving, but the generic spec assumes interleaving for unknown `qkv`/`Wqkv` modules. Many such models use contiguous or unequal GQA blocks. If head count is missing, discovery warns and guesses contiguous thirds; ablation makes the same fallback without warning. A wrong guess silently relabels/ablates Q/K/V.
-- **Fix/check:** require verified layout and Q/K/V sizes, make unsupported layouts explicit, and reject uncertainty in production. Test known contiguous, NeoX-interleaved, and unequal-Q/KV layouts. The current Pythia split with known heads is **not** the old contiguous-thirds bug.
+**Fix direction:** Either dispatch the same estimator/settings/support-selection policy for the control, or rename the field to an explicitly CSN-density control and serialize separate source/kind/cutoff metadata. Specify which interpretation downstream summaries should use.
 
-### ESD-24 — Medium: layer regexes fail on valid root-level module paths
+**Regression tests:** Every alpha selector with randomization on; verify matched estimator/domain/kind and selected support, or explicitly distinct control labeling. Keep the default `all`/CSN behavior covered.
 
-- **Locations:** `rmt/discovery.py:72-129,188-194,317-320`; `tests/test_discovery.py:91-115`.
-- Patterns require a preceding dot, so root paths such as `layers.0.self_attn.q_proj` or `h.0.attn.c_attn` get layer index -1. Applying a legitimate layer filter then silently excludes them. The root GPT-2-like fixture only checks shapes, not layer indices, so it misses this.
-- **Fix/check:** match start-of-string or dot before the layer component, and test root and nested forms with filters.
+## ESD-07 — FIXED — A corrupt SVD cache entry causes matrix failure instead of a cache miss
 
-### ESD-25 — Medium: headline alpha changes exponent convention without changing its metadata/plot label
+**Locations:** `rmt/svd_cache.py:62-89`; `rmt/per_matrix.py:48-65`; failure propagation in `rmt/pipeline.py:117-145`.
 
-- **Locations:** `rmt/per_matrix.py:89-105`; `rmt/tail.py:214-239`; `rmt/plots/summary.py:19`; `rmt/pipeline.py:302-313`.
-- Hill selectors replace only `row['alpha']` with a **survival** exponent. `xmin`, KS, and `n_tail` remain from the CSN density fit, and the plot still labels the result `α (CSN, λ)`. CSV/summary files do not persist the selected estimator/config. The same headline field is therefore not comparable across selector choices.
-- **Fix/check:** retain separate explicit density/survival columns and estimator/cutoff metadata; derive plot labels and summaries from the selected method. Test both metadata and numeric values.
+**Trigger/root cause:** `load_svd` opens and reads NPZ contents without containing file-format, CRC, missing-member, or malformed-metadata errors. `per_matrix_analysis` only recomputes when the loader returns None, not when it raises. Thus optional cache corruption overrides the availability of a perfectly valid live weight.
 
-### ESD-26 — Medium: `hill_alpha_at` silently evaluates a different k
+**Reproduction:** Save a qualified entry with `save_svd`, truncate/replace its bytes in a temporary cache directory, and call `load_svd` with the correct weight digest and `required_dtype="float64"`. The reviewed environment raised `ValueError` rather than returning a miss. An NPZ missing `U`, `s`, or `Vh` also raises instead of being rejected cleanly.
 
-- **Locations:** `rmt/tail.py:72-99,105-131`.
-- `hill_alpha_at(k)` searches a curve capped near `n//2` and returns the nearest available point. Valid `k` beyond that cap, or k=1, is silently replaced. Invalid k can also return a seemingly valid estimate instead of an error. The windowed helper labels `k` but starts its Rényi slice at zero-based index `k`, i.e. rank k+1, and excludes the last exactly fitting window.
-- **Fix/check:** compute the single-k statistic directly for `1 <= k < n`, validate other inputs, and align window rank labels. Check exact formulas on a small known sorted array.
+**Impact:** A damaged/stale cache can drop usable matrices or abort a strict run until manually removed. Valid weights are never refactored even though caching is only an optimization.
 
-### ESD-27 — Medium: power-law/lower-edge KS calculations omit one side of the empirical jump
+**Fix direction:** Treat expected corruption/schema/read-validation failures as logged, invalid cache entries and recompute from live weights. Validate factor shape against expected geometry, finiteness, ordering, and precision provenance before accepting entries. Keep `allow_pickle=False`; never bypass safety or the float64 contract to recover a cache.
 
-- **Locations:** `rmt/tail.py:58-65`; `rmt/mp.py:240-247`.
-- CSN uses midpoint empirical ranks rather than both one-sided empirical CDF values; lower-edge KS uses only the upper side. Neither is the exact two-sided one-sample KS statistic. CSN's sample-size-dependent bias can change selected xmin across candidates.
-- **Fix/check:** use the two-sided calculation already exemplified by `rmt/spacing.py:_ks_against`, and validate against SciPy on fixed samples.
+**Regression tests:** Truncated ZIP, missing arrays, malformed scalar metadata, and incompatible factor shapes. Each should recompute exactly once and replace/quarantine the invalid entry; genuine factorization failures must still surface.
 
-### ESD-28 — High for affected spectra: polynomial unfolding can fold the spectrum and fabricate level statistics
+## ESD-08 — FIXED — Bounded tail observations are fitted as an unbounded Pareto sample
 
-- **Locations:** `rmt/spacing.py:32-53,76-83,89-135`; `rmt/per_matrix.py:150-158`; `rmt/plots/spacing.py:12-18`.
-- An unconstrained raw-coordinate degree-7 polynomial need not be monotone, particularly for heavy-tailed spectra with large outliers. Negative gaps enter `nn_spacing` and its normalization. KS later drops negative spacings without renormalizing the survivors, while the plot retains them. Delta3/number variance sort the folded coordinates, silently changing level order.
-- The caller labels these as bulk statistics but passes the **entire** covariance spectrum, including separated outliers, rather than a selected bulk. Extreme outliers can dominate the staircase fit.
-- **Fix/check:** select and label the bulk, use scaled/monotone unfolding with checks, preserve ordering, and use the identical valid spacing sample for metrics and plots. Test an otherwise regular bulk with a few very large outliers.
+**Locations:** `rmt/tail.py:20-29,49-64`.
 
-### ESD-29 — Medium: gap-ratio statistics discard zero gaps and join nonadjacent gaps
+**Trigger/root cause:** `xmax` filters the data, but alpha still uses `1 + n / sum(log(x/xmin))` and KS uses the unbounded Pareto CDF. A sample retained under an upper observation bound requires a conditional normalization depending on alpha. Simply removing upper observations does not preserve the unbounded MLE.
 
-- **Location:** `rmt/spacing.py:18-26`.
-- Removing `d == 0` before forming adjacent ratios erases real degeneracies and creates new neighbors across them. The resulting r-statistic overstates repulsion for repeated eigenvalues/quantized or rank-collapsed spectra.
-- **Fix/check:** define and report zero-gap handling explicitly; preserve adjacency, treating only truly undefined 0/0 pairs specially. Add repeated-level regression cases.
+**Reproduction:**
 
-### ESD-30 — Medium: trimmed sigma estimation still matches the untrimmed MP median
+```python
+import numpy as np
+from rmt.tail import fit_powerlaw_csn
+u = (np.arange(10000) + 0.5) / 10000
+x = (1 - u * (1 - 2**-2))**(-0.5)  # alpha=3 on [1, 2]
+print(fit_powerlaw_csn(x, min_tail=1000, xmax=2)["alpha"])
+```
 
-- **Locations:** `rmt/mp.py:143-160,167-193`; `rmt/pipeline.py:229-245`.
-- Both explicit `discard_largest` and iterative refinement take the median of a truncated sample but divide by the original full-law median. Even pure MP data deliberately trimmed by a fraction then produces a downward-biased scale. Refinement can compound the effect when actual bulk values are discarded.
-- **Fix/check:** account for retained quantile mass and the assumed contamination model, rather than treating all truncation as a full MP sample. Validate on known MP quantiles with a controlled upper fraction removed, as well as planted spikes.
+Observed approximately **4.718**, instead of 3, for deterministic conditional quantiles.
 
-### ESD-31 — Medium: ESD plots and CSV outlier metrics use different fitted edges
+**Impact:** The public bounded-fit option systematically overstates tail steepness and gives a KS distance for a different distribution. The main aggregator currently calls this routine without `xmax`; bounded library analyses are the immediate affected surface.
 
-- **Locations:** `rmt/per_matrix.py:64-85`; `rmt/pipeline.py:229-245`.
-- CSV edges, outlier counts, and small-SV metrics use `sigma_med`, but plots prefer `sigma_med_refined`. The plot does not serialize its selected edges or identify them as a different fit. Visual and tabular conclusions can disagree even before the refinement issue above.
-- **Fix/check:** select one consistent fit or persist/label both complete edge/count sets and use explicit legend metadata.
+**Fix direction:** Use the normalized bounded density and CDF on `[xmin, xmax]` and optimize its likelihood, or explicitly reject unsupported bounded fits. Validate the bound. Distinguish a hard observation cutoff from the optional exponentially truncated power-law model.
 
-### ESD-32 — Medium: zero matrices can disappear rather than being reported as rank collapsed
+**Regression tests:** Known bounded-Pareto data, rescaled bounds/data, and the large-upper-bound limit. The sibling project has the same mathematical defect in its independent tail implementations; do not cross-import its incompatible `rmt` package.
 
-- **Locations:** `rmt/per_matrix.py:64-85`; `rmt/mp.py:89-96,208-244`; `rmt/pipeline.py:58-66`.
-- A zero spectrum yields sigma zero and coincident MP bounds. `small_sv_deviation` eventually calls `mp_median(..., sigma=0)` with a degenerate bracket and raises. The pipeline drops the row, removing precisely the kind of rank-collapse evidence the tool should retain.
-- **Fix/check:** explicitly handle zero/rank-deficient spectra, preserving valid scalar metrics and unavailable fit status. Test a zero discoverable linear layer.
+## ESD-09 — FIXED — An unavailable requested WeightWatcher stage is reported as complete
 
-### ESD-33 — Medium: rectangular coincidence maps discard activation eigenvectors
+**Locations:** `rmt/baselines/weightwatcher.py:9-21`; `rmt/pipeline.py:39-55,151-165`.
 
-- **Locations:** `rmt/overlap.py:82-106`.
-- For wide W (`n < m`), `k=min(n,m)` and the coincidence map uses only `evecs[:, :k]` although all m activation directions live in input space. A right singular vector whose strongest match is outside the top k is forced to choose an incorrect match. `rho_top_singular_vs_evals` also ignores the rest of the activation spectrum. The separate `overlap_analysis` uses all columns, so the summaries disagree in scope.
-- **Fix/check:** compute the full `k x m` map and explicitly define any top-k-restricted diagnostic. Test a wide factor with a strongest overlap in activation column m-1.
+**Trigger/root cause:** The adapter catches import and analysis exceptions and returns None. The caller only writes a baseline artifact for a non-None result; None adds no failure or stage status. The outer runner therefore finalizes `status="complete"` with no baseline artifact, even when `do_ww=True` and `strict=True`.
 
-### ESD-34 — Medium: per-decile values are standalone tranche metrics, not global contributions
+**Reproduction:** Inject `rmt.baselines.run_weightwatcher = lambda *args, **kwargs: None`, then run a tiny model with `do_ww=True`, strict defaults, other text stages disabled, and a temporary output directory. The run-status file says **complete**, and `<tag>_weightwatcher.json` is absent. This follows the same path as a missing package or a swallowed adapter exception.
 
-- **Location:** `rmt/scalars.py:147-166`.
-- Each decile's entropy and stable rank is normalized by that decile's own energy/maximum, although the docstring calls stable rank a contribution and the summary calls this a breakdown. These values cannot be summed to recover global metrics; even a negligible-energy decile can have maximal local entropy/rank.
-- **Fix/check:** either rename/document them as within-tranche metrics or calculate additive contributions using global normalization. Test sums of reported contributions, rather than the current test which only sums independently computed raw energies.
+**Impact:** A requested comparison can silently disappear, including actual execution errors rather than just a deliberately optional dependency. The status file cannot distinguish 'not requested' from 'requested but unavailable'.
 
-### ESD-35 — Medium: cache filenames are not unique or tied to weight identity
+**Fix direction:** Preserve best-effort baseline behavior if desired, but return/record a structured unavailable/failed status and reason. Make the strict-versus-best-effort policy explicit; do not imply every requested stage completed. Avoid swallowing analysis exceptions without provenance.
 
-- **Locations:** `rmt/svd_cache.py:12-35`.
-- Names such as `a.b` and `a_b` map to the same filename. Cache keys omit model/checkpoint/weight digest, and load does not verify even the saved original `name` or factor dimensions. A library caller can retrieve another matrix's factors. This cache is currently unwired to the production pipeline, so this is a library/future-integration defect rather than evidence that the saved run used stale cache entries.
-- **Fix/check:** key by collision-resistant model/checkpoint/weight identity and validate metadata/factors; use atomic writes. Add collision and stale-weight tests.
+**Regression tests:** Missing baseline dependency, adapter execution failure, and successful baseline. Verify truthful stage status/artifact presence and the declared strict/non-strict exit policy.
 
-## Current package: plotting and test coverage
+## ESD-10 — FIXED — Checkpoint tracking bypasses the SVD dispatcher and backend configuration
 
-### ESD-36 — Medium: modified-MP fitting is wrong in the eigenvalue plot domain
+**Locations:** `rmt/pipeline.py:177-195`; dispatcher contract in `rmt/linalg.py:47-71`.
 
-- **Locations:** `rmt/plots/esd.py:83-105`; `rmt/mp_fit.py:48-88`.
-- For `domain='lambda'`, `vals` is `s**2/N`, but `mp_mode='fit'/'both'` passes those eigenvalues to a model explicitly defined in the **singular-value domain**. It neither fits original singular values nor applies the density Jacobian. The default production plot uses the nu/theory branch and does not exercise this bug.
-- **Fix/check:** fit in nu then transform the fitted edges/density with the correct Jacobian, or define an eigenvalue-domain model. Verify integral and domain-change consistency.
-- Related fit robustness: bounds permit `nu_max <= nu_min`; a bad initial/degenerate spectrum can produce a flat zero model with apparently converged optimizer status. Validate fitted ordering and residual quality.
+**Evidence:** Static call-path analysis; no GPU benchmark was run.
 
-### ESD-37 — Medium for extreme tails: the histogram bin cap reintroduces bulk smearing
+**Trigger/root cause:** `analyze_checkpoints` accepts `cfg_flags` and constructs a `RunConfig`, but calls `np.linalg.svd` directly for every probe matrix. `backend="torch"` / GPU threshold settings have no effect. Unlike the main aggregator, it cannot use the configured dispatcher/fallback/provenance path.
 
-- **Locations:** `rmt/plots/esd.py:17-32`.
-- Bulk FD width is converted to a bin count capped at 400, then bins are spread over the **entire** range including extreme outliers. Once that cap is reached, width grows with the largest outlier rather than remaining the bulk FD width. This partially reintroduces the very plotting artifact the comment says was fixed.
-- **Fix/check:** separate bulk and tail panels/ranges, use appropriate nonuniform bins, or state the effective bin-width cap. Test a narrow bulk plus an extreme outlier and inspect actual edge differences.
+**Impact:** Repeated transformer-sized checkpoint decompositions unexpectedly run on CPU despite an explicitly requested accelerator backend. This violates the documented centralized heavy-SVD contract and can make an otherwise feasible tracking job exceed its wall time.
 
-### ESD-38 — Medium: the advertised QKV heatmap is a singular-spectrum line plot
+**Fix direction:** Route checkpoint singular-value computation through a shared, precision-qualified backend-aware path; a values-only dispatcher extension is reasonable to avoid retaining unnecessary factors. Record actual backend/precision or reject unsupported options rather than ignoring them.
 
-- **Locations:** `rmt/plots/heatmaps.py:7-17`; `rmt/pipeline.py:258-278`.
-- `plot_qkv_heatmap` calls `ax.plot` on three singular-value arrays. It neither renders a heatmap nor receives weight matrices. Enabling `--do_qkv_heatmap` therefore does not produce the advertised Q/K/V matrix visualization.
-- **Fix/check:** rename the flag/output to spectral comparison or actually supply bounded weight blocks and render the requested heatmaps. A file-existence test alone cannot verify plot semantics.
+**Regression tests:** Spy/stub the shared dispatcher in checkpoint tracking, supply non-default backend/threshold, and verify propagation. Compare returned stable ranks against a small NumPy reference without requiring a GPU in the unit test.
 
-### ESD-39 — Low: public plot helpers fail for a plain output filename
+## ESD-11 — FIXED — Two processes can both acquire the same supposedly fresh model output directory
 
-- **Locations:** `rmt/plots/esd.py:110`; `rmt/plots/heatmaps.py:15,27`; analogous `hill.py`, `spacing.py`, `perplexity.py`, `summary.py`.
-- `os.makedirs(os.path.dirname('plot.png'))` receives an empty string and raises. Production usually supplies a directory, but valid-looking library calls fail. Exceptions after figure creation can also leave figures open because close is not in `finally`.
-- **Fix/check:** create the parent only if nonempty (or use `Path(...).parent`) and always close figures. Test both plain and nested paths.
+**Locations:** `rmt/pipeline.py:32-37`; direct file writes at `rmt/pipeline.py:301-314,458-484`; deterministic per-model output path in `rmt/cli.py:146-148`.
 
-### ESD-40 — Medium: tests do not verify several claimed scientific invariants
+**Evidence:** Static control-flow/concurrency analysis; no simultaneous destructive run was performed.
 
-- **Locations:** `tests/_synthetic_models.py:10-13,41-62,115-152`; `tests/test_decile.py:48-58,85-118`; `tests/test_mp.py:77-91`; `test_rmt_critical.py:160-201,208-259`; `tests/test_pipeline_smoke.py:60-89`.
-- Pythia fixtures omit head count and implement contiguous `chunk(3)`, so tests take the warned fallback rather than exercising actual head-interleaving. Add head-index-coded weights and a NeoX-like forward.
-- The FP16 ablation regression checks reconstructed numbers but never performs a forward or verifies dtype/Parameter restoration; it misses ESD-04.
-- The weight-only snapshot regression spies on `copy.deepcopy`, but the implementation uses tensor clones; an empty `seen` dictionary satisfies the assertion without observing the snapshot.
-- The MP density test calls a **mean** of binwise absolute integral errors “L1”; a true integrated L1 error is the sum, so the threshold is weakened by the bin count. Its histogram is also conditionally renormalized to the bulk while theory is multiplied by the bulk fraction.
-- The pipeline regression describes finite/nonconstant perplexity but only asserts list length. Scope tests only compare counts, missing wrong roles. Add exception, token-accounting, role, minimum-version, and real-layout tests.
-- Historical test-count/pass claims in `EXECUTIVE_SUMMARY.md` are not a test result for this checkout/environment.
+**Trigger/root cause:** The nonempty-directory check and `os.makedirs(..., exist_ok=True)` are separate operations. Two processes can both observe a path as absent/empty, both proceed, and overwrite the same status, CSV, summary, and plot files. The identity-hashed model tag identifies a model, not a unique run, so two concurrent runs of that model intentionally converge on the same path.
 
-### ESD-41 — Medium: model-output tag sanitization is nonunique and accepts parent-directory tags
+**Impact:** Concurrent submissions using the same output root can produce mixed/truncated artifacts or a success status from one process masking another's failure. The sequential rerun guard does not establish exclusive ownership.
 
-- **Locations:** `rmt/cli.py:124-135`; `rmt/pipeline.py:68-74`.
-- Distinct model identifiers such as `a/b` and `a_b` map to the same output tag and directory, so the later model overwrites the earlier model's results. The special local path `..` also survives `_safe_tag` unchanged and makes `os.path.join(output_dir, tag)` resolve outside the requested output directory.
-- **Fix/check:** use a readable stem plus a digest of the resolved model identity, reject special dot-directory stems, and prevent accidental reuse of another model's output directory. Test colliding identifiers and local dot paths.
+**Fix direction:** Acquire ownership atomically before writing the running-status file, using exclusive directory creation or a lock/owner file that handles permitted pre-created empty directories. Reject a competing owner. Atomic individual artifact writes are useful additionally, but do not replace run-level ownership.
 
-## Older reference monolith — not the current HPC entry point
+**Regression tests:** Synchronize two processes at ownership acquisition and assert exactly one starts analysis; the rejected process must not modify any winner artifacts. Retain sequential nonempty-output rejection coverage. Audit checkpoint output separately because it currently permits ordinary overwrites.
 
-All locations in this section are in **`rmt_pipeline_glm.py`**. Except LEG-01, these are latent defects in the body that would matter if the notebook magic were removed or the body were executed in a notebook. Keep it clearly archived, or repair it independently; do not confuse it with the improved package.
+## Completed remediation and test-hygiene notes
 
-| ID / severity | Location | Trigger, consequence, and required correction |
-|---|---|---|
-| **LEG-01 High** | **1** | Literal `%%writefile rmt_pipeline_glm.py` is IPython cell magic, not Python syntax. Direct execution/import fails immediately. Remove the magic from a runnable script or store this as a notebook/text reference. Confirm with AST/compile checks. |
-| **LEG-02 High** | 508-523, 902-909 | Pythia discovery and ablation split/write contiguous thirds, which is wrong for GPT-NeoX head-interleaved QKV. Use the current package's verified head-layout logic. |
-| **LEG-03 High** | 621-634, 1068-1084, 1550-1553, 1596-1607 | Covariance keys are module names, but lookups use parameter names containing `.weight` and sometimes fused tags. Ordinary and fused overlap/coincidence blocks are therefore skipped. Normalize keys consistently. |
-| **LEG-04 High** | 558-580 | Mean and FM passes share `self.computation`. After b mean batches and b FM batches, covariance is scaled by roughly one half; Gram matrices also lack token normalization and means weight batches equally. Use independent sample counters and consistent sample-weighted covariance. |
-| **LEG-05 High** | 584-610, 675-720 | Wrappers are never restored or disabled; later forwards keep accumulating expensive covariance. OOMs skip partial forwards after earlier accumulators were updated, again corrupting statistics. Use reversible, transactional capture. |
-| **LEG-06 Medium** | 1515-1536, 1720-1727, 1741-1742 | `--no_overlap` does not skip covariance: default-true `do_qkv_heatmap` also triggers capture, and its `store_true` parser has no disabling form. Decouple cheap QKV plots from activation capture and honor explicit opt-outs. |
-| **LEG-07 High** | 1033, 1175-1190, 1271-1290 | “WW-style” CSN is fit on singular values, not covariance eigenvalues; Hill is a survival exponent on singular values. Both are compared to the same WW density-exponent boundaries 2 and 6. Convert domains/conventions or label distinct quantities; do not reuse those boundaries unchanged. |
-| **LEG-08 Medium** | 1036-1041 | The reported Hill value at `sqrt(N)` uses `searchsorted(...)-1`, selecting the preceding k when the requested k exists. Index the exact point. |
-| **LEG-09 Medium** | 1087-1089 | `mp_softrank` is actually energy below the edge divided by total energy, and appears only if overlap is available. Rename it bulk energy fraction; compute true selected soft-rank semantics independently of covariance availability. |
-| **LEG-10 Medium** | 778-815 | The random-overlap band ignores `sigma_level` and uses a signed Gaussian CDF for an absolute maximum. Use the absolute-Gaussian CDF and a clearly defined requested family-tail probability. |
-| **LEG-11 Medium** | 846-860 | After masking already-scored prefixes, perplexity always subtracts one from valid target count. Later overlapping windows already have their first position masked, so this undercounts by one; count valid shifted labels directly. OOM-skipped windows also advance `prev_end`, silently changing evaluated coverage. |
-| **LEG-12 Medium** | 373-390 | Zero rows are removed from the average despite the stated convention that they contribute zero. Average over all rows, and distinguish this absolute-entry entropy from the package's squared-entry entropy. |
-| **LEG-13 Medium** | 1297-1323 | The outlier plot indexes rows by integer layer, then checks `if sh not in sub.index` where sh is Q/K/etc. Every series is skipped. Removing that guard alone still overlays all roles at the same bar coordinates; use actual grouped/stacked offsets. |
-| **LEG-14 Medium** | 1243-1261 | Negative or zero perplexity deltas are clipped to positive `1e-3` for a log bar chart, hiding improvements and fabricating positive damage. Use a signed/symlog/linear presentation. |
-| **LEG-15 High for offline reuse** | 654-669, 826-831, 1451-1461, 1649-1653 | Model/tokenizer/dataset loaders do not enforce local-only assets and use `trust_remote_code=True`. This is a connected Colab workflow, not a substitute for the offline package launcher. Do not run it as the air-gapped workflow; explicitly stage/pin assets and audit any remote code before opting in. |
-| **LEG-16 High/resource-dependent** | 1493-1497, 1620-1637, 914-951 | The original model and activation buffers remain resident while the lesion factory loads another full model on the same GPU. Repeated NumPy SVDs also occur across metrics, plots, and each lesion. Release/partition resources and reuse pristine factors. |
-| **LEG-17 Medium** | 1488-1489, 899-911 | GPU loading always chooses BF16, including the advertised T4 target, and reconstruction is stored back to the original low precision. Hardware support is not checked and small-SV effects can be dominated by quantization. Choose a verified device/precision policy. |
-| **LEG-18 Medium** | 285-298, 337-366 | Trimming still matches an untrimmed MP median; power-law fitting uses one-sided KS and divides by a possibly zero log sum for constant spectra. Use corrected quantile/KS logic and degenerate-spectrum handling. |
-| **LEG-19 Medium** | 1744-1773 | The main loop catches every model failure and continues to “All models done” with a successful process exit. Return failure/partial-failure status and a structured error manifest. |
-| **LEG-20 Low** | 1370-1375 | Raw MathText strings contain doubled backslashes before `cdot`/`lambda`, unlike the single command slash MathText expects. The optional summary plot can fail at render time. Use valid MathText strings and a render test. |
-
-## Additional scientific and deployment caveats
-
-- **Full covariance versus reduced ESD:** `rmt/mp.py:102-137` returns only `min(n,m)` eigenvalues and a unit-mass nonzero MP law. For tall W, the full `WW^T/N` also contains `n-m` structural zeros and continuous mass `m/n`. The formulas are useful for the reduced/nonzero law, but documentation must not equate it with the full covariance ESD without the zero atom and mass convention.
-- **One-sided “bulk” scalars:** `ipr_summary` and `bulk_mass_frac` use only the upper edge (`rmt/scalars.py:72-86,124-130`). Genuine lower outliers are included. If the intended statistic means inside the two-sided MP support, pass and apply the lower edge too; otherwise explicitly label “below upper edge”.
-- **PT classification is heuristic:** `rmt/scalars.py:89-114` calls any KS distance below 0.1 random, independent of vector dimension. That is not a calibrated significance level; use finite-dimensional null calibration before interpreting it as a statistical acceptance rate.
-- **`xmax` semantics:** CSN discards values above xmax but still fits an unbounded Pareto. This is not a likelihood normalized on a bounded interval. Also preserve likelihood-ratio ordering: `LR_trunc` here favors the truncated law for positive values; the sibling internal comparison uses the opposite ordering.
-- **Model registry is not universal:** aliases such as Mixtral/Qwen-MoE can use expert projection names not covered by the chosen dense-model patterns; unknown/GQA fused layouts need explicit support. Check discovered role counts against the actual architecture rather than trusting a nonempty list.
-- **Offline is not reproducible by itself:** no immutable model/text revision, source digest, complete resolved configuration, package inventory, or runtime environment is saved with current metrics. Optional WeightWatcher import/analysis exceptions are also suppressed inside its wrapper without an explicit result status. Add provenance and feature-status artifacts.
-- **Local LF/CRLF issue:** both SLURM files are LF in Git but CRLF in this Windows working tree (`git ls-files --eol`). Normalize before copying to Linux. This is not evidence about the line endings of your previously executed cluster copy.
-- **Documentation drift:** `README.md` still says fused QKV is always contiguous thirds, contradicting the correct registered NeoX implementation. `FOLDER_GUIDE.md` describes `docs/`, model outputs, and archives not included in this checkout. Update these references so absent results and obsolete conventions are not mistaken for current evidence.
-
-## Suggested repair order
-
-1. Fix exception-safe restoration, OOM accounting, correct strided perplexity, half-precision ablation execution, and reliable exit/status reporting.
-2. Wire or reject inactive flags; fix NumPy minimum/API compatibility without disturbing the already working environment.
-3. Repair role/layout handling and numerical/plot metadata consistency; add the targeted regression checks above.
-4. Keep the legacy monolith clearly non-production unless separately repaired.
-5. Reuse the cluster environment only after inventorying it. The concrete migration checklist for the sibling project is `../compute_optimal_analysis/to_change_env.md`.
+1. ESD-01 through ESD-11 are fixed; focused regressions are in `tests/test_bug_report_current.py` and the existing precision/QKV/restoration/covariance/spacing coverage remains green.
+2. Run this suite in a separate process from `../compute_optimal_analysis/`; shared mathematical fixes were implemented independently without mixing package conventions.
+3. Cache-specific tests should use temporary cache roots and non-cache tests should disable persistence where practical, so production caches remain untouched.
+4. Real tokenizer/model loading, CUDA fallback, shared-parameter interventions on deployed architectures, and cluster resource behavior remain target-environment validation gates.

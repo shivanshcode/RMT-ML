@@ -79,7 +79,7 @@ sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=paper3 run_hpc.slur
 sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=golden run_hpc.slurm
 ```
 
-The launcher requests one process and one GPU; it implements no DDP/FSDP. It validates the interpreter, Python version, local `rmt` import, CUDA/BF16 availability, and staged assets before work. Outputs go to the fresh per-job directory `results/jobs/$SLURM_JOB_ID`; setting `OUTPUT_ROOT` is allowed, but an existing target is rejected. `COMPILE_MODEL=0` disables compilation for calibration. Set `RMT_CUDA_MODULE` only to a module name already validated with this Conda stack. Confirm account/QoS, the 16-CPU request, 24-hour wall time, GPU model, and any longer limit with the site before production.
+The launcher requests one process and one GPU; it implements no DDP/FSDP. It validates the interpreter, Python version, local `rmt` import, CUDA/BF16 availability, and staged assets before work. Outputs go to the fresh per-job directory `results/jobs/$SLURM_JOB_ID`; setting `OUTPUT_ROOT` is allowed, but a nonempty or already-owned target is rejected. An intentionally pre-created empty directory is claimed with an exclusive owner file. `COMPILE_MODEL=0` disables compilation for calibration. Set `RMT_CUDA_MODULE` only to a module name already validated with this Conda stack. Confirm account/QoS, the 16-CPU request, 24-hour wall time, GPU model, and any longer limit with the site before production.
 
 ### 4. Manifest-only configuration
 
@@ -193,7 +193,7 @@ Boolean flags use paired `--flag` and `--no-flag` forms. Each paper mode applies
 
 | Flag | Allowed values | Default | Purpose |
 |---|---|---|---|
-| `--mp-fit-method` | `analytic_mp`, `thamm_modified_singular`, `kde_bulk_fit`, `lanczos_stieltjes`, `farms_unbiased` | `lanczos_stieltjes` | Bulk support and scale method; the Thamm option fits free amplitude/upper singular edge with an empirical lower edge |
+| `--mp-fit-method` | `analytic_mp`, `thamm_modified_singular`, `kde_bulk_fit`, `lanczos_stieltjes`, `farms_unbiased` | `lanczos_stieltjes` | Bulk support and scale method; `farms_unbiased` requires a FARMS aspect mode, while operator-only methods retain a separately labeled raw domain |
 | `--unfolding-strategy` | `polynomial_chebyshev`, `spline_monotone`, `gaussian_kernel`, `raw_rank_order` | `spline_monotone` | Smooth staircase method |
 | `--tail-solver` | `clauset_mle`, `hill_estimator`, `fixed_cutoff_mle`, `rank_ordered_mle` | `clauset_mle` | Heavy-tail estimator |
 | `--overlap-metric` | `staats_dual_end`, `subspace_principal_angles`, `frobenius_projection` | `staats_dual_end` | Subspace alignment |
@@ -210,7 +210,7 @@ Boolean flags use paired `--flag` and `--no-flag` forms. Each paper mode applies
 | `--spline-smoothing` | nonnegative float or omitted | omitted | Spline smoothing penalty |
 | `--gaussian-kernel-window` | integer | `15` | Adaptive Gaussian neighbor window |
 | `--mp-trim-upper` | float in `[0,0.5)` | `0.1` | Upper fraction omitted in scale fitting |
-| `--kde-bandwidth` | positive float or omitted | omitted | Triangular KDE bandwidth |
+| `--kde-bandwidth` | positive float or omitted | omitted | Retained historical smoothing diagnostic; MP scale uses an integrated complete-sample ECDF objective |
 | `--tail-minimum` | integer at least 2 | `50` | Minimum CSN tail observations |
 | `--tail-fraction` | float in `(0,1]` | `0.1` | Fixed/rank tail fraction |
 
@@ -238,7 +238,7 @@ The released reference convention is `Q = sampled_columns / sampled_rows`.
 | `--lanczos-steps` | integer at least 2 | `50` | Maximum recurrence length |
 | `--lanczos-probes` | positive integer | `3` | Independent spherical probes |
 | `--lanczos-tail-window` | integer at least 2 or omitted | omitted | Stable recurrence suffix |
-| `--lanczos-threshold-c` | nonnegative float | `1.0` | Constant in `λ+ + cN^-δ` |
+| `--lanczos-threshold-c` | nonnegative float | `1.0` | Constant in the scale-relative margin `λ+ + c λ+ N^-δ` |
 | `--lanczos-threshold-delta` | float in `(0,0.5)` | `0.25` | Finite-size exponent |
 | `--lanczos-residue-threshold` | nonnegative float | `0.0` | Minimum VEST residue |
 | `--lanczos-ridge` | nonnegative float | `0.0` | Positive-definiteness ridge |
@@ -265,6 +265,6 @@ The released reference convention is `Q = sampled_columns / sampled_rows`.
 
 ## Output contract
 
-Every run writes `allocation_manifest.json`, `spectral_method_config.json`, `run_config.json`, and `runtime_environment.json`. Manifests distinguish requested and realized tokens-per-parameter ratios and flag collapsed interventions. Training records successful-update targets, attempted targets, forwarded input positions, skipped attempts, a clearly labeled `6ND` approximation, and a forwarded-position compute proxy. The environment record captures package versions, interpreter/platform details, requested precision, CUDA build/device metadata when execution is active, available SLURM identifiers, the staged dataset SHA-256 when present in the asset manifest, and UTC/elapsed timing. Execution additionally writes spectral and lesion CSV files, training JSON Lines, optional checkpoints, ESD/tail plots, spacing plots, overlap heatmaps, lesion-impact plots, and scaling trajectories.
+Every run first creates `.run-owner.json` with exclusive-create semantics, then writes `allocation_manifest.json`, `spectral_method_config.json`, `run_config.json`, and `runtime_environment.json` through unique atomic temporary files. Manifests distinguish requested and realized tokens-per-parameter ratios and flag collapsed interventions. Collapse rejection applies only to duplicate designs selected by `--cells`; full-manifest collapse metadata is still preserved. Scaling plots group by requested intervention identity and annotate each point's realized ratio. Training records successful-update targets, attempted targets, forwarded input positions, skipped attempts, a clearly labeled `6ND` approximation, and a forwarded-position compute proxy. Spectral rows separately identify pooled ESD/tail, MP-fit, detector, and single-operator spacing domains and geometries; pooled FARMS levels are never treated as one operator's spacing sequence. The environment record captures package versions, interpreter/platform details, requested precision, CUDA build/device metadata when execution is active, available SLURM identifiers, the staged dataset SHA-256 when present in the asset manifest, and UTC/elapsed timing. Execution additionally writes spectral and lesion CSV files, training JSON Lines, optional checkpoints, ESD/tail plots, spacing plots, overlap heatmaps, lesion-impact plots, and scaling trajectories.
 
 Synthetic tests calibrate formulas and software behavior; they do not guarantee a trained layer has a power law, a particular Brody parameter, or stronger bottom-than-bulk lesion damage. Those remain measured research outcomes.

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import tempfile
 import time
 from collections import defaultdict
 from collections.abc import Iterable
@@ -93,12 +94,18 @@ def _sanitize_json(value: Any) -> Any:
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(_sanitize_json(payload), handle, indent=2, allow_nan=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    temporary.replace(path)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(_sanitize_json(payload), handle, indent=2, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -109,15 +116,54 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         for key in row:
             if key not in fields:
                 fields.append(key)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: _json_value(row.get(key)) for key in fields})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: _json_value(row.get(key)) for key in fields})
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _acquire_output_directory(output: Path) -> None:
+    """Atomically claim an absent or intentionally pre-created empty directory."""
+
+    output.mkdir(parents=True, exist_ok=True)
+    if any(output.iterdir()):
+        raise FileExistsError(
+            f"output directory is not empty: {output}; use a fresh run directory"
+        )
+    owner = output / ".run-owner.json"
+    try:
+        descriptor = os.open(owner, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise FileExistsError(f"output directory is already owned: {output}") from error
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump({"pid": os.getpid(), "acquired_at_utc": datetime.now(timezone.utc).isoformat()}, handle)
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+
+
+def _selected_cell_indices(cells: str, manifest_size: int) -> set[int]:
+    if cells == "all":
+        selected = set(range(manifest_size))
+    else:
+        try:
+            selected = {int(value.strip()) for value in cells.split(",") if value.strip()}
+        except ValueError as error:
+            raise ValueError("--cells contains an invalid manifest index") from error
+    if not selected or min(selected) < 0 or max(selected) >= manifest_size:
+        raise ValueError("--cells contains an invalid manifest index")
+    return selected
 
 
 def _sha256(path: Path) -> str:
@@ -344,17 +390,39 @@ def analyze_model(
         selected_dtype = torch.float64 if analysis_dtype == "float64" else torch.float32
         weight = parameter.detach().to(dtype=selected_dtype).cpu().numpy()
         raw_methods = {"lanczos_stieltjes", "thamm_modified_singular"}
-        if method_config.mp_fit_method in raw_methods:
-            prepared = None
-            eigenvalues = np.asarray(svd.covariance_eigenvalues, dtype=np.float64)
-            spectrum_mode = "raw"
-            spectrum_aspect_ratio = svd.aspect_ratio
-        else:
-            prepared = prepare_spectrum(weight, method_config, svd=svd)
-            eigenvalues = prepared.eigenvalues
-            spectrum_mode = prepared.mode
-            spectrum_aspect_ratio = prepared.aspect_ratio
+        raw_eigenvalues = np.asarray(svd.covariance_eigenvalues, dtype=np.float64)
+        # ESD/tail preprocessing is independent of operator-domain MP methods.
+        # In particular, the Golden Lanczos path still performs its requested
+        # FARMS density analysis while Lanczos sees the original operator.
+        prepared = prepare_spectrum(weight, method_config, svd=svd)
+        eigenvalues = prepared.eigenvalues
+        spectrum_mode = prepared.mode
+        spectrum_aspect_ratio = prepared.aspect_ratio
         mp_fit = dispatch_mp_fit(weight, method_config, svd=svd, prepared=prepared)
+        mp_is_raw = method_config.mp_fit_method in raw_methods
+        mp_eigenvalues = raw_eigenvalues if mp_is_raw else eigenvalues
+        mp_spectrum_mode = "raw" if mp_is_raw else spectrum_mode
+        if prepared.farms is not None:
+            farms_geometry = tuple(map(int, prepared.farms.window_shape))
+            normalization = prepared.farms.normalization
+            spectrum_denominator: object = (
+                max(farms_geometry) if normalization == "canonical"
+                else None if normalization == "raw"
+                else "per_window_trace"
+            )
+            spectrum_geometry = farms_geometry
+            spectrum_normalization_denominators = json.dumps(
+                prepared.farms.normalization_denominators.tolist())
+            spectrum_observation_count = int(prepared.farms.eigenvalues_per_submatrix)
+        else:
+            spectrum_geometry = tuple(map(int, weight.shape))
+            spectrum_denominator = (
+                svd.normalization if spectrum_mode == "raw"
+                else "source_covariance_then_shape_normalization"
+            )
+            spectrum_normalization_denominators = json.dumps([svd.normalization])
+            spectrum_observation_count = int(eigenvalues.size)
+        mp_geometry = tuple(map(int, weight.shape)) if mp_is_raw else spectrum_geometry
         fit_available = bool(mp_fit.diagnostics.get("available", True))
         if not fit_available:
             spike_fit = SpikeDetectionResult(
@@ -381,8 +449,9 @@ def analyze_model(
                 weight,
                 method_config,
                 variance=mp_fit.variance,
-                eigenvalues=eigenvalues,
+                eigenvalues=mp_eigenvalues,
                 aspect_ratio=mp_fit.aspect_ratio,
+                operator_shape=mp_geometry,
             )
         tail = dispatch_tail_solver(
             eigenvalues,
@@ -397,16 +466,20 @@ def analyze_model(
             hill = float("nan")
             plateau = {"hill_plateau_alpha": float("nan"),
                        "hill_plateau_width": 0, "hill_is_powerlaw": False}
-        # Spacing, fit edges, detector and plotted ESD share one explicit domain.
-        spacing_eigenvalues = eigenvalues
-        spacing_mp_fit = mp_fit
+        # Level statistics always describe the one original covariance
+        # operator.  Pooled FARMS observations are valid for an ESD, not for
+        # nearest-neighbour correlations.  Fit a separate raw-domain bulk when
+        # the selected headline MP fit lives in another domain.
+        spacing_eigenvalues = raw_eigenvalues
+        spacing_mp_fit = (mp_fit if mp_is_raw else fit_marchenko_pastur(
+            spacing_eigenvalues, svd.aspect_ratio,
+            trim_upper=method_config.mp_trim_upper,
+        ))
         if (method_config.mp_fit_method == "farms_unbiased"
                 and "spectral_max" in mp_fit.diagnostics):
             mp_soft_spectrum = np.asarray([float(mp_fit.diagnostics["spectral_max"])])
-        elif method_config.mp_fit_method == "lanczos_stieltjes":
-            mp_soft_spectrum = spacing_eigenvalues
         else:
-            mp_soft_spectrum = eigenvalues
+            mp_soft_spectrum = mp_eigenvalues
         bulk_mask = (
             (spacing_eigenvalues >= spacing_mp_fit.lambda_minus)
             & (spacing_eigenvalues <= spacing_mp_fit.lambda_plus)
@@ -426,6 +499,10 @@ def analyze_model(
             compute_spacing_distribution or compute_number_variance or compute_delta3
         )
         unfolding_status = "not_requested_or_insufficient"
+        # Adjacent-gap ratios need no unfolding and remain available when a
+        # polynomial/spline/kernel smoother is unavailable.
+        if compute_spacing_distribution and bulk_levels.size >= 3 and float(np.ptp(bulk_levels)) > 0.0:
+            ratio = r_statistic(bulk_levels)
         if (needs_spacing and bulk_levels.size >= minimum_bulk
                 and float(np.ptp(bulk_levels)) > 0.0):
             try:
@@ -446,7 +523,6 @@ def analyze_model(
                             if brody_fit_method == "cdf_nls"
                             else fit_brody(spacings).beta
                         )
-                    ratio = r_statistic(bulk_levels)
                 if compute_number_variance:
                     variance_10 = number_variance(
                         unfolded, 10.0, unfolded=True,
@@ -459,6 +535,8 @@ def analyze_model(
         module_name = parameter_name[: -len(".weight")]
         covariance = covariances.get(f"{module_name}:pre")
         top_alignment = bulk_alignment = bottom_alignment = float("nan")
+        overlap_status = "not_requested_or_unavailable"
+        activation_rank = 0
         overlap_matrix: np.ndarray | None = None
         activation_eigenvalues: np.ndarray | None = None
         if (
@@ -477,6 +555,8 @@ def analyze_model(
             bottom_alignment = float(alignment["bottom_alignment"])
             overlap_matrix = np.asarray(alignment["overlap_matrix"])
             activation_eigenvalues = np.asarray(alignment["activation_eigenvalues"])
+            overlap_status = str(alignment.get("status", "available"))
+            activation_rank = int(alignment.get("activation_rank", 0))
         role, layer = _role_and_layer(parameter_name)
         porter_thomas_ks = float("nan")
         porter_thomas_fraction = float("nan")
@@ -514,11 +594,22 @@ def analyze_model(
             "analysis_dtype": analysis_dtype,
             "aspect_ratio": spectrum_aspect_ratio,
             "mp_aspect_ratio": mp_fit.aspect_ratio,
-            "mp_spectrum_domain": spectrum_mode,
+            "mp_spectrum_domain": mp_spectrum_mode,
+            "mp_spectrum_geometry": json.dumps(mp_geometry),
+            "mp_spectrum_denominator": (
+                svd.normalization if mp_is_raw else spectrum_denominator
+            ),
+            "mp_observation_count": int(mp_eigenvalues.size),
             "aspect_ratio_mode": method_config.aspect_ratio_mode,
             "spectrum_mode": spectrum_mode,
             "spectrum_units": "eigenvalue",
-            "spectrum_denominator": svd.normalization,
+            "spectrum_geometry": json.dumps(spectrum_geometry),
+            "spectrum_denominator": spectrum_denominator,
+            "spectrum_normalization_denominators": spectrum_normalization_denominators,
+            "spectrum_provenance": json.dumps(
+                _sanitize_json(prepared.diagnostics), sort_keys=True),
+            "spectrum_observations_per_operator": spectrum_observation_count,
+            "spectrum_observation_count": int(eigenvalues.size),
             "mp_fit_method": method_config.mp_fit_method,
             "mp_variance": mp_fit.variance,
             "mp_lambda_minus": mp_fit.lambda_minus,
@@ -535,9 +626,28 @@ def analyze_model(
             "mp_fit_diagnostics": json.dumps(_sanitize_json(mp_fit.diagnostics), sort_keys=True),
             "lower_outliers": mp_fit.n_lower_outliers,
             "upper_outliers": mp_fit.n_upper_outliers,
-            "above_edge_observations": int(np.count_nonzero(eigenvalues > mp_fit.lambda_plus))
+            "above_edge_observations": int(np.count_nonzero(mp_eigenvalues > mp_fit.lambda_plus))
                 if fit_available else 0,
             "spike_detector": method_config.spike_detector,
+            "spike_detector_domain": (
+                "raw" if method_config.spike_detector == "lanczos_poles"
+                else mp_spectrum_mode
+            ),
+            "spike_detector_geometry": json.dumps(
+                tuple(map(int, weight.shape))
+                if method_config.spike_detector == "lanczos_poles" else mp_geometry
+            ),
+            "spike_detector_denominator": (
+                svd.normalization if method_config.spike_detector == "lanczos_poles"
+                else (svd.normalization if mp_is_raw else spectrum_denominator)
+            ),
+            "spike_count_semantics": (
+                "raw_operator_poles"
+                if method_config.spike_detector == "lanczos_poles"
+                else "pooled_observations_at_per_operator_threshold"
+                if prepared.farms is not None
+                else "single_operator_observations"
+            ),
             "spike_threshold": spike_fit.threshold,
             "detected_spikes": spike_fit.n_spikes,
             "spike_detector_available": spike_fit.diagnostics.get("available", True),
@@ -547,6 +657,10 @@ def analyze_model(
                 mp_soft_spectrum,
                 mp_fit.lambda_plus,
             ),
+            "spacing_spectrum_domain": "raw_single_operator",
+            "spacing_spectrum_geometry": json.dumps(tuple(map(int, weight.shape))),
+            "spacing_spectrum_denominator": svd.normalization,
+            "spacing_observation_count": int(spacing_eigenvalues.size),
             "spacing_bulk_lambda_minus": spacing_mp_fit.lambda_minus,
             "spacing_bulk_lambda_plus": spacing_mp_fit.lambda_plus,
             "tail_solver": method_config.tail_solver,
@@ -584,6 +698,8 @@ def analyze_model(
             "bulk_activation_alignment": bulk_alignment,
             "bottom_activation_alignment": bottom_alignment,
             "overlap_metric": method_config.overlap_metric,
+            "overlap_status": overlap_status,
+            "activation_covariance_rank": activation_rank,
         }
         rows.append(row)
         artifacts.append(
@@ -717,13 +833,15 @@ def _plot_lesions(rows: list[dict[str, Any]], output: Path) -> None:
 
 
 def _plot_scaling(rows: list[dict[str, Any]], output: Path) -> None:
+    # Requested kappa is the stable intervention identity.  Realized ratios are
+    # point metadata and legitimately drift as architectures/token counts round.
     grouped: dict[tuple[float, float], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[(float(row.get("realized_training_compute", row["compute_budget"])),
-                 float(row.get("realized_allocation_ratio", row["kappa"])))].append(row)
+                 float(row["kappa"]))].append(row)
     figure, axes = plt.subplots(1, 2, figsize=(12, 5))
-    for kappa in sorted({float(row.get("realized_allocation_ratio", row["kappa"])) for row in rows}):
-        points = sorted((key, values) for key, values in grouped.items() if math.isclose(key[1], kappa))
+    for kappa in sorted({float(row["kappa"]) for row in rows}):
+        points = sorted((key, values) for key, values in grouped.items() if key[1] == kappa)
         budgets = [key[0] for key, _ in points]
         alpha = [
             float(np.nanmean([float(row["tail_alpha_lambda"]) for row in values]))
@@ -733,8 +851,22 @@ def _plot_scaling(rows: list[dict[str, Any]], output: Path) -> None:
             float(np.nanmean([float(row["brody_beta"]) for row in values]))
             for _, values in points
         ]
-        axes[0].plot(budgets, alpha, marker="o", label=f"realized ratio={kappa:g}")
-        axes[1].plot(budgets, beta, marker="o", label=f"realized ratio={kappa:g}")
+        realized = [float(np.nanmean([
+            float(row.get("realized_allocation_ratio", row["kappa"])) for row in values
+        ])) for _, values in points]
+        collapsed = [any(bool(row.get("allocation_collapsed", False)) for row in values)
+                     for _, values in points]
+        label = f"requested kappa={kappa:g}"
+        axes[0].plot(budgets, alpha, marker="o", label=label)
+        axes[1].plot(budgets, beta, marker="o", label=label)
+        for axis, values in zip(axes, (alpha, beta)):
+            for budget, value, ratio, is_collapsed in zip(
+                    budgets, values, realized, collapsed):
+                if math.isfinite(value):
+                    note = f"r={ratio:.3g}" + ("\ncollapsed" if is_collapsed else "")
+                    axis.annotate(note, (budget, value), fontsize=7)
+                    if is_collapsed:
+                        axis.scatter([budget], [value], marker="x", color="red", zorder=4)
     for axis, ylabel in zip(axes, ("mean selected tail exponent", "mean Brody beta")):
         axis.set_xscale("log")
         axis.set_xlabel("measured training FLOPs")
@@ -955,14 +1087,25 @@ def execute_cell(
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     add_pipeline_cli_arguments(parser)
     raw = None if argv is None else list(argv)
     namespace = parser.parse_args(raw)
     import sys
     tokens = sys.argv[1:] if raw is None else raw
-    namespace._explicit_options = sorted({
+    explicit_options = {
         token.split("=", 1)[0] for token in tokens if token.startswith("--")
+    }
+    option_destinations = {
+        option: action.dest
+        for action in parser._actions
+        for option in action.option_strings
+    }
+    namespace._explicit_options = sorted(explicit_options)
+    namespace._explicit_destinations = sorted({
+        option_destinations[option]
+        for option in explicit_options
+        if option in option_destinations
     })
     return namespace
 
@@ -992,11 +1135,9 @@ def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
         raise ValueError("activation and validation batch limits must be positive")
     if not 0.0 < args.lesion_fraction <= 1.0:
         raise ValueError("lesion-fraction must lie in (0, 1]")
-    explicit = getattr(args, "_explicit_options", set())
+    explicit_destinations = set(getattr(args, "_explicit_destinations", ()))
     def preset(attribute: str, value: Any) -> None:
-        positive = "--" + attribute.replace("_", "-")
-        negative = "--no-" + attribute.replace("_", "-")
-        if positive not in explicit and negative not in explicit:
+        if attribute not in explicit_destinations:
             setattr(args, attribute, value)
 
     method_presets = {
@@ -1036,10 +1177,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     _resolve_runtime_configuration(args)
     output = Path(args.output_dir)
-    if output.exists() and any(output.iterdir()):
-        raise FileExistsError(
-            f"output directory is not empty: {output}; use a fresh run directory")
-    output.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(
         vocab_size=args.vocab_size,
         compute_budgets=args.scaling_budget_flops,
@@ -1047,11 +1184,22 @@ def main(argv: Iterable[str] | None = None) -> int:
         parameter_cap=args.parameter_cap,
         token_cap=args.max_train_tokens,
     )
-    collapsed = [cell["cell_index"] for cell in manifest if cell.get("allocation_collapsed")]
-    if args.execute and collapsed and not args.allow_collapsed_allocations:
+    selected_indices = _selected_cell_indices(args.cells, len(manifest))
+    selected_collapsed_groups = {
+        tuple(sorted(
+            {int(cell["cell_index"]), *map(int, cell.get("collapsed_with_cells", []))}
+            & selected_indices
+        ))
+        for cell in manifest
+        if int(cell["cell_index"]) in selected_indices and cell.get("allocation_collapsed")
+    }
+    duplicate_groups = sorted(group for group in selected_collapsed_groups if len(group) > 1)
+    if args.execute and duplicate_groups and not args.allow_collapsed_allocations:
+        collapsed = sorted({index for group in duplicate_groups for index in group})
         raise ValueError(
-            f"allocation cells {collapsed} collapse to identical realized N/D designs; "
+            f"selected allocation cells {collapsed} collapse to identical realized N/D designs; "
             "change caps or explicitly allow capped calibration runs")
+    _acquire_output_directory(output)
     _write_json(output / "allocation_manifest.json", manifest)
     _write_json(output / "spectral_method_config.json", rmt_config_from_namespace(args).as_dict())
     _write_json(output / "run_config.json", vars(args))
@@ -1076,12 +1224,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     train_tokens, validation_tokens = split_tokens(tokens)
     if min(train_tokens.size, validation_tokens.size) < args.sequence_length:
         raise ValueError("both token splits must contain at least one full sequence")
-    if args.cells == "all":
-        selected_indices = set(range(len(manifest)))
-    else:
-        selected_indices = {int(value.strip()) for value in args.cells.split(",") if value.strip()}
-    if not selected_indices or min(selected_indices) < 0 or max(selected_indices) >= len(manifest):
-        raise ValueError("--cells contains an invalid manifest index")
     spectral_rows: list[dict[str, Any]] = []
     lesion_rows: list[dict[str, Any]] = []
     training_rows: list[dict[str, Any]] = []

@@ -432,7 +432,7 @@ def independent_lesion_benchmark(
         ) as information:
             value = float(evaluate())
             if not math.isfinite(value):
-                raise ValueError(f"{tranche} lesion evaluation must belak finite")
+                raise ValueError(f"{tranche} lesion evaluation must be finite")
         results.append(
             {
                 "tranche": _canonical_tranche(tranche),
@@ -474,7 +474,7 @@ def independent_decile_benchmark(
             svd_driver=svd_driver,
         ) as information:
             value = float(evaluate())
-            if not math.isfinite(valuelk(value := value):"): # no
+            if not math.isfinite(value):
                 raise ValueError(f"decile {decile} evaluation must be finite")
         results.append(
             {

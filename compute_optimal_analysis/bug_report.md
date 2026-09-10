@@ -1,276 +1,220 @@
-# Static bug report — compute_optimal_analysis
+# Static-analysis bug report — compute_optimal_analysis
 
-## Scope and evidence
+## Scope and verification
 
-Reviewed the Python implementation and tests, CLI, asset downloader, SLURM launcher, requirements, and documented runtime/scientific contracts. Paths and line numbers below are relative to this directory and refer to the source at review time.
+Reviewed the **current working tree**, including the pre-existing uncommitted repairs and `tests/test_bugfix_v4.py`, against base commit `c359c9c`. This is a fresh report of remaining issues, not a replay of deleted historical reports. The findings are retained below as an audit trail; implementation fixes are now included in the working tree.
 
-This is a source-level review, **not an HPC execution or numerical certification**. All 37 Python files parse with Python 3.10 grammar using the local Python 3.13.2 AST parser; `bash -n run_hpc.slurm` succeeds. No training, downloads, package installation, GPU jobs, or pytest suite were run. Reproduction cases below are source-derived regression cases to implement, not claimed test results. Static analysis cannot establish that no additional bugs exist.
+Scope: `run_experiments.py`, `models/`, `pipelines/`, the numerical `rmt/` modules, asset staging, the SLURM launcher, and related tests/contracts. Paths and line numbers below are relative to this directory and refer to the reviewed tree.
 
-**Severity:** High = invalid scientific output, substantial lost computation, or an important execution failure; Medium = configuration-dependent incorrect behavior; Low = narrower robustness/diagnostic defect. Separate scientific caveats follow the concrete findings.
+Supplemental verification, in a separate process from the sibling project:
 
-## Training, execution, and data
+- After remediation, `python -m pytest -q -p no:cacheprovider`: **99 passed**.
+- Ruff undefined-name/export/local-variable checks (`F821,F822,F823`): passed.
+- `bash -n run_hpc.slurm`: passed.
+- Small CPU-only probes reproduced the numerical and control-flow failures described below.
+- Environment: Python 3.13.2, NumPy 2.4.4, SciPy 1.17.1, Torch 2.13.0+cpu. This is **not** the pinned production environment. CUDA, compilation, real training jobs, downloads, and cluster execution were not validated.
 
-### CO-01 — High: the experiment seed is applied after model initialization
+Severity: **P1** = high-impact incorrect results or failure of an advertised execution path; **P2** = conditional correctness/reliability defect. Confidence/evidence is stated per finding. A passing current suite does not cover these cases.
 
-- **Locations:** `run_experiments.py:603-605,650-651`; `pipelines/trainer.py:159-166,55-61`.
-- `CausalTransformer(config)` consumes the global Torch RNG before `LanguageModelTrainer` calls `seed_everything`. The loader has its own seed, but the initial weights do not have the advertised per-cell seed. A cell run alone can initialize differently from the same cell after earlier cells; separate identical invocations also need not agree.
-- **Fix/check:** seed before constructing the model, and record the resolved cell seed. Compare initial state dictionaries for repeated runs and for `--cells 1` versus cell 1 in a multi-cell run.
+## Resolution status
 
-### CO-02 — High: reported realized tokens and FLOPs are not measured training totals
+- [x] **CO-01 — Fixed**
+- [x] **CO-02 — Fixed**
+- [x] **CO-03 — Fixed**
+- [x] **CO-04 — Fixed**
+- [x] **CO-05 — Fixed**
+- [x] **CO-06 — Fixed**
+- [x] **CO-07 — Fixed**
+- [x] **CO-08 — Fixed**
+- [x] **CO-09 — Fixed**
+- [x] **CO-10 — Fixed**
 
-- **Locations:** `run_experiments.py:201-218,633-651`; `pipelines/trainer.py:235-283`.
-- Step count is `ceil(realized_tokens / (batch_size * (sequence_length - 1)))`, assuming every batch is full. The loader does not drop its last partial batch. Short datasets and repeated partial batches can undershoot substantially; the last full step can overshoot a small `--max-train-tokens` cap. Masked targets and skipped AMP updates are also not reflected in the manifest. The pre-training requested/capped float remains labeled `realized_tokens` in the final CSV.
-- **Fix/check:** count valid shifted targets actually processed, distinguish attempted steps from optimizer updates, enforce the chosen cap semantics, and write measured totals after training. Test a one-sequence dataset with batch size 8 and a token cap smaller than one batch.
+## Prioritized findings
 
-### CO-03 — High: parameter caps are not caps, and realized experiments are not necessarily IsoFLOP
+| ID | Severity | Finding | Evidence |
+|---|---|---|---|
+| CO-01 | P1 | KDE MP fit is dominated by the square-matrix hard-edge singularity | CPU reproduction |
+| CO-02 | P1 | Non-finite-gradient guard prevents GradScaler overflow recovery | Static trace + enabled CPU-scaler reproduction |
+| CO-03 | P2 | Token-budget training uses an epoch-capped learning-rate horizon | CPU reproduction |
+| CO-04 | P2 | Exactly three bulk levels crash gap-ratio analysis | CPU reproduction |
+| CO-05 | P2 | Standalone Lanczos detector failures abort otherwise valid analysis | CPU reproduction |
+| CO-06 | P2 | Unselected collapsed allocation cells block selected-cell execution | CPU reproduction |
+| CO-07 | P2 | `xmax` filtering still fits an unbounded power law | Deterministic numerical reproduction |
+| CO-08 | P2 | Rank-ordered tail estimation is not scale invariant | CPU reproduction |
+| CO-09 | P2 | Zero/degenerate activation covariance produces spurious alignment | CPU reproduction + linear-algebra analysis |
+| CO-10 | P2 | Fresh-output ownership check is not atomic | Static concurrency trace |
 
-- **Locations:** `run_experiments.py:195-218`; `models/chinchilla_scaling.py:229-271`.
-- `parameter_cap` only caps the **search target**. The nearest architecture can exceed it, and tokens are not adjusted for the selected architecture's actual parameter count. Thus even uncapped allocations no longer necessarily share the requested compute budget.
-- With vocabulary 50257, the minimum searched architecture (width 64, two layers) has **3,347,840 parameters**. At the default budget `1e16`, the overtrained requested model has about **2,282,177 parameters**: the minimum architecture already uses **46.7% more parameters**, hence proportionally more training FLOPs at unchanged token count. The manifest exposes an estimated compute difference, but the experiment and scaling plot still group by requested budget.
-- **Fix/check:** search subject to an actual hard upper bound, reject infeasible caps, and either recompute tokens from actual `model.num_parameters()` to conserve FLOPs or explicitly classify the experiment as non-IsoFLOP. Plot measured compute. Test caps below the minimum and all default allocation ratios.
+## CO-01 — FIXED — Square-matrix KDE MP fits can inflate noise variance by an order of magnitude
 
-### CO-04 — High: `--validation-batches` does not limit training-time validation
+**Locations:** `rmt/mp.py:535-568`, especially the grid at line 547 and density objective at lines 553-558; selected by the paper-3 preset in `run_experiments.py:1105-1109`.
 
-- **Locations:** `run_experiments.py:651,684-692`; `pipelines/trainer.py:271-279`.
-- The CLI limit is passed only to lesion evaluation. Every training log interval evaluates the **entire** validation loader. For the default WikiText-103 split, this can make validation dominate the run despite a requested limit of 20 batches, repeated every 50 optimizer steps.
-- **Fix/check:** add a validation limit to `TrainConfig`/`fit` and forward it to `evaluate_language_model`. Count validation forwards with a loader longer than the configured limit.
+**Trigger/root cause:** For aspect ratio `q=1`, the MP eigenvalue density diverges as `lambda -> 0+`. The KDE grid starts at machine epsilon whenever the empirical minimum minus bandwidth is negative. The empirical triangular KDE is finite there, but the objective compares it with the **unsmoothed divergent MP density** and assigns that point a positive weight. This point overwhelms the fit; increasing variance reduces the divergent density, driving the solution toward the upper optimization bound. Optimizer success does not make this a scientifically valid fit.
 
-### CO-05 — High: results/checkpoints are persisted too late for long HPC runs
+**Reproduction:**
 
-- **Locations:** `pipelines/trainer.py:283-303`; `run_experiments.py:654-739,829-855`.
-- Training history is held in memory. Even with checkpoints enabled, saving occurs only **after** activation extraction, all spectral diagnostics, and lesions. CSV/JSONL output is deferred until every selected cell finishes. An analysis error, later-cell failure, or wall-time kill can discard all preceding training and metrics; no periodic checkpoint or resume path exists.
-- **Fix/check:** stream/flush training records, atomically persist each completed cell, save checkpoints before diagnostics and periodically during training, and record failure status. For exact resumability also save RNG, scaler, and data-order state. Inject a later-cell/lesion error and verify earlier output survives.
+```python
+import numpy as np
+from rmt.mp import fit_marchenko_pastur_kde
+W = np.random.default_rng(3).normal(size=(512, 512))
+lam = np.linalg.svd(W, compute_uv=False)**2 / 512
+fit = fit_marchenko_pastur_kde(lam, 1.0)  # default trim_upper=0.1
+print(fit.variance, fit.lambda_plus)
+```
 
-### CO-06 — High: the advertised one-SVD path repeatedly performs full CPU decompositions
+Observed variance approximately **15.83**, hence upper edge approximately **63.32**. The generating variance is 1 and the asymptotic upper edge is 4. With no trimming, the same probe returned variance approximately 19.75. This is not ordinary finite-sample error.
 
-- **Locations:** `run_experiments.py:272-283`; `rmt/factory.py:257-346,394-438`; `rmt/mp.py:195-207,755-796`; `pipelines/spectral_lesioning.py:348-389`.
-- The accelerated `svd` is not passed to spectrum preparation or fit/detector dispatch. `prepare_spectrum` computes a full NumPy SVD even before taking the FARMS branch. The default Lanczos fit computes another SVD for MP summary statistics; spike dispatch computes an unused SVD before rerunning Lanczos. FARMS windows and lesion tranches add further independent decompositions.
-- This is not merely an unused helper: `--svd-backend cuda` still leaves repeated dense CPU SVDs and duplicate Lanczos runs on the production path, undermining runtime/memory expectations.
-- **Fix/check:** pass the original factors/spectrum and one prepared result through dispatch, share Lanczos results, and reuse pristine factors across lesion tranches. FARMS window SVDs are intrinsically separate, but must not force redundant full-matrix SVDs. Add decomposition-call-count tests for all tracks.
+**Impact:** Square attention projections in the advertised paper-3 workflow get inflated MP edges, suppressed outlier counts, and invalid soft-rank/bulk diagnostics, without an unavailable-fit status.
 
-### CO-07 — High: different spectrum domains are combined without converting edges/scales
+**Fix direction:** Fit integrated probability masses/CDFs, or compare empirical and theoretical densities after applying the same kernel and boundary treatment. Account for retained-sample normalization when trimming. Do not merely replace epsilon by another arbitrary absolute cutoff. Flag boundary-seeking or otherwise unqualified fits.
 
-- **Locations:** `run_experiments.py:278-295,383-428,465-494`; `rmt/factory.py:257-346,394-420`; `rmt/mp.py:555-598`.
-- The default runner plots/tail-fits FARMS-window eigenvalues, while `lanczos_stieltjes` fits the **original** covariance. For a rectangular matrix, the full-matrix aspect ratio and support differ from the square FARMS windows. `_plot_esd` overlays full-matrix edges on the pooled histogram. The row's `aspect_ratio` comes from the prepared spectrum, but MP outlier counts/fit may describe the original matrix.
-- `farms_normalization=raw` or `trace` can make the units differ too. `farms_unbiased` MP fitting always uses canonical normalization, independently of the selected preparation. Thamm fitting also bypasses preparation. Conversely, analytic/KDE fits to `shape_normalized` or raw/trace FARMS values produce a scaled variance that TW/BBP dispatch applies directly to **untransformed** full-matrix eigenvalues.
-- **Fix/check:** represent full, pooled, and rescaled spectra as separate labeled results, with separate aspect ratios/denominators; transform thresholds consistently or reject incompatible combinations. Test rectangular factors and all normalizations, not just whether individual dispatchers return finite numbers.
+**Regression tests:** Recover unit and rescaled variance for square and rectangular Gaussian factors; include a planted spike. Verify scale invariance, sensible upper edges, and that default square fits do not terminate near the variance search bound.
 
-### CO-08 — High: the accelerator bridges silently force float32 spectral analysis
+## CO-02 — FIXED — Recoverable scaled-gradient overflow terminates training before the scaler can recover
 
-- **Locations:** `pipelines/activation_extractor.py:245-256`; `pipelines/spectral_lesioning.py:55-59`; `run_experiments.py:277`; `rmt/svd_result.py:40-68`.
-- Both CPU and CUDA bridge paths downcast to float32, even for float64 input. Converting returned factors to float64 in `SVDResult` cannot restore small singular values lost during factorization. Other diagnostics independently recompute in float64, so bottom-vector alignment/lesions/conditioning can use a materially different numerical spectrum from MP/tail calculations.
-- This particularly affects the small-singular-value research target. Explicit approximate `gesvda` is an additional precision tradeoff, not a substitute for validating the tail.
-- **Fix/check:** expose and record analysis precision separately from training AMP; preserve float64 inputs and offer float64 SVD/lesions for small-SV studies. Test a rotated ill-conditioned factor spanning singular values 1 to `1e-8`, not only random well-conditioned reconstruction.
+**Locations:** `pipelines/trainer.py:211-217,336-361`.
 
-### CO-09 — High: a supported subset of lesion tranches crashes plotting
+**Trigger/root cause:** FP16 enables GradScaler. After `unscale_`, the code clips gradients and raises on a non-finite norm **before** `scaler.step()` / `scaler.update()`. The normal scaled-gradient-overflow path therefore cannot skip the unsafe optimizer update, lower the scale, and retry. The later skipped-step accounting is unreachable for the ordinary overflow case it is supposed to handle.
 
-- **Locations:** `run_experiments.py:546-559,699-717,851-852`; `pipelines/cli_config.py:393`.
-- `--lesion-tranches top` is accepted as a valid subset, but `_plot_lesions` always iterates top, bulk, bottom and uses `next(...)` without a default. Missing tranches raise `StopIteration` after training/analysis. The runtime record never receives completion metadata.
-- **Fix/check:** plot only requested/present tranches, handle missing cell/tranche pairs explicitly, and validate before training. Cover every nonempty subset.
+**Evidence:** An otherwise ordinary CPU trainer with its scaler replaced by `torch.amp.GradScaler("cpu")`, scalar loss `weight * 1e34`, and initial scale 65536 raises `FloatingPointError` at the gradient-norm guard. The unscaled loss is finite; the scale remains 65536 and `skipped_steps` remains zero. The same control-flow ordering applies to the production CUDA FP16 scaler; CUDA itself was not tested.
 
-### CO-10 — Medium: diagnostic disable flags do not disable the corresponding work
+**Impact:** Valid `--amp-dtype float16` jobs can abort during normal loss-scale calibration rather than recovering. Token-budget completion and skipped-update statistics are then misleadingly unavailable.
 
-- **Locations:** `run_experiments.py:654-670,324-350,846-850`.
-- Activation covariance capture runs even when `compute_activation_overlap` is false. With spacing-distribution disabled but number variance or rigidity enabled, Brody fitting and spacing artifacts are still computed; the spacing plot is emitted unconditionally when artifacts exist. These switches cannot currently be relied upon to reduce GPU/CPU work.
-- **Fix/check:** gate covariance capture, Brody/NNSD calculation, and plot creation independently. Test disabled paths with spies that raise if called.
+**Fix direction:** Distinguish recoverable scaler-detected overflow from an invalid unscaled loss or genuinely non-finite gradients with scaling disabled. Allow the scaler's skip/backoff path without clipping unsafe gradients or advancing successful-update counters/scheduler. Retain the fail-closed non-scaler guard already covered by `test_nonfinite_gradients_fail_before_optimizer_mutation`.
 
-### CO-11 — Medium: presets silently override explicit negative switches and do not fully select paper methods
+**Regression tests:** Inject one scaler-detected overflow followed by finite gradients; assert unchanged parameters and scheduler on the skipped attempt, reduced scale, correct skipped/attempted counters, and eventual exact successful-token completion. Also retain the CPU/BF16 invalid-gradient rejection tests.
 
-- **Locations:** `run_experiments.py:748-780`; `pipelines/cli_config.py:255-405`.
-- `reproduce_paper1` and `compute_optimal_rmt` unconditionally turn lesions and overlap back on, including after explicit `--no-run-spectral-lesioning` / `--no-compute-activation-overlap`. Paper 2/3 similarly override some negative flags. The preset booleans are documented, but the parser does not distinguish defaults from explicit user choices or reject the conflict.
-- Conversely, selecting only `--experiment-mode reproduce_paper2` retains Golden FARMS/Lanczos/spline defaults and does not enable Delta3; only the fully expanded SLURM/README command selects the intended paper protocol. The mode name alone is not a scientific dispatcher.
-- **Fix/check:** define actual mode presets, apply them before explicit overrides, or reject incompatible overrides and document that full method flags are mandatory. Test resolved execution configuration, not parsing alone.
+## CO-03 — FIXED — Recycling the loader does not extend the learning-rate schedule
 
-### CO-12 — High: the verified asset manifest need not cover the dataset being executed
+**Locations:** `pipelines/trainer.py:250-265,273-280,350-361,388-398`; runner step estimates at `run_experiments.py:877-894`.
 
-- **Locations:** `run_hpc.slurm:39-55`; `scripts/download_assets.py:295-321`; `run_experiments.py:141-163,806-820`.
-- `DATASET_PATH` can point to any existing NPY/NPZ while `--verify-only` validates an unrelated nonempty manifest. Nothing requires a record matching the selected array. Standalone execution does not recompute its digest; `_runtime_environment` copies a recorded checksum if found, including a stale one.
-- **Fix/check:** require the selected file to match a verified manifest record, recompute/compare its digest at preflight, and carry that verification result into runtime metadata. Test an external or modified dataset beside an otherwise valid manifest.
+**Trigger/root cause:** With a token budget, epochs no longer bound execution, but the scheduler is still sized by `min(len(loader) * epochs, max_steps)`. A short finite loader is recycled beyond this horizon. Almost all subsequent updates can run at the minimum LR even when an explicit larger `max_steps` was supplied.
 
-### CO-13 — Medium: partial asset staging destroys provenance for existing assets
+**Reproduction:** One batch containing one next-token target; `TrainConfig(epochs=1, max_steps=5, max_train_tokens=5, warmup_steps=0, learning_rate=3e-4, device="cpu", amp_dtype="float32")`. Record LR in an optimizer step pre-hook.
 
-- **Locations:** `scripts/download_assets.py:276-292,341-392`.
-- Every invocation replaces `asset_manifest.json` with only the current invocation's `assets`/`source_revisions`, while `_file_manifest` includes **all existing data files**. Running `--assets synthetic` after staging WikiText keeps the WikiText files/checksums but drops their source revisions and asset metadata. Re-staging one asset family has the same inconsistency.
-- **Fix/check:** preserve and validate untouched asset records or use isolated manifests/directories per asset family. Test sequential WikiText and synthetic staging.
+Observed five successful updates with LRs `[3e-4, 3e-5, 3e-5, 3e-5, 3e-5]`: a **one-step** decay horizon, not five. Variable-size loader batches can also make the runner's full-batch step estimate underestimate actual successful updates.
 
-### CO-14 — Medium: token loading silently accepts and changes invalid data
+**Impact:** Compute-allocation experiments can receive different, unintentionally truncated optimization schedules. Token totals can be correct while the training intervention is not.
 
-- **Locations:** `pipelines/dataset.py:62-83,98-116,119-131`.
-- A loader documented to require a one-dimensional integer array casts and flattens arbitrary arrays without checking original dtype/shape. Fractional IDs are truncated; for example `-0.5` becomes zero and evades the negative-ID check. An NPZ without `tokens` silently selects the alphabetically first array, which may be metadata, while an empty NPZ raises an incidental `IndexError`.
-- **Fix/check:** require an explicit token key, integer dtype, and expected shape before conversion; validate range and reject empty archives. Cover floats, negative fractions, matrices, and multi-array NPZ files.
+**Fix direction:** Define the scheduler horizon from the authoritative successful-target budget, preferably scheduling directly by successful target progress. If retaining a step-based schedule, do not cap a token-budget run's explicit horizon by one finite data pass; handle partial batches and skipped updates consistently.
 
-### CO-15 — Medium: activation covariance includes padding/invalid token positions
+**Regression tests:** Budget requiring multiple data passes, an incomplete last batch, and one skipped update. Assert LR progression tracks the declared training budget rather than loader exhaustion.
 
-- **Locations:** `pipelines/activation_extractor.py:47-66,165-175,289-308`.
-- Hooks flatten every token activation. Passing `attention_mask` to the model does not prevent masked positions from entering sums/Gram matrices. Covariance and overlap therefore depend on padding length/content for padded callers. The default fixed-length dataset happens to use all-one masks.
-- **Fix/check:** propagate a valid-position mask into hook accumulation, including any subsampling. Compare the same valid sequences with different padding.
+## CO-04 — FIXED — Three-level gap ratio is accepted by the caller but rejected by the callee
 
-### CO-16 — Medium: fully masked attention rows can expose future information under left padding
+**Locations:** `run_experiments.py:456-459`; `rmt/spacing.py:321-324`.
 
-- **Locations:** `models/modules.py:110-122`; `models/transformer.py:163-174`.
-- An entirely masked query row becomes a row of the same finite minimum value, whose softmax is **uniform**, not zero. A padded query can therefore attend to all values, including future real tokens. With left padding, the shifted loss still scores the first real target from the preceding padded query because it masks only the target position.
-- **Fix/check:** safely handle all-masked attention rows and exclude predictions whose predecessor is padding. Add a left-padded causal-invariance test and a fully masked-row test. This does not affect the default unpadded training loader.
+**Trigger/root cause:** The runner calls `r_statistic` when the fitted bulk has at least three distinct/nonconstant levels, but `r_statistic` requires at least four. Three levels are mathematically sufficient for one adjacent-gap ratio. This call is outside the unfolding exception handler.
 
-### CO-17 — Medium: the parameter estimator disagrees with supported Transformer variants
+**Reproduction:** Analyze a matrix drawn by `np.random.default_rng(7).normal(size=(4, 4))`, using raw spectrum, analytic MP fit, and BBP spikes. The fit leaves three bulk levels and analysis raises `ValueError: at least 4 finite levels are required`. A `(4, 8)` Gaussian factor with seed 2 also reproduced it.
 
-- **Locations:** `models/chinchilla_scaling.py:191-226`; `models/modules.py:150-156`; `models/transformer.py:61-63`.
-- The estimator assumes one parameter per normalization dimension regardless of `norm_type`; LayerNorm actually has weight **and bias**, even when projection `bias=False`. It also uses `round(ratio * width)` without the model's minimum hidden width of one. This makes library allocation estimates wrong for supported non-default configurations.
-- **Fix/check:** mirror normalization and hidden-width rules, validate GQA divisibility, and compare estimates with `num_parameters()` over all supported variants.
+**Impact:** One small matrix or strongly depleted bulk aborts the entire cell instead of returning the remaining diagnostics.
 
-### CO-18 — Medium: AMP-skipped optimizer steps are counted as completed updates
+**Fix direction:** Make the caller/callee contracts agree; allowing three levels in `r_statistic` is mathematically valid. Below the supported count, emit an explicitly unavailable gap ratio without discarding other analysis.
 
-- **Locations:** `pipelines/trainer.py:251-270`.
-- For `amp_dtype=float16`, GradScaler may skip `optimizer.step()` after gradient overflow even if the forward loss was finite. The scheduler and `global_step` advance unconditionally. Training can exhaust its step budget without the intended number of updates and advance the LR schedule on failed updates.
-- **Fix/check:** distinguish attempted batches from successful optimizer updates and schedule appropriately. Log overflow/skipped-step counters; test a forced overflow. The default BF16 path does not use enabled gradient scaling.
+**Regression tests:** Three levels with an analytically known ratio, fewer than three levels, and an end-to-end matrix analysis whose MP bulk contains exactly three levels.
 
-## Lesion and numerical-engine correctness
+## CO-05 — FIXED — Lanczos assumption failures are contained only when Lanczos is also the MP fitter
 
-### CO-19 — Medium: count-matched bulk lesions can remove fewer values than top/bottom lesions
+**Locations:** `rmt/factory.py:321-345,483-501`; `run_experiments.py:372-410`.
 
-- **Locations:** `pipelines/spectral_lesioning.py:94-116`.
-- When MP candidates are insufficient, the fallback interior set can still contain fewer than the requested count. The function silently reduces the count instead of reporting an infeasible matched comparison. At rank 20 and fraction 1, top/bottom remove 20 values but the fallback bulk removes only 8.
-- **Fix/check:** enforce equal counts or explicitly return an infeasible/unmatched status. Do not label unequal interventions count-matched. Cover fractions near one and depleted MP bulks.
+**Trigger/root cause:** `dispatch_mp_fit` converts Lanczos numerical/assumption errors to an unavailable `MPFitResult`. The independently selectable `dispatch_spike_detector` calls the same detector without equivalent handling. A finite matrix with too few distinct covariance eigenvalues can terminate Lanczos before the three iterations required for tail estimation.
 
-### CO-20 — Medium: energy mode silently reports unmatched interventions as comparable
+**Reproduction:** Analyze `np.eye(64)` with raw aspect mode. With MP fit/detector both Lanczos, a row is returned with unavailable fit/detector status. With `mp_fit_method="analytic_mp"` and `spike_detector="lanczos_poles"`, the same matrix raises `ValueError: at least three Lanczos iterations are required`.
 
-- **Locations:** `pipelines/spectral_lesioning.py:119-145,348-389`; `run_experiments.py:722-731`.
-- Bulk selection stops at all available candidates when their energy is below the target. Top selection can overshoot by an arbitrarily large singular-energy atom. `reference_energy` is not bounded by matrix or tranche energy. The output has no target-reached/error status, and the production CSV retains only the mean removed fraction, hiding per-matrix mismatches.
-- **Fix/check:** report target and actual energy per matrix, flag/reject infeasible matches, and define a tolerance or partial-singular-value control if exact matching is intended. Test a single dominant singular value and a bulk whose total energy is below the target.
+**Impact:** A supported method combination can abort after training even though its analytic MP/scalar results are usable. Detector failure handling depends incorrectly on which independent fitter was selected.
 
-### CO-21 — Medium: accepted Lanczos step counts cannot run the detector
+**Fix direction:** Give standalone detector assumption failures an unavailable result with reason/convergence metadata, consistently with the MP adapter. Keep invalid user configuration distinguishable from a scientifically unavailable fit; do not silently substitute a different detector.
 
-- **Locations:** `rmt/factory.py:185-190`; `rmt/lanczos_stieltjes.py:330-334,544-547,868-887`.
-- The CLI/config accepts two steps, but `reference_modified_cholesky` always requires at least three realized iterations. Steps greater than the matrix dimension are accepted until deep execution fails. Early Krylov breakdown on identity/low-rank factors likewise reaches the tail estimator with too few entries.
-- **Fix/check:** require an appropriate detector minimum, validate/clamp against dimension before expensive work, and explicitly handle exact breakdown/unsupported one-cut estimation. Cover steps 2, steps exceeding rank dimension, and identity factors.
+**Regression tests:** Identity, low-rank, and ordinary random matrices under both Lanczos/Lanczos and analytic/Lanczos combinations. Assert consistent unavailable status and retention of unaffected metrics.
 
-### CO-22 — High: Lanczos ridge shifts fitted support but not reference Ritz poles
+## CO-06 — FIXED — Collapses outside the requested cell subset prevent execution
 
-- **Locations:** `rmt/lanczos_stieltjes.py:474-501,879-925,936-942`; `rmt/mp.py:755-810`.
-- A positive ridge is added during Cholesky factorization, so support/threshold estimation describes a shifted operator. `reference_ritz` still extracts poles from the **unshifted** Lanczos matrix. The MP adapter also compares unshifted eigenvalues with the shifted support. `constant_tail` and `reference_ritz` therefore use inconsistent ridge semantics.
-- **Fix/check:** either add the ridge to the operator and consistently transform all outputs back, or use it only for numerical stabilization with explicit correction. Test a spiked factor at zero and nonzero ridge.
+**Locations:** `run_experiments.py:1139-1144,1168-1173`.
 
-### CO-23 — Medium: modal spike-count aggregation can return poles below its threshold
+**Trigger/root cause:** Collapse rejection runs over the full manifest before `--cells` is parsed. A selected cell is rejected merely because it duplicates an unselected cell, even though no duplicate intervention is being executed.
 
-- **Locations:** `rmt/lanczos_stieltjes.py:953-981`.
-- With the default zero residue floor, the modal count is selected across probes, but locations come from the longest recurrence **regardless of that probe's count**. The code then takes its largest `spike_count` Ritz values without reapplying the threshold. If that probe detected fewer spikes than the mode, subthreshold values are returned as spikes.
-- **Fix/check:** select a representative consistent with the modal count and threshold, or report count/location uncertainty separately. Construct probes whose counts disagree and assert every returned pole exceeds `threshold`.
+**Reproduction:** Call the runner with `--execute --device cpu --parameter-cap 3500000 --max-train-tokens 10 --cells 0` and a fresh temporary output path. It rejects collapsed cells `[0, 1]` before checking/loading the dataset, despite only cell 0 being selected.
 
-### CO-24 — Medium: Lanczos results are relabeled as an MP fit while fit/failure diagnostics are lost
+**Impact:** Single-cell calibration and subset execution unexpectedly require `--allow-collapsed-allocations` for interventions that are not part of the run.
 
-- **Locations:** `rmt/mp.py:789-813`; `run_experiments.py:383-425`; `rmt/lanczos_stieltjes.py:991-1014`.
-- The adapter computes `ks_distance` against an analytic MP CDF fitted only to the upper edge, then replaces the support with the Lanczos lower/upper edges. That KS value is not goodness-of-fit to the reported Lanczos density. It also makes `n_upper_outliers` the count above the finite-size threshold while `bulk_fraction` excludes everything above the bulk edge, so these summaries need not partition the same sample.
-- The runner drops `converged`, per-probe counts/edges, and fit optimizer success diagnostics. Unconverged or unsuccessful fits can be written as ordinary scientific metrics without a status.
-- **Fix/check:** label analytic-projection KS separately, distinguish edge departures from thresholded spikes, and persist convergence/optimizer metadata with an explicit failure policy.
+**Fix direction:** Validate/resolve selected indices immediately after manifest construction. Apply execution-level collapse rejection to duplicate groups within that selection, while retaining full-manifest collapse metadata for provenance.
 
-### CO-25 — Medium: the random FARMS option fails with its default window size on square matrices
+**Regression tests:** Select one member of a collapsed pair, both members, and a cell outside the pair. Reject only executed duplicate designs unless explicitly allowed; still reject invalid indices early.
 
-- **Locations:** `rmt/farms_aspect_ratio.py:131-156,250-258`; `rmt/factory.py:243-254`.
-- With no explicit window size, a square matrix at target ratio 1 is sampled using its entire shape. There is one possible window start, but `sampling=random` defaults to `5 * 5 = 25` distinct starts and raises. The CLI exposes random sampling but not `n_submatrices`; all square attention weights encounter this combination.
-- **Fix/check:** cap the requested unique count, require an explicit smaller window, or reject this combination during preflight with a clear remedy. Test `farms_spectrum(eye(64), FARMSConfig(sampling='random'))`.
+## CO-07 — FIXED — Upper-cutoff tail fits use the wrong likelihood and CDF
 
-### CO-26 — Medium: degenerate matrices can abort the entire post-training analysis
+**Locations:** `rmt/tail.py:60-64,88-104` (`fit_powerlaw_csn`), `246-278` (`fixed_cutoff_mle`); related filtering/comparison in `508-579`.
 
-- **Locations:** `rmt/mp.py:210-224,333-388`; `rmt/lanczos_stieltjes.py:487-499,544-547`; `run_experiments.py:272-289,471-480`.
-- Zero/very-low-rank spectra fail positive-eigenvalue minimums or Cholesky/tail estimation; there is no per-matrix diagnostic-failure boundary in `analyze_model`. Plotting also calls `positive.min()/max()` without handling an empty positive spectrum and makes repeated bin edges for a constant spectrum.
-- **Fix/check:** return structured unavailable diagnostics for unsupported/degenerate spectra, retain other matrix results, and make plots handle empty/constant data. Test zero, rank-one, and equal-singular-value matrices.
+**Trigger/root cause:** Supplying `xmax` discards observations above the bound, but the estimator still uses the unbounded Pareto MLE and CDF. Once observations are selected on `x <= xmax`, the retained distribution is conditional on that upper bound. Its normalization depends on alpha, so the unbounded closed-form MLE is no longer valid. The reported KS and likelihood are likewise for the wrong distribution.
 
-### CO-27 — Medium: MP outlier summaries silently exclude zero eigenvalues
+**Reproduction:** Exact mid-quantiles of an alpha-3 density restricted to `[1, 2]`:
 
-- **Locations:** `rmt/mp.py:101-103,220-249,505`.
-- MP fitting drops all zeros before computing counts, KS, and `bulk_fraction`. For a rectangular rank-deficient factor, genuine reduced-spectrum zeros below the positive MP lower edge vanish from the lower-outlier count and denominator. These are not just the structural extra zeros of a tall full covariance: the function is given the reduced spectrum.
-- **Fix/check:** distinguish the positive sample used to estimate scale from the complete reduced spectrum used for counts/ESD metadata. Report rank deficiency explicitly.
+```python
+u = (np.arange(10000) + 0.5) / 10000
+x = (1 - u * (1 - 2**-2))**(-0.5)
+fixed_cutoff_mle(x, xmin=1, xmax=2)["alpha"]
+fit_powerlaw_csn(x, min_tail=1000, xmax=2)["alpha"]
+```
 
-### CO-28 — Medium: several reported KS distances are midpoint-CDF discrepancies, not KS statistics
+Both return approximately **4.718**, not 3.
 
-- **Locations:** `rmt/mp.py:235-237,458-460`; `rmt/tail.py:87-89,250-252`.
-- True two-sided one-sample KS must compare the model with both `i/n` and `(i-1)/n`. Using `(i-0.5)/n` underestimates KS (by `1/(2n)` for a continuous ordered sample under the usual construction). For CSN candidate tails, changing sample size changes that bias and can change the selected cutoff, not just the printed number.
-- **Fix/check:** use a shared two-sided KS implementation and test it against SciPy on fixed sorted samples. Review lower-edge and PT-specific CDF discrepancy labels separately.
+**Impact:** Public upper-bounded tail analyses report systematically too-steep exponents. This option is not currently exposed by the production CLI, so the direct library callers are the immediate affected surface.
 
-### CO-29 — Medium: CSN candidate cutoffs can split a group of equal observations
+**Fix direction:** Fit the properly normalized density on `[xmin, xmax]` and its conditional CDF, including consistent likelihood/uncertainty calculations. Alternatively reject unsupported bounded fitting explicitly; do not silently label an unbounded fit as a valid bounded analysis. Distinguish a hard observation bound from an exponentially truncated tail model.
 
-- **Location:** `rmt/tail.py:74-88`.
-- Candidates are indices and `tail = data[index:]`; when `data[index]` is tied with earlier values, the selected tail can omit observations equal to its own `xmin`. This violates `tail = data[data >= xmin]` and affects alpha, tail count, and cutoff selection on repeated/quantized or pooled spectra.
-- **Fix/check:** enumerate distinct cutoff values or their first indices. Assert `n_tail == count(data >= xmin)` on arrays with ties.
+**Regression tests:** Known bounded-Pareto quantiles/samples, a finite cutoff near xmin, scale transformations, and convergence to the existing unbounded estimator as the upper bound grows. The sibling `rmt/tail.py` has the same issue; fix independently without merging the incompatible packages.
 
-### CO-30 — Medium: Hill-selected results retain empty CSN metadata
+## CO-08 — FIXED — Absolute `allclose` tolerance suppresses valid low-scale rank tails
 
-- **Locations:** `rmt/tail.py:429-476`; `run_experiments.py:417-425,481-488`.
-- Selecting Hill returns a finite `selected_alpha` but merges `_empty_fit()` for `xmin`, `n_tail`, and KS. The CSV then describes a finite tail estimate with zero observations and no cutoff, and the tail overlay cannot be drawn. Hill window metadata is similarly not a CSN fit.
-- **Fix/check:** populate Hill's actual `k` and threshold/order statistic; mark inapplicable CSN fields explicitly rather than presenting zero observations. Test consistency of exponent and support metadata for every estimator.
+**Location:** `rmt/tail.py:313-315`.
 
-### CO-31 — Medium: nonpooled Porter–Thomas calibration uses the wrong sample size when pooling is requested
+**Trigger/root cause:** `rank_ordered_mle` uses `np.allclose(tail, tail[0])` to detect a constant sample. Default `atol=1e-8` declares any sufficiently small positive spectrum constant even when its relative dynamic range is large.
 
-- **Location:** `rmt/scalars.py:220-273`.
-- `porter_thomas_monte_carlo(..., pooling_window=p)` calibrates KS distances using `p * dimension` random entries, but each observed distance is still computed from a single vector of `dimension` entries. For `p > 1`, null p-values are miscalibrated. The separate `_pooled` function does not have this particular size mismatch.
-- **Fix/check:** reject pooling in the single-vector API or actually pool observed vectors identically to the null. Test false-positive calibration, not only p-value bounds and seed equality.
+**Reproduction:** For `x = np.arange(1., 1001.)**(-0.5)`, `rank_ordered_mle(x, tail_fraction=1)["alpha"]` is approximately 3. For `1e-10 * x`, it is NaN. Multiplication by a constant cannot change this power-law exponent.
 
-### CO-32 — Medium: QR orthogonalization invents subspace directions for dependent columns
+**Impact:** The paper-1 rank-tail path and library users can lose valid diagnostics solely because weight/eigenvalue units changed.
 
-- **Locations:** `rmt/overlap.py:64-105`.
-- Reduced QR returns the requested number of columns even when the input is rank-deficient. Passing duplicate, nonzero columns causes principal-angle/projector metrics to include arbitrary orthogonal-completion directions, so equivalent mathematical spans can receive different scores.
-- **Fix/check:** use rank-revealing orthogonalization with a tolerance and retain only the actual span. Compare a basis with the same basis containing duplicate columns.
+**Fix direction:** Detect actual or relative/log-domain degeneracy without an absolute unit-dependent tolerance. Keep truly repeated levels unavailable.
 
-### CO-33 — Medium: level cleaning deletes degeneracies before spacing statistics
+**Regression tests:** Rescale the same nondegenerate tail over several orders of magnitude; require equal alpha and appropriately scaled xmin. Retain a constant-tail rejection case.
 
-- **Locations:** `rmt/spacing.py:29-34,128-153,288-298`.
-- `np.unique` removes repeated levels. Real degeneracies/zero spacings are thus erased, changing sample size and adjacent-gap statistics toward stronger apparent repulsion. Nearest-neighbor fitting further discards zero gaps. Spectra affected by rank collapse or quantization are especially relevant here.
-- **Fix/check:** preserve multiplicities for statistics; if a smoother needs distinct abscissae, fit a multiplicity-aware staircase and map back. Alternatively reject and report degeneracies explicitly. Test `[0,0,1,2,3]` and a rank-deficient covariance spectrum.
+## CO-09 — FIXED — An absent activation signal can appear perfectly aligned with bottom singular vectors
 
-### CO-34 — Medium: Brody standard-error calculation is not valid in two exposed cases
+**Locations:** `rmt/overlap.py:16-27,207-231`; consumption at `run_experiments.py:491-515`.
 
-- **Locations:** `rmt/spacing.py:233-268`.
-- The inverse-curvature likelihood formula is also applied to the empirical-CDF least-squares objective, which is not a log likelihood and whose residuals are correlated. Near beta 0 or 1, the finite-difference stencil is asymmetric but the code uses a symmetric second-derivative formula. Both can emit misleading uncertainty.
-- **Fix/check:** use bootstrap/calibrated uncertainty for CDF fitting and boundary-aware/profile likelihood or bootstrap for endpoint MLEs. Return unavailable uncertainty when it is not justified.
+**Trigger/root cause:** Activation eigendecomposition accepts zero/degenerate covariance. `dual_end_alignment` then selects a fixed number of eigenvectors as a dominant subspace without checking positive numerical rank or a spectral gap at the selection boundary. Eigenvectors within a repeated eigenspace are arbitrary; selecting part of that space is not an identifiable data-derived subspace.
 
-### CO-35 — Low: Delta3 integration is numerically dependent on the absolute spectral origin
+**Reproduction:**
 
-- **Location:** `rmt/spacing.py:384-403`.
-- Integrals use differences of large absolute squares/cubes and solve for a line using absolute coordinates. A large constant shift of otherwise identical unfolded levels can cause cancellation or a nearly singular Gram matrix, although Delta3 must be translation-invariant.
-- **Fix/check:** perform every window calculation in local coordinates `[0,L]`. Compare regular levels before and after an offset such as `1e9`.
+```python
+svd = compute_svd(np.diag([4., 3., 2., 1.]))
+r = dual_end_alignment(svd, np.zeros((4, 4)))
+```
 
-## Tests, packaging, and HPC entry point
+Observed `top_alignment=0`, `bulk_alignment=0`, and **`bottom_alignment=1`**, although the activation covariance contains no signal whatsoever. A different valid zero-eigenspace basis changes these answers.
 
-### CO-36 — High for preflight: the overlap dispatcher test has a deterministically wrong assertion
+**Impact:** Dead/constant activations, undersampled covariance, or a tied leading eigenspace can produce a false dual-end finding. This directly affects the interpretation of the project's central activation-alignment metrics.
 
-- **Locations:** `tests/test_cli_dispatch.py:206-215`; `rmt/overlap.py:143-146`; `tests/test_pure_rmt_overlap.py:14-18`.
-- The dispatcher test expects every metric to return 1 for an aligned three-column basis. The documented `staats_dual_end` implementation is the **mean of all pairwise squared overlaps**: `mean(eye(3)) = 1/3`. Another test explicitly expects the analogous four-column value to be `1/4`.
-- **Fix/check:** resolve the metric contract and make assertions metric-specific. Under the present contract, change the test expectation, not the implementation to satisfy the conflicting test. The README's unqualified pytest preflight cannot currently be assumed green.
-- Broader gaps: no end-to-end runner/trainer test exercises measured budgets, initialization seeds, partial batches, validation limits, subset plotting, or checkpoint-on-failure; combination tests only construct configurations. Add regressions for the findings above.
+**Fix direction:** Check covariance numerical rank using a scale-aware tolerance. Report rank-zero alignment as unavailable. Do not split an unresolved eigenvalue cluster at the dominant-subspace cutoff: use cluster/projector-aware analysis or explicitly mark the basis-dependent statistic unqualified. Preserve the distinct meanings of the selectable overlap metrics.
 
-### CO-37 — High when sharing the environment: both projects use the incompatible top-level name `rmt`
+**Regression tests:** Constant activations, zero covariance, low-rank covariance, and orthogonal rotations within a repeated leading eigenspace. Qualified reported subspace scores must be invariant to such rotations, or explicitly unavailable.
 
-- **Locations:** this `rmt/__init__.py`; `run_experiments.py:27-63`; `pipelines/__init__.py:3-11`; sibling `remote-sk-random-matrix-ml-esd-fixed/pyproject.toml`.
-- The ESD project can be installed as distribution/package `rmt`; this project uses the same import name with different exports and container conventions. Running combined pytest collection or using the wrong current directory/PYTHONPATH can resolve the wrong package, causing import errors or incorrect helper implementations. Loading both under the same name in one interpreter cannot work reliably.
-- **Fix/check:** ideally namespace/package this project uniquely; until then use separate Python processes, the correct working directory, and an explicit `rmt.__file__` assertion. See `to_change_env.md`.
-- Related dependency-boundary issue: importing `pipelines.cli_config` eagerly executes `pipelines/__init__.py`, importing Torch/training/data code. Importing `models.chinchilla_scaling` likewise imports the Transformer through `models/__init__.py`. These nominally lightweight configuration/allocation imports are not framework-free in practice.
+## CO-10 — FIXED — Concurrent runners can both claim the same fresh output directory
 
-### CO-38 — Medium/conditional: the launcher is not configured for the demonstrated cluster deployment
+**Locations:** `run_experiments.py:1127-1131`; shared temporary paths in `_write_json` (`93-100`) and `_write_csv` (`111-120`).
 
-- **Locations:** `run_hpc.slurm:2-25,35-55`; `requirements.txt`; `other_requirements.md`.
-- It assumes `cuda/12.1`, `python/3.10`, and a local `.venv`, while the saved ESD run used `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`. It omits the demonstrated `gpulong` partition. Those assumptions are portability mismatches, not evidence that the cluster lacks these modules.
-- `SLURM_SUBMIT_DIR` is assumed to be this project; submitting the script by path from the repository root makes its relative script/data paths wrong. `logs/` must exist before submission, since its creation inside the script is too late for SLURM to open stdout/stderr; the README does document that prerequisite.
-- **Observed local-checkout issue:** `git ls-files --eol` reports tracked LF but working-tree CRLF for both SLURM files. Copying this Windows checkout verbatim can make Linux/SLURM reject or misinterpret the script despite `bash -n` accepting its grammar.
-- **Fix/check:** apply the environment checklist in `to_change_env.md`, use a verified project root/interpreter, create output directories before `sbatch`, and transfer LF scripts. Do not blindly reinstall these pins into the working ESD environment.
+**Evidence:** Static control-flow/concurrency analysis; no concurrent destructive test was run.
 
-### CO-39 — Medium: the runner overrides the requested minimum tail size
+**Trigger/root cause:** Checking nonemptiness and then calling `mkdir(..., exist_ok=True)` is a check-then-act race. Two processes can both observe the path as absent/empty and proceed. There is no exclusive owner marker or lock. Per-file atomic replacement does not make the complete run exclusive, and both processes even use the same `.tmp` filenames.
 
-- **Locations:** `run_experiments.py:284-289`; `pipelines/cli_config.py:196`; `rmt/factory.py:349-362`.
-- `analyze_model` replaces `tail_minimum` with `max(8, min(config.tail_minimum, eigenvalues.size // 3))`. For a 64-value spectrum, a requested minimum of 50 or 1000 becomes 21; a requested minimum below 8 is raised to 8. A run can therefore publish a tail fit that does not meet the operator's minimum evidence threshold even though the serialized configuration retains the requested value.
-- **Fix/check:** honor the configured minimum and return an unavailable fit when the sample is too small, or expose and record an explicit adaptive-minimum policy. Exercise the runner, not just `dispatch_tail_solver`, with an oversized requested minimum.
+**Impact:** Concurrent CLI submissions using one output path can mix configurations/metrics, overwrite each other, or fail on temporary-file replacement. The normal per-job SLURM default reduces this risk, but direct CLI runs and shared explicit output paths remain affected.
 
-## Scientific limitations requiring explicit decisions, not automatically code bugs
+**Fix direction:** Atomically acquire output ownership before any artifact write, using exclusive directory creation or an exclusive owner/lock file that also supports intentionally pre-created empty directories. Reject a competing owner. Use uniquely named temporary files as additional protection, not as a substitute for ownership.
 
-1. **Empirical versus analytic optimum:** `build_manifest` fixes `D/N=20` (`run_experiments.py:189-194`) even when a different `ScalingLaw` is supplied. That empirical rule is documented but is not generally the minimizer of the supplied unequal-exponent loss law. Label it empirical or expose the analytic optimum instead of treating the two as identical.
-2. **Lanczos threshold has units:** `threshold_c * N**(-delta)` is an absolute additive gap (`rmt/lanczos_stieltjes.py:924-926`). With default `c=1` and trained weight variances far below 1, it can dwarf the spectrum and detect no meaningful spikes. This follows the implemented formula; it requires scale-aware calibration or documented normalization, not an assertion that unit-noise synthetic tests validate every trained layer.
-3. **Recycled tokens are not fresh data:** the runner repeatedly shuffles the finite training corpus to reach large D. Chinchilla fits based on fresh data do not automatically apply to repeated-token exposure. Record unique corpus size and epochs separately.
-4. **This is not official WikiText validation:** the downloader tokenizes only the training split, and the runner holds out its last 10%; the staged official validation/test JSONL files are unused. This avoids direct train/validation reuse but must not be labeled official benchmark perplexity.
-5. **FARMS observations are dependent:** overlapping windows produce correlated spectra. A tail exponent can be a useful descriptive statistic, but naive iid standard errors/bootstrap interpretations based on pooled eigenvalue count are not automatically calibrated.
-6. **`xmax` is exclusion, not a truncated-law fit:** `rmt/tail.py` filters values above `xmax` but retains an unbounded Pareto likelihood/CDF. Do not interpret that as fitting a distribution normalized on `[xmin,xmax]`. Likewise `powerlaw_pkg_fit` uses a nonnested-style normal/Vuong p-value for pure versus nested truncated power laws; boundary/nesting-aware calibration is needed for inferential claims.
-7. **Precision and lesion meaning need controls:** BF16/TF32 training/covariance and approximate SVD choices need calibration. A full SVD reconstruction itself changes floating-point weights, so a reconstruct-without-removal control is important before attributing very small bottom-lesion effects solely to removed directions.
+**Regression tests:** Two processes synchronized at output acquisition: exactly one may own/write the run; the other must fail before altering its artifacts. Keep the sequential nonempty-directory rejection test.
 
-## Suggested repair order
+## Completed remediation notes
 
-1. Fix CO-01–09, CO-12, CO-22, and the contradictory test before spending another large training allocation.
-2. Make every completed cell recoverable; add end-to-end small offline tests for caps, masks, flag dispatch, and failures.
-3. Resolve spectrum-domain/uncertainty semantics and preserve diagnostics before drawing cross-regime scientific conclusions.
-4. Apply `to_change_env.md`, then validate on an allocated GPU with the exact intended environment. Static syntax checks are not evidence of CUDA/compiler/driver compatibility.
+1. CO-01 through CO-10 are fixed and covered by the current suite, including `tests/test_bug_report_current.py`.
+2. The sibling package was repaired independently; the incompatible `rmt` APIs and normalization conventions were not merged.
+3. Pinned-environment, CUDA FP16/BF16, compilation, covariance-device, SVD-driver, asset, and cluster execution remain operator validation gates; CPU verification is not GPU certification.

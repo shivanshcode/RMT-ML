@@ -11,7 +11,7 @@ Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/supp
 - A Gaussian factor's empirical nonzero covariance spectrum lies near the analytical support; edge tests allow finite-size Tracy-Widom fluctuations rather than requiring a deterministic one-percent edge match.
 - The median estimator recovers entry standard deviation within `2 percent` on seeded matrices large enough for asymptotics.
 - Eigenvalue and singular-value compatibility APIs agree exactly under the declared normalization.
-- Triangular-KDE fitting returns a positive ordered support and recovers seeded Gaussian entry scale within the documented finite-sample tolerance.
+- The historical-KDE-compatible MP path uses integrated ECDF mass, returns a positive ordered support, and recovers seeded square/rectangular Gaussian entry scale without seeking an optimization boundary.
 - TW95 lies above the asymptotic null edge for the calibration size. BBP tests distinguish the population threshold `1+sqrt(q)` from the sample edge `(1+sqrt(q))^2`.
 
 ## Lanczos–Stieltjes calibration
@@ -24,6 +24,7 @@ Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/supp
 - A seeded `240 x 960` factor with three population spikes above `1+sqrt(q)` is analyzed matrix-free with 96 Lanczos steps and three probes.
 - The detector returns exactly three separated right poles, positive residues, and an upper support edge within `2.5 percent` of `(1+sqrt(q))^2`.
 - The result labels the `reference_ritz` rule, stores one convergence flag per probe, and returns a finite nonnegative probe-averaged density on the estimated support.
+- Production factor analysis uses a bulk-edge-relative margin and gives the same spike decision after uniform factor rescaling; direct operator analysis retains the named absolute reference mode.
 - After modal spike counting, reference spike locations and residues come from the longest realized recurrence, matching the released source.
 - Tests do not substitute the incorrect `(1+q)^2` expression.
 
@@ -34,7 +35,8 @@ Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/supp
 - Every sampled window has the declared fixed shape; pooled level count equals windows times reduced window dimension.
 - Gaussian matrices with source row/column ratios `{0.1,0.25,0.5,1.0,2.0,4.0}` are sampled through square `256 x 256` windows. Analytically fitted pooled upper edges remain within `2 percent` of the common null value four.
 - `shape_normalize_eigenvalues` maps the analytic raw edge to the requested target exactly and remains separately labeled from FARMS.
-- Raw and canonical pooled spectra from identical windows differ exactly by `max(window_shape)`.
+- Raw and canonical pooled spectra from identical windows differ exactly by `max(window_shape)`; raw, canonical, and trace modes record one exact denominator per sampled window.
+- Runner regressions verify that pooled FARMS levels feed ESD/tail outputs while spacing count and gap ratio remain those of the original single operator; Golden Lanczos keeps its raw operator input.
 
 ## Tail calibration
 
@@ -60,7 +62,7 @@ Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/supp
 - Identity stable rank is its dimension; rank-one stable rank is one.
 - Entropy of equal singular energy is `log(rank)` and rank-one entropy is zero.
 - Condition number is infinite for an exactly singular matrix.
-- Projection entries lie in `[0,1]`; aligned bases produce an identity overlap matrix.
+- Projection entries lie in `[0,1]`; aligned bases produce an identity overlap matrix. Zero-rank covariance is unavailable, null modes are excluded, and tied cutoff clusters are not split.
 - Top, bulk, and bottom tranche indices are disjoint and cover the spectrum.
 - Identical subspaces have zero principal angles and unit principal-angle/projector scores after arbitrary basis rotation.
 - The archived signed maximum-cosine convention is tested separately from sign-invariant alternatives.
@@ -73,18 +75,21 @@ Phase III file ownership is explicit: `test_lanczos_stieltjes.py` owns VEST/supp
 - Changing a future token cannot change earlier logits while dropout is disabled.
 - Allocation conserves `C=c_fND`; target-ratio mode satisfies `D/N=20`; fixed-compute regimes satisfy `N=N*/kappa`, `D=kappa D*`.
 - Captured covariance is symmetric positive semidefinite and has feature dimension equal to module input width.
-- Explicit float32 accumulation allocates both moment buffers on the requested device. The CPU calibration checks exact second moments; CUDA execution is an operator hardware gate.
+- Explicit float32 accumulation allocates both moment buffers on the requested device. A large-mean/small-variance multi-batch calibration checks the stable centered covariance against float64; CUDA execution is an operator hardware gate.
 - `compute_tensor_svd(matrix, backend="cpu")` returns a reconstructing pure `SVDResult`; CUDA driver behavior is an operator hardware gate.
-- Lesion contexts restore every parameter exactly, including when evaluation raises.
+- Lesion contexts restore every parameter exactly, including when evaluation raises; non-finite tranche/decile evaluations fail rather than becoming completed results.
+- FP32 non-finite gradients fail before optimizer/accounting mutation, epoch-only all-ignored loaders terminate, finite high losses remain distinct, and capture/evaluation restore every mixed submodule mode.
 - Reference descending-decile lesions map decile zero to the largest singular group and the last decile to the smallest group, then restore exact parameters on context exit.
 
 ## CLI and isolation calibration
 
 - Parsing no method flags produces exactly `RMTMethodConfig()`.
 - Every declared value in each of the six primary choice tuples constructs successfully, both alone and in the full Cartesian configuration set.
-- Each MP fit, unfolding, tail, overlap, and spike method is dispatched on a small seeded calibration input and returns its declared result label.
+- Each MP fit, unfolding, tail, overlap, and spike method is dispatched on a small seeded calibration input and returns its declared result label; standalone Lanczos assumption failures return unavailable status without discarding other metrics.
+- Bounded-Pareto quantiles recover their generating exponent, rank-tail fits are invariant under scaling, three levels produce one gap ratio, scaler overflow can back off and retry, token-budget schedules cross loader boundaries, and concurrent output acquisition has exactly one winner.
 - The Thamm adapter must preserve the modified curve's raw singular edges under the exact `s**2/max(shape)` conversion and return finite compatibility scale and KS diagnostics.
 - `--boundary-detector lanczos_stieltjes` resolves to MP method `lanczos_stieltjes` and spike detector `lanczos_poles`.
+- Production preset precedence is tested by argparse destination so aliases and `--flag=value` override presets; long-option abbreviation is disabled.
 - Pipeline defaults resolve to the Golden method set and BF16/CUDA accelerator intent. Argument sets for all four SLURM tracks parse through the centralized schema.
 - Static SLURM checks require all four track functions and the three strict offline environment exports.
 - Every maintained `rmt/*.py` source is scanned case-insensitively; the framework name prohibited by the isolation contract must have zero occurrences, including comments and docstrings.

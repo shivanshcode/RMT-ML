@@ -210,14 +210,40 @@ def dual_end_alignment(
     activation_fraction = float(activation_fraction)
     if not 0.0 < activation_fraction <= 1.0:
         raise ValueError("activation_fraction must lie in (0, 1]")
-    target_count = max(1, int(np.ceil(activation_fraction * activation_vectors.shape[1])))
-    target = activation_vectors[:, :target_count]
+    scale = float(np.max(np.abs(eigenvalues)))
+    tolerance = np.finfo(float).eps * max(covariance.shape) * scale
+    positive_rank = int(np.count_nonzero(eigenvalues > tolerance)) if scale > 0.0 else 0
     tranches = tranche_indices(
         svd.s.size,
         top_fraction=top_fraction,
         bottom_fraction=bottom_fraction,
     )
-    full_overlap = projection_overlap(svd.V[:, : svd.s.size], activation_vectors)
+    if positive_rank == 0:
+        return {
+            "activation_eigenvalues": eigenvalues,
+            "overlap_matrix": np.empty((svd.s.size, 0), dtype=np.float64),
+            "top_alignment": float("nan"),
+            "bulk_alignment": float("nan"),
+            "bottom_alignment": float("nan"),
+            "tranche_indices": tranches,
+            "metric": str(metric),
+            "available": False,
+            "status": "unavailable: activation covariance has numerical rank zero",
+            "activation_rank": 0,
+        }
+    signal_vectors = activation_vectors[:, :positive_rank]
+    target_count = max(1, int(np.ceil(activation_fraction * positive_rank)))
+    # Never split an unresolved positive-eigenvalue cluster.  Including the
+    # complete cluster makes every subspace score invariant to eigensolver
+    # rotations inside that cluster.
+    while (
+        target_count < positive_rank
+        and abs(eigenvalues[target_count - 1] - eigenvalues[target_count])
+        <= tolerance
+    ):
+        target_count += 1
+    target = signal_vectors[:, :target_count]
+    full_overlap = projection_overlap(svd.V[:, : svd.s.size], signal_vectors)
     scores = {
         name: float(
             evaluate_overlap_metric(
@@ -236,6 +262,10 @@ def dual_end_alignment(
         "bottom_alignment": scores["bottom"],
         "tranche_indices": tranches,
         "metric": str(metric),
+        "available": True,
+        "status": "available",
+        "activation_rank": positive_rank,
+        "activation_target_dimension": target_count,
     }
 
 

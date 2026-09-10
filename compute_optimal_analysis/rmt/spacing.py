@@ -321,7 +321,8 @@ def fit_brody_cdf_nls(
 def r_statistic(levels: np.ndarray) -> float:
     """Return the mean adjacent-gap ratio, which requires no unfolding."""
 
-    ordered = _clean_levels(levels, minimum=4)
+    # Three levels provide two adjacent gaps and therefore one valid ratio.
+    ordered = _clean_levels(levels, minimum=3)
     gaps = np.diff(ordered)
     first, second = gaps[:-1], gaps[1:]
     denominator = np.maximum(first, second)

@@ -26,24 +26,20 @@ spacing KS vs Wigner-GOE / Poisson, Dyson–Mehta Δ₃(L) and number variance �
 at L=10, 50, plus the complex spacing ratio for the Ginibre test on square matrices.
 
 **Activation-covariance overlap (Paper 3).** When activations are captured, the
-overlap O_k = maxⱼ|v_k·f_j| between right singular vectors and activation-covariance
-eigenvectors, plus the eigenvector/eigenvalue coincidence summaries.
+overlap O_k = maxⱼ|v_k·f_j| between right singular vectors and identifiable positive activation-covariance eigenvectors, plus the eigenvector/eigenvalue coincidence summaries. Rank-zero and unresolved repeated positive eigenspaces are explicitly unavailable rather than basis-dependent.
 
 **Decile ablation + epoch tracking.** Perplexity after zeroing each singular-value
-decile (scope = all-matrices-of-type or only-analyzed), and stable-rank tracking of
-a settable layer list across training checkpoints (every ~10% of iterations).
+decile (scope = all-matrices-of-type or only-analyzed), and backend-dispatched stable-rank tracking with actual backend/dtype provenance across training checkpoints (every ~10% of iterations). Tied parameter aliases are lesioned once and oversized partition counts fail before mutation.
 
 ## Architecture and why it is trustworthy
 
 The scientific core is pure numpy/scipy and is validated against closed-form RMT
-ground truth (GOE/GUE/Ginibre/Wishart/Pareto) in 76 fast unit tests that need no
-torch. The torch/HF layer is exercised by 29 more tests using tiny in-process
-models — no network, no downloads. A single SVD dispatcher (`cached_svd`) drives
+ground truth (GOE/GUE/Ginibre/Wishart/Pareto) in the current pure-science test suite. The torch/HF layer is exercised using tiny in-process models—no network or downloads. Run the suite for environment-specific counts rather than relying on historical totals. A single SVD dispatcher (`cached_svd`) drives
 the A100 for large matrices but always hands numpy back to the analysis, and
 `per_matrix_analysis` is proven to call it exactly once per matrix. Everything
 runs fully offline (HF offline env vars set before any model touch).
 
-The v2 repair suite additionally covers fail-closed tokenizer provenance, strict run status, complete-mean spacing, lambda-domain windowed Hill support, pristine reversible decile sweeps, metadata-first bounded processing, and precision-qualified SVD caching. Run the current suite locally for an environment-specific count; historical pass totals are not a release guarantee.
+The repair suite additionally covers fail-closed tokenizer provenance, strict run/stage status, fixed-seed selftesting, complete-mean spacing, bounded-Pareto likelihoods, matched random-control estimators, lambda-domain windowed Hill support (including its final boundary observation), alias-safe reversible decile sweeps, metadata-first bounded processing, corruption-tolerant precision-qualified SVD caching, and atomic output ownership. ESD bins are globally bounded for tiny-IQR spectra; text contexts account for learned-position offsets; activation capture preserves mixed submodule modes and accepts explicitly named projections without numeric layer indices. Run the current suite locally for an environment-specific count; historical pass totals are not a release guarantee.
 
 ## How to run
 
@@ -65,7 +61,7 @@ fused `query_key_value` automatically.
 ## Output files (per model `<tag>`)
 
 `<tag>_matrix_metrics.csv` (one row per matrix), `<tag>_summary.json`, `<tag>_run_status.json`,
-`<tag>_perplexity.json`, `<tag>_stable_rank_per_epoch.csv`, and plots under `<tag>/`.
+`<tag>_perplexity.json`, `<tag>_stable_rank_per_epoch.csv`, optional WeightWatcher result/status JSON, and plots under `<tag>/`.
 
 ## CSV columns (groups)
 
@@ -74,11 +70,11 @@ MP bulk (`sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig],
 n_*_outliers, frac_*_outliers`) · small-SV (`ks_lower, n_below_minus,
 frac_mass_below_minus, excess_small_sv`) · tail (`alpha, xmin, ks_D, n_tail,
 alpha_on_nu, alpha_hill_nu, alpha_hill_lambda, hill_plateau_alpha/width/start/end/window/support,
-hill_is_powerlaw, LR_trunc, LR_p, alpha_rand, max_ev_rand`) · scalars
+hill_is_powerlaw, LR_trunc, LR_p, alpha_rand plus estimator/kind/cutoff/support/KS metadata, max_ev_rand`) · scalars
 (`row_wise_entropy, spectral_entropy, stable_rank, mp_softrank, bulk_mass_frac,
 max/min/mean/median_sval, ipr_top10_mean, ipr_bulk_mean, pt_ks_mean,
 pt_frac_random`) · bulk stats (`r_statistic_mean, nn_KS_GOE, nn_KS_Poisson,
 delta3_L10/L50, sigma2_L10/L50, complex_r_abs_mean, complex_r_cos_mean`) ·
 overlap (`max/mean_overlap, overlap_at_top/bottom_sval, rho_*,
 max_overlap_with_top_eigenvector, argmax_singular_for_top_eigenvector,
-diagonal_coincidence`) · per-decile (`entropy_decile_1..10, srk_decile_1..10`).
+diagonal_coincidence, overlap_status, activation_covariance_rank`) · per-decile (`entropy_decile_1..10, srk_decile_1..10`).

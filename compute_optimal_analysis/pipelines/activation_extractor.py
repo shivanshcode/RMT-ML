@@ -15,7 +15,12 @@ from rmt.svd_result import SVDResult
 
 @dataclass
 class CovarianceAccumulator:
-    """Accumulate first and second moments on one device without retaining batches."""
+    """Accumulate stable centered moments on one device without retaining batches.
+
+    ``sum_vector`` stores the running mean and ``gram_matrix`` stores the
+    centered sum of products (M2).  Their historical attribute names are kept
+    for API compatibility.
+    """
 
     dimension: int
     count: int = 0
@@ -68,16 +73,31 @@ class CovarianceAccumulator:
             flattened = flattened[:limit]
         if flattened.shape[0] == 0:
             return
-        self.count += int(flattened.shape[0])
-        self.sum_vector.add_(flattened.sum(dim=0))
-        self.gram_matrix.addmm_(flattened.T, flattened)
+        batch_count = int(flattened.shape[0])
+        batch_mean = flattened.mean(dim=0)
+        centered = flattened - batch_mean
+        batch_m2 = centered.T @ centered
+        if self.count == 0:
+            self.sum_vector.copy_(batch_mean)
+            self.gram_matrix.copy_(batch_m2)
+            self.count = batch_count
+            return
+        old_count = self.count
+        combined = old_count + batch_count
+        delta = batch_mean - self.sum_vector
+        self.gram_matrix.add_(batch_m2)
+        self.gram_matrix.add_(
+            torch.outer(delta, delta), alpha=(old_count * batch_count) / combined)
+        self.sum_vector.add_(delta, alpha=batch_count / combined)
+        self.count = combined
 
     def second_moment(self) -> Tensor:
         if self.count < 1:
             raise ValueError("no activations have been accumulated")
-        if self.gram_matrix is None:
-            raise RuntimeError("gram matrix is unavailable")
-        return self.gram_matrix / self.count
+        if self.gram_matrix is None or self.sum_vector is None:
+            raise RuntimeError("moment buffers are unavailable")
+        return self.gram_matrix / self.count + torch.outer(
+            self.sum_vector, self.sum_vector)
 
     def covariance(self, *, centered: bool = True, unbiased: bool = False) -> Tensor:
         if self.count < 1:
@@ -86,14 +106,11 @@ class CovarianceAccumulator:
             raise ValueError("unbiased covariance requires at least two observations")
         if self.gram_matrix is None or self.sum_vector is None:
             raise RuntimeError("moment buffers are unavailable")
-        second = self.gram_matrix / self.count
         if centered:
-            mean = self.sum_vector / self.count
-            result = second - torch.outer(mean, mean)
-            if unbiased:
-                result = result * (self.count / (self.count - 1))
+            denominator = self.count - 1 if unbiased else self.count
+            result = self.gram_matrix / denominator
         else:
-            result = second
+            result = self.second_moment()
         return 0.5 * (result + result.T)
 
     def clear(self) -> None:
@@ -295,7 +312,7 @@ def compute_activation_covariances(
         "bfloat16": torch.bfloat16,
     }[amp_dtype]
     use_amp = target.type == "cuda" and selected_dtype != torch.float32
-    was_training = model.training
+    module_modes = {module: bool(module.training) for module in model.modules()}
     model.eval()
     try:
         with ActivationExtractor(
@@ -324,7 +341,8 @@ def compute_activation_covariances(
                         model(**inputs)
                     extractor.valid_position_mask = None
     finally:
-        model.train(was_training)
+        for module, training in module_modes.items():
+            module.training = training
     return extractor.covariances(centered=centered)
 
 

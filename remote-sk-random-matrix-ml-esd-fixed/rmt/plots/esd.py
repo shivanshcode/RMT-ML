@@ -14,31 +14,36 @@ def _fd_width(x):
     return h if h > 0 else None
 
 
-def _bin_edges(vals, lo, hi):
-    """Edges spanning the *plotted* range at the bulk's FD width.
+def _bin_edges(vals, lo, hi, *, max_bins=400):
+    """Return finite monotone edges with a hard bound on total bin count.
 
-    Previously the FD width was computed from the bulk but converted to a bin
-    *count*, which matplotlib then spread over the full data range (bulk plus
-    right-tail outliers). That silently inflated the bin width by the ratio
-    max(s)/nu_plus and smeared the small-nu region.
+    Freedman--Diaconis resolution is retained when affordable.  For tiny-IQR
+    spectra, the bounded grid prevents an ``arange`` proportional to
+    ``MP-support / IQR`` (which can otherwise request hundreds of GiB).
     """
     vals = np.asarray(vals, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        raise ValueError("histogram values must contain a finite observation")
+    limit = int(max_bins)
+    if limit < 2:
+        raise ValueError("max_bins must be at least two")
     bulk = vals[(vals >= lo) & (vals <= hi)]
     h = _fd_width(bulk if bulk.size >= 2 else vals)
     left, right = float(min(vals.min(), lo)), float(max(vals.max(), hi))
-    if h is None or not np.isfinite(h):
-        return np.linspace(left, right, 51)
-    requested = int(np.ceil((right - left) / h))
-    if requested <= 400:
-        return np.linspace(left, right, max(50, requested) + 1)
-    # Preserve the bulk FD resolution and cover sparse tails separately rather
-    # than spreading a capped count over the outlier-inflated full range.
-    bulk_left, bulk_right = max(left, float(lo)), min(right, float(hi))
-    bulk_edges = np.arange(bulk_left, bulk_right + h, h)
-    tails = vals[(vals < bulk_left) | (vals > bulk_right)]
-    tail_edges = (np.quantile(tails, np.linspace(0.0, 1.0, min(100, tails.size) + 1))
-                  if tails.size else np.asarray([]))
-    return np.unique(np.concatenate(([left], bulk_edges, tail_edges, [right])))
+    if not np.isfinite(left) or not np.isfinite(right):
+        raise ValueError("histogram bounds must be finite")
+    if right <= left:
+        scale = max(abs(left), 1.0)
+        left, right = left - 0.5e-6 * scale, right + 0.5e-6 * scale
+    requested = (None if h is None or not np.isfinite(h)
+                 else int(np.ceil((right - left) / h)))
+    if requested is None:
+        count = min(50, limit)
+    else:
+        count = min(limit, max(2, requested))
+    # linspace allocates exactly count+1 values; no intermediate unbounded grid.
+    return np.linspace(left, right, count + 1)
 
 
 def _count_frac(vals, lo, hi):

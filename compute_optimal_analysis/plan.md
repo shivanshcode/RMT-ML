@@ -19,7 +19,7 @@
 
 `CLI method config -> compute allocation -> transformer config -> training checkpoint -> weight/operator + activation covariance -> selected spectral methods -> independent lesions -> tabular and graphical report`
 
-Every metric row records compute tier, regime, `kappa`, requested and realized parameter/token counts, layer, matrix role, shape, spectrum mode, MP method, spike detector, tail solver and exponent kind, unfolding strategy, overlap metric, and random seed. `spectral_method_config.json` records every method-specific hyperparameter before execution.
+Every metric row records compute tier, regime, `kappa`, requested and realized parameter/token counts, layer, matrix role, shape, spectrum mode, MP method, spike detector, tail solver and exponent kind, unfolding strategy, overlap metric and availability/rank status, and random seed. `spectral_method_config.json` records every method-specific hyperparameter before execution.
 
 ## Module interactions
 
@@ -35,7 +35,7 @@ Every metric row records compute tier, regime, `kappa`, requested and realized p
 
 The full research grid is the Cartesian product of compute budgets `{1e15,1e16,1e17}` and regime multipliers `{0.25,1.0,4.0}`. The production CLI defaults to the requested Golden budget `{1e16}` with all three multipliers; arbitrary positive lists are accepted. The fixed-compute transform is `(N,D)=(N*/kappa,kappa D*)`.
 
-For every `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`, collect selected MP fit, lower/upper edge counts, selected spikes, selected tail estimate plus exponent convention, scalar metrics, Brody beta, `r`, number variance, and selected dual-end overlap. Lesions remove a configurable fraction from top, MP-bulk candidate, or bottom tranches. Count-matched and Frobenius-energy-matched modes are available; reference decile surgery is separate.
+For every `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`, collect selected MP fit, lower/upper edge counts, selected spikes, selected tail estimate plus exponent convention, scalar metrics, Brody beta, `r`, number variance, and selected dual-end overlap. Numerically unavailable standalone detectors and rank-zero activation covariance are serialized without discarding unaffected metrics. Lesions remove a configurable fraction from top, MP-bulk candidate, or bottom tranches. Count-matched and Frobenius-energy-matched modes are available; reference decile surgery is separate.
 
 ## Outputs
 

@@ -95,6 +95,7 @@ class FARMSResult:
     target_aspect_ratio: float
     canonical_aspect_ratio: float
     normalization: str
+    normalization_denominators: np.ndarray
     transposed: bool
     coverage_fraction: float
     reference_aspect_ratio: float
@@ -102,14 +103,19 @@ class FARMSResult:
     def __post_init__(self) -> None:
         values = np.asarray(self.eigenvalues, dtype=np.float64).ravel()
         starts = np.asarray(self.starts, dtype=np.int64)
+        denominators = np.asarray(self.normalization_denominators, dtype=np.float64).ravel()
         if values.size == 0 or not np.all(np.isfinite(values)) or np.any(values < 0.0):
             raise ValueError("eigenvalues must be finite, nonnegative, and nonempty")
         if starts.ndim != 2 or starts.shape[1] != 2 or starts.shape[0] < 1:
             raise ValueError("starts must have shape (n_submatrices, 2)")
+        if (denominators.size != starts.shape[0]
+                or not np.all(np.isfinite(denominators)) or np.any(denominators <= 0.0)):
+            raise ValueError("normalization_denominators must contain one positive value per window")
         if not np.isfinite(float(self.reference_aspect_ratio)) or float(self.reference_aspect_ratio) <= 0.0:
             raise ValueError("reference_aspect_ratio must be finite and positive")
         object.__setattr__(self, "eigenvalues", np.sort(values)[::-1])
         object.__setattr__(self, "starts", starts)
+        object.__setattr__(self, "normalization_denominators", denominators)
 
     @property
     def n_submatrices(self) -> int:
@@ -123,6 +129,7 @@ class FARMSResult:
         payload = asdict(self)
         payload.pop("eigenvalues")
         payload["starts"] = self.starts.tolist()
+        payload["normalization_denominators"] = self.normalization_denominators.tolist()
         payload["n_submatrices"] = self.n_submatrices
         payload["n_eigenvalues"] = int(self.eigenvalues.size)
         return payload
@@ -326,14 +333,19 @@ def farms_spectrum(
         rng=config.seed,
     )
     spectra: list[np.ndarray] = []
+    denominators: list[float] = []
     for submatrix in iter_farms_submatrices(matrix, window_shape, starts):
         singular_values = np.linalg.svd(submatrix, compute_uv=False)
         eigenvalues = np.square(singular_values)
+        denominator = 1.0
         if config.normalization == "canonical":
-            eigenvalues = eigenvalues / max(window_shape)
+            denominator = float(max(window_shape))
+            eigenvalues = eigenvalues / denominator
         elif config.normalization == "trace":
             total = float(np.sum(eigenvalues))
-            eigenvalues = eigenvalues if total == 0.0 else eigenvalues / total
+            denominator = total if total > 0.0 else 1.0
+            eigenvalues = eigenvalues / denominator
+        denominators.append(denominator)
         spectra.append(np.asarray(eigenvalues, dtype=np.float64))
     pooled = np.concatenate(spectra)
     canonical = min(window_shape) / max(window_shape)
@@ -346,6 +358,7 @@ def farms_spectrum(
         target_aspect_ratio=float(config.target_aspect_ratio),
         canonical_aspect_ratio=float(canonical),
         normalization=str(config.normalization),
+        normalization_denominators=np.asarray(denominators, dtype=np.float64),
         transposed=transposed,
         coverage_fraction=_coverage_fraction(matrix.shape, window_shape, starts),
         reference_aspect_ratio=float(window_shape[1] / window_shape[0]),

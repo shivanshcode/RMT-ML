@@ -71,7 +71,7 @@ def seed_everything(seed: int) -> None:
 
 
 def cosine_warmup_multiplier(
-    step: int,
+    step: int | float,
     total_steps: int,
     warmup_steps: int,
     minimum_ratio: float,
@@ -80,7 +80,7 @@ def cosine_warmup_multiplier(
 
     if total_steps < 1 or warmup_steps < 0 or not 0.0 <= minimum_ratio <= 1.0:
         raise ValueError("scheduler arguments are invalid")
-    step = max(0, int(step))
+    step = max(0.0, float(step))
     if warmup_steps > 0 and step < warmup_steps:
         return max(np.finfo(float).eps, (step + 1) / warmup_steps)
     decay_steps = max(1, total_steps - warmup_steps)
@@ -118,7 +118,7 @@ def evaluate_language_model(
         "bfloat16": torch.bfloat16,
     }[amp_dtype]
     use_amp = target.type == "cuda" and selected_dtype != torch.float32
-    was_training = model.training
+    module_modes = {module: bool(module.training) for module in model.modules()}
     model.eval()
     total_loss = 0.0
     total_tokens = 0
@@ -157,7 +157,8 @@ def evaluate_language_model(
                     total_loss += loss_value * count
                     total_tokens += count
     finally:
-        model.train(was_training)
+        for module, training in module_modes.items():
+            module.training = training
     if total_tokens == 0:
         raise ValueError("evaluation scored no valid next-token targets")
     mean_loss = total_loss / total_tokens
@@ -247,18 +248,27 @@ class LanguageModelTrainer:
         if not isinstance(train_dataloader, Sized):
             raise ValueError("train_dataloader must expose its finite length")
         available_steps = len(train_dataloader) * self.config.epochs
-        total_steps = min(available_steps, self.config.max_steps or available_steps)
         token_budget = self.config.max_train_tokens
-        # A token budget is the authoritative completion criterion.  Epoch and
-        # update estimates only size the scheduler; the finite loader is recycled.
-        if token_budget is not None:
-            total_steps = max(total_steps, 1)
+        if token_budget is None:
+            total_steps = min(available_steps, self.config.max_steps or available_steps)
+        else:
+            # Token-budget runs recycle the finite loader, so one epoch cannot
+            # cap their LR horizon.  The caller's successful-update estimate is
+            # authoritative when supplied; skipped attempts never advance it.
+            total_steps = (
+                int(self.config.max_steps)
+                if self.config.max_steps is not None
+                else max(available_steps, 1)
+            )
         if total_steps < 1:
             raise ValueError("train_dataloader contains no batches")
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer,
             lambda step: cosine_warmup_multiplier(
-                step,
+                (
+                    self.processed_train_tokens / token_budget * total_steps
+                    if token_budget is not None else step
+                ),
                 total_steps,
                 self.config.warmup_steps,
                 self.config.min_learning_rate_ratio,
@@ -334,10 +344,30 @@ class LanguageModelTrainer:
                     raise FloatingPointError(f"non-finite training loss at step {self.global_step}")
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
-                gradient_norm = torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.config.gradient_clip
-                )
-                if not bool(torch.isfinite(torch.as_tensor(gradient_norm)).item()):
+                parameters_with_grad = [
+                    parameter for parameter in self.model.parameters()
+                    if parameter.grad is not None
+                ]
+                if parameters_with_grad:
+                    component_norms = torch.stack([
+                        torch.linalg.vector_norm(parameter.grad.detach().float())
+                        for parameter in parameters_with_grad
+                    ])
+                    raw_gradient_norm = torch.linalg.vector_norm(component_norms)
+                else:
+                    raw_gradient_norm = torch.zeros((), device=self.device)
+                gradients_finite = bool(torch.isfinite(raw_gradient_norm).item())
+                scaler_enabled = bool(self.scaler.is_enabled())
+                if gradients_finite:
+                    gradient_norm = torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.config.gradient_clip
+                    )
+                elif scaler_enabled:
+                    # GradScaler recorded the overflow during unscale_.  Do not
+                    # clip inf gradients (which can turn them into NaNs); let
+                    # scaler.step/update skip the optimizer and back off.
+                    gradient_norm = raw_gradient_norm
+                else:
                     self.optimizer.zero_grad(set_to_none=True)
                     raise FloatingPointError(
                         f"non-finite gradient norm at attempted step {self.attempted_steps}")
@@ -347,9 +377,11 @@ class LanguageModelTrainer:
                 updated = (not self.scaler.is_enabled()
                            or float(self.scaler.get_scale()) >= previous_scale)
                 if updated:
-                    self.scheduler.step()
                     self.global_step += 1
                     self.processed_train_tokens += batch_tokens
+                    # Token-budget LR decay follows successful target progress;
+                    # skipped updates and variable/partial batches do not skew it.
+                    self.scheduler.step()
                     made_progress = True
                     consecutive_skips = 0
                 else:
@@ -388,8 +420,11 @@ class LanguageModelTrainer:
                     callback(dict(record))
             if stop:
                 break
-            if not made_progress:
+            if not made_progress and consecutive_skips == 0:
                 raise RuntimeError("one complete data pass produced no optimizer updates")
+            # A pass containing only scaler-overflow skips is allowed to recycle;
+            # GradScaler may now succeed at its backed-off scale.  The explicit
+            # consecutive-skip limit still prevents an infinite loop.
             epoch += 1
             if token_budget is None and epoch >= self.config.epochs:
                 break

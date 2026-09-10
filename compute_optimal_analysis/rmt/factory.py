@@ -16,7 +16,6 @@ from .mp import (
     detect_spikes_bbp,
     detect_spikes_tracy_widom,
     fit_marchenko_pastur,
-    fit_marchenko_pastur_farms,
     fit_marchenko_pastur_kde,
     fit_marchenko_pastur_lanczos,
     fit_marchenko_pastur_thamm,
@@ -354,18 +353,19 @@ def dispatch_mp_fit(
                                "spectral_max": float(np.max(prepared.eigenvalues))}}
         )
     if method == "farms_unbiased":
-        return fit_marchenko_pastur_farms(
-            matrix,
-            target_aspect_ratio=config.farms_target_aspect_ratio,
-            window_size=config.farms_window_size,
-            row_windows=config.farms_row_windows,
-            column_windows=config.farms_column_windows,
-            sampling=config.farms_sampling,
-            step_size=config.farms_step_size,
-            orient_tall=config.farms_orient_tall,
-            seed=config.seed,
-            normalization=config.farms_normalization,
+        if config.aspect_ratio_mode not in {"farms_normalized", "farms_unbiased"}:
+            raise ValueError(
+                "farms_unbiased MP fitting requires aspect_ratio_mode="
+                "farms_normalized or farms_unbiased")
+        compatible = prepare_spectrum(matrix, config, svd=svd)
+        fitted = fit_marchenko_pastur(
+            compatible.eigenvalues, compatible.aspect_ratio,
             trim_upper=config.mp_trim_upper,
+        )
+        return MPFitResult(
+            **{**fitted.as_dict(), "method": "farms_unbiased",
+               "diagnostics": {**compatible.diagnostics,
+                               "spectral_max": float(np.max(compatible.eigenvalues))}}
         )
     if method == "thamm_modified_singular":
         return fit_marchenko_pastur_thamm(
@@ -443,6 +443,7 @@ def dispatch_spike_detector(
     variance: float = 1.0,
     eigenvalues: np.ndarray | None = None,
     aspect_ratio: float | None = None,
+    operator_shape: tuple[int, int] | None = None,
 ) -> SpikeDetectionResult:
     """Run the configured right-spike detector on a rectangular factor."""
 
@@ -462,8 +463,14 @@ def dispatch_spike_detector(
         eigenvalues = mp_eigenvalues(matrix)
     values = None if eigenvalues is None else np.asarray(eigenvalues, dtype=np.float64)
     if config.spike_detector == "tracy_widom_95":
-        effective_small = int(values.size)
-        effective_large = max(effective_small, int(round(effective_small / q)))
+        geometry = matrix.shape if operator_shape is None else operator_shape
+        effective_small = int(min(geometry))
+        effective_large = int(max(geometry))
+        if effective_small < 2 or effective_large < effective_small:
+            raise ValueError("operator_shape must contain valid matrix dimensions")
+        geometry_q = effective_small / effective_large
+        if not np.isclose(q, geometry_q, rtol=1e-10, atol=1e-12):
+            raise ValueError("aspect_ratio is incompatible with operator_shape")
         return detect_spikes_tracy_widom(
             values,
             effective_small,
@@ -473,22 +480,37 @@ def dispatch_spike_detector(
         )
     if config.spike_detector == "bbp_transition":
         return detect_spikes_bbp(values, q, variance)
-    detected = detect_spikes_from_factor(
-        matrix,
-        steps=config.lanczos_steps,
-        n_probes=config.lanczos_probes,
-        tail_window=config.lanczos_tail_window,
-        threshold_c=config.lanczos_threshold_c,
-        threshold_delta=config.lanczos_threshold_delta,
-        residue_threshold=config.lanczos_residue_threshold,
-        ridge=config.lanczos_ridge,
-        adaptive=config.lanczos_adaptive,
-        convergence_tolerance=config.lanczos_convergence_tolerance,
-        sequence_length=config.lanczos_sequence_length,
-        check_interval=config.lanczos_check_interval,
-        pole_method=config.lanczos_pole_method,
-        rng=config.seed,
-    )
+    try:
+        detected = detect_spikes_from_factor(
+            matrix,
+            steps=config.lanczos_steps,
+            n_probes=config.lanczos_probes,
+            tail_window=config.lanczos_tail_window,
+            threshold_c=config.lanczos_threshold_c,
+            threshold_delta=config.lanczos_threshold_delta,
+            residue_threshold=config.lanczos_residue_threshold,
+            ridge=config.lanczos_ridge,
+            adaptive=config.lanczos_adaptive,
+            convergence_tolerance=config.lanczos_convergence_tolerance,
+            sequence_length=config.lanczos_sequence_length,
+            check_interval=config.lanczos_check_interval,
+            pole_method=config.lanczos_pole_method,
+            rng=config.seed,
+        )
+    except (ValueError, np.linalg.LinAlgError) as error:
+        return SpikeDetectionResult(
+            method="lanczos_poles",
+            threshold=float("nan"),
+            bulk_edge=float("nan"),
+            spikes=np.asarray([], dtype=np.float64),
+            indices=np.asarray([], dtype=np.int64),
+            diagnostics={
+                "available": False,
+                "status": "unavailable",
+                "converged": False,
+                "reason": str(error),
+            },
+        )
     return SpikeDetectionResult(
         method="lanczos_poles",
         threshold=detected.threshold,

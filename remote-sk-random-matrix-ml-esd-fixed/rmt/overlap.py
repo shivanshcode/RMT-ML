@@ -17,6 +17,32 @@ def _svd_of(weight, svd):
     return Vh.astype(np.float64), s.astype(np.float64)
 
 
+def _qualified_activation_eigensystem(feature_matrix, eig=None):
+    """Return identifiable positive covariance modes or an unavailable reason."""
+
+    C = np.asarray(feature_matrix, dtype=np.float64)
+    if C.ndim != 2 or C.shape[0] != C.shape[1] or not np.all(np.isfinite(C)):
+        return None, None, "activation covariance must be finite and square"
+    evals, evecs = np.linalg.eigh(0.5 * (C + C.T)) if eig is None else eig
+    evals = np.asarray(evals, dtype=np.float64)
+    evecs = np.asarray(evecs, dtype=np.float64)
+    order = np.argsort(evals)[::-1]
+    evals, evecs = evals[order], evecs[:, order]
+    scale = float(np.max(np.abs(evals))) if evals.size else 0.0
+    tolerance = np.finfo(float).eps * max(C.shape) * scale
+    if scale == 0.0 or not np.any(evals > tolerance):
+        return None, None, "activation covariance has numerical rank zero"
+    if np.any(evals < -tolerance):
+        return None, None, "activation covariance is not positive semidefinite"
+    rank = int(np.count_nonzero(evals > tolerance))
+    positive = evals[:rank]
+    # Individual maximum-cosine and coincidence statistics are not identifiable
+    # if an eigensolver may rotate a repeated positive eigenspace.
+    if positive.size > 1 and np.any(np.abs(np.diff(positive)) <= tolerance):
+        return None, None, "activation covariance has an unresolved positive eigenspace"
+    return positive, evecs[:, :rank], None
+
+
 def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
     """Paper 3 Eq. 7: O_k = maxⱼ |v_k·f_j|.
 
@@ -29,16 +55,23 @@ def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
     """
     from .mp import estimate_sigma_gd_median, mp_bounds
     Vh, s = _svd_of(weight, svd)
-    C = np.asarray(feature_matrix, dtype=np.float64)
-    evals, evecs = np.linalg.eigh(C) if eig is None else eig   # ascending
-    order = np.argsort(evals)[::-1]               # descending λ
-    evals = evals[order]
-    evecs = evecs[:, order]                       # columns = f_j
+    evals, evecs, unavailable = _qualified_activation_eigensystem(
+        feature_matrix, eig=eig
+    )
+    if unavailable is not None:
+        return {
+            "available": False, "status": f"unavailable: {unavailable}",
+            "svals": s.copy(), "overlap": np.asarray([], dtype=np.float64),
+            "overlap_matrix": np.empty((len(s), 0), dtype=np.float64),
+            "evals": np.asarray([], dtype=np.float64),
+            "mp_min": float("nan"), "mp_max": float("nan"),
+            "sigma_med": float("nan"), "right_outliers": 0, "left_outliers": 0,
+        }
 
-    # overlap matrix |v_k · f_j| ; Vh rows length = in = dim of f_j
-    k = min(Vh.shape[0], evecs.shape[0])
-    ov_mat = np.abs(Vh[:k] @ evecs)               # (k_sv, dim_f)
-    overlap = np.max(ov_mat, axis=1)              # O_k
+    # Null covariance directions are excluded from signal-overlap claims.
+    k = min(Vh.shape[0], len(s))
+    ov_mat = np.abs(Vh[:k] @ evecs)
+    overlap = np.max(ov_mat, axis=1)
 
     n = Vh.shape[1] if Vh.ndim == 2 else len(Vh)  # in-features
     # n_rows (out-features): prefer the weight, else the SVD's U, else min-dim
@@ -61,7 +94,8 @@ def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
         "mp_min": float(mp_min), "mp_max": float(mp_max),
         "sigma_med": float(sigma),
         "right_outliers": right_outliers, "left_outliers": left_outliers,
-        "evals": evals,
+        "evals": evals, "available": True, "status": "available",
+        "activation_rank": int(evals.size),
     }
 
 
@@ -73,22 +107,23 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
     with :func:`overlap_analysis` (REPORT §2 eigh dedup).
     """
     Vh, s = _svd_of(weight, svd)
-    C = np.asarray(feature_matrix, dtype=np.float64)
-    evals, evecs = np.linalg.eigh(C) if eig is None else eig
-    order = np.argsort(evals)[::-1]
-    evals_desc = evals[order]
-    evecs = evecs[:, order]
+    evals_desc, evecs, unavailable = _qualified_activation_eigensystem(
+        feature_matrix, eig=eig
+    )
+    if unavailable is not None:
+        return {"available": False, "status": f"unavailable: {unavailable}"}
 
-    k = min(Vh.shape[0], evecs.shape[0])
+    n_singular = min(Vh.shape[0], len(s))
+    k = min(n_singular, evecs.shape[1])
     # Reuse overlap_analysis's product when supplied; this avoids a second
     # transformer-scale dense overlap allocation with identical entries.
     if cos_matrix is None:
-        cos_matrix = np.abs(Vh[:k] @ evecs)
+        cos_matrix = np.abs(Vh[:n_singular] @ evecs)
     else:
         cos_matrix = np.asarray(cos_matrix, dtype=np.float64)
-        if cos_matrix.shape != (k, evecs.shape[1]):
+        if cos_matrix.shape != (n_singular, evecs.shape[1]):
             raise ValueError("cos_matrix has incompatible overlap dimensions")
-    svals_desc = s[:k]
+    svals_desc = s[:n_singular]
 
     argmax_per_sv = np.argmax(cos_matrix, axis=1)   # best eigvec for each sv
     diag_hits = np.array([argmax_per_sv[i] == i for i in range(k)], dtype=float)
@@ -106,7 +141,9 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
 
     rho_top_eigenvector_vs_svals = _safe_spear(cos_matrix[:, 0], svals_desc)
     rho_top_singular_vs_evals = _safe_spear(cos_matrix[0, :], evals_desc)
-    rho_diag_vs_svals = _safe_spear(np.diag(cos_matrix[:, :k]), svals_desc)
+    rho_diag_vs_svals = _safe_spear(
+        np.diag(cos_matrix[:k, :k]), svals_desc[:k]
+    )
 
     return {
         "cos_matrix": cos_matrix, "svals_desc": svals_desc, "evals_desc": evals_desc,
@@ -116,6 +153,7 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
         "max_overlap_with_top_eigenvector": max_overlap_with_top_eigenvector,
         "argmax_singular_for_top_eigenvector": argmax_singular_for_top_eigenvector,
         "diagonal_coincidence": diagonal_coincidence,
+        "available": True, "status": "available",
     }
 
 

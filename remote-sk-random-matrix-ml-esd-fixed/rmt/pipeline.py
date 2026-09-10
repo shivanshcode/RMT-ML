@@ -14,6 +14,8 @@ from __future__ import annotations
 import csv
 import json
 import os
+import tempfile
+from datetime import datetime, timezone
 from typing import List, Tuple, Dict, Optional
 
 import numpy as np
@@ -29,10 +31,7 @@ _log = get_logger("rmt.pipeline")
 def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                       **cfg_flags) -> Tuple[str, List[dict]]:
     """Run in a fresh owned directory and finalize status after every stage."""
-    if os.path.isdir(output_dir) and os.listdir(output_dir):
-        raise FileExistsError(
-            f"output directory is not empty: {output_dir}; choose a fresh run directory")
-    os.makedirs(output_dir, exist_ok=True)
+    _acquire_output_directory(output_dir)
     status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
     _write_json(status_path, {"status": "running", "failures": []})
     try:
@@ -148,21 +147,34 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
         _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenizer,
                           failures=failures)
 
-    # optional WeightWatcher baseline (best-effort)
+    # Optional WeightWatcher remains best-effort, but requested/unavailable is
+    # explicit and makes the overall run partial rather than silently complete.
     if cfg.do_ww:
+        baseline_status = {"stage": "weightwatcher", "status": "unavailable"}
         try:
             from .baselines import run_weightwatcher
             ww = run_weightwatcher(model, normalize=cfg.ww_normalize,
                                    glorot_fix=cfg.ww_glorot_fix)
-            if ww is not None:
-                with open(os.path.join(output_dir, f"{model_tag}_weightwatcher.json"),
-                          "w") as f:
-                    json.dump(ww.get("summary", {}), f, indent=2, default=str)
+            if ww is not None and ww.get("status", "complete") == "complete":
+                _write_json(
+                    os.path.join(output_dir, f"{model_tag}_weightwatcher.json"),
+                    ww.get("summary", {}),
+                )
+                baseline_status = {"stage": "weightwatcher", "status": "complete"}
+            else:
+                baseline_status.update({
+                    "status": "unavailable" if ww is None else ww.get("status", "unavailable"),
+                    "reason": "adapter returned no result" if ww is None else ww.get("reason", "unspecified"),
+                })
+                failures.append(dict(baseline_status))
         except Exception as e:                                  # pragma: no cover
-            failures.append({"stage": "weightwatcher", "error": repr(e)})
-            _log.warning("weightwatcher baseline skipped: %s", e)
-            if cfg.strict:
-                raise
+            baseline_status.update({"status": "failed", "reason": repr(e)})
+            failures.append(dict(baseline_status))
+            _log.warning("weightwatcher baseline failed: %s", e)
+        _write_json(
+            os.path.join(output_dir, f"{model_tag}_weightwatcher_status.json"),
+            baseline_status,
+        )
 
     return csv_path, rows, failures
 
@@ -179,30 +191,54 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
                        if k in RunConfig().__dict__})
     os.makedirs(output_dir, exist_ok=True)
     srk_by_layer: Dict[int, List[float]] = {L: [] for L in probe_layers}
+    backend_by_layer: Dict[int, List[str]] = {L: [] for L in probe_layers}
+    dtype_by_layer: Dict[int, List[str]] = {L: [] for L in probe_layers}
     for frac in checkpoint_fracs:
         model = checkpoint_loader(frac)
         spec = get_model_spec(model)
         recs = discover_weight_metadata(model, layer_indices=list(probe_layers),
                                          spec=spec)
         from .scalars import stable_rank
+        from .linalg import cached_svd
         per_layer: Dict[int, List[float]] = {L: [] for L in probe_layers}
+        per_layer_backends: Dict[int, set] = {L: set() for L in probe_layers}
+        per_layer_dtypes: Dict[int, set] = {L: set() for L in probe_layers}
         for meta in recs:
             if meta.layer_idx in per_layer:
                 r = materialize_record(model, meta, spec=spec)
-                per_layer[r.layer_idx].append(stable_rank(s=np.linalg.svd(
-                    np.asarray(r.weight, float), compute_uv=False)))
+                factorization = cached_svd(
+                    np.asarray(r.weight, float), full_matrices=False,
+                    backend=cfg.backend, gpu_min_dim=cfg.gpu_svd_min_dim,
+                )
+                if factorization.degraded and cfg.strict:
+                    raise RuntimeError("checkpoint SVD precision contract was not satisfied")
+                per_layer[r.layer_idx].append(stable_rank(s=factorization.s))
+                per_layer_backends[r.layer_idx].add(factorization.backend)
+                per_layer_dtypes[r.layer_idx].add(factorization.factorization_dtype)
                 r.weight = None
         for L in probe_layers:
             vals = per_layer.get(L, [])
             srk_by_layer[L].append(float(np.mean(vals)) if vals else float("nan"))
+            backend_by_layer[L].append("|".join(sorted(per_layer_backends[L])) or "unavailable")
+            dtype_by_layer[L].append("|".join(sorted(per_layer_dtypes[L])) or "unavailable")
         del recs, model
 
     path = os.path.join(output_dir, f"{model_tag}_stable_rank_per_epoch.csv")
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["training_fraction"] + [f"layer_{L}_stable_rank" for L in probe_layers])
+        w.writerow(
+            ["training_fraction"]
+            + [f"layer_{L}_stable_rank" for L in probe_layers]
+            + [f"layer_{L}_svd_backend" for L in probe_layers]
+            + [f"layer_{L}_svd_dtype" for L in probe_layers]
+        )
         for i, frac in enumerate(checkpoint_fracs):
-            w.writerow([frac] + [srk_by_layer[L][i] for L in probe_layers])
+            w.writerow(
+                [frac]
+                + [srk_by_layer[L][i] for L in probe_layers]
+                + [backend_by_layer[L][i] for L in probe_layers]
+                + [dtype_by_layer[L][i] for L in probe_layers]
+            )
     return path
 
 
@@ -223,7 +259,12 @@ def _maybe_activation_cov(model, records, cfg, spec, tokenizer=None, failures=No
     try:
         from .activations import compute_activation_covariance
         device = _model_device(model)
-        layer_idxs = sorted({r.layer_idx for r in records if r.layer_idx >= 0})
+        numeric_layers = sorted({r.layer_idx for r in records if r.layer_idx >= 0})
+        # Exact names are authoritative.  If any selected target has no parsed
+        # numeric index, omitting the numeric filter keeps discovery and capture
+        # consistent instead of turning it into an empty allowed set.
+        layer_idxs = (None if any(r.layer_idx < 0 for r in records)
+                      else numeric_layers)
         target_names = sorted({
             r.name.split("[", 1)[0].removesuffix(".weight") for r in records
         })
@@ -293,8 +334,27 @@ def _maybe_perplexity(model, records, output_dir, model_tag, cfg, spec, tokenize
             raise
 
 
+def _acquire_output_directory(output_dir):
+    """Atomically claim an absent or intentionally pre-created empty directory."""
+
+    os.makedirs(output_dir, exist_ok=True)
+    if os.listdir(output_dir):
+        raise FileExistsError(
+            f"output directory is not empty: {output_dir}; choose a fresh run directory"
+        )
+    owner = os.path.join(output_dir, ".run-owner.json")
+    try:
+        descriptor = os.open(owner, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise FileExistsError(f"output directory is already owned: {output_dir}") from error
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump({"pid": os.getpid(), "acquired_at_utc": datetime.now(timezone.utc).isoformat()}, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _write_json(path, value):
-    """Write standards-compliant JSON; unavailable numeric values become null."""
+    """Atomically write JSON; unavailable numeric values become null."""
     def clean(obj):
         if isinstance(obj, dict):
             return {str(k): clean(v) for k, v in obj.items()}
@@ -305,8 +365,18 @@ def _write_json(path, value):
         if isinstance(obj, np.integer):
             return int(obj)
         return obj
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(clean(value), f, indent=2, allow_nan=False)
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".json-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            json.dump(clean(value), f, indent=2, allow_nan=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _read_status(path):

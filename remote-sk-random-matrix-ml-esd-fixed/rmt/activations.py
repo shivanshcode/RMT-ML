@@ -118,7 +118,17 @@ class FeatureLayer(nn.Module):
         return self._cov.detach().cpu().numpy()
 
 
-_SKIP = ("embed", "lm_head", "embed_out", "embed_in", "pooler", "head", "norm")
+_EXCLUDED_COMPONENTS = {
+    "embed", "embedding", "embeddings", "embed_out", "embed_in",
+    "embed_tokens", "lm_head", "pooler", "wte", "wpe", "shared",
+}
+
+
+def _excluded_projection(name: str) -> bool:
+    """Exclude actual embedding/output-head components, not ancestor substrings."""
+
+    components = {component.lower() for component in name.split(".")}
+    return bool(components & _EXCLUDED_COMPONENTS)
 
 
 def replace_with_feature_layers(model, layer_indices, device, *, spec=None,
@@ -137,8 +147,7 @@ def replace_with_feature_layers(model, layer_indices, device, *, spec=None,
             continue
         if explicit is not None and name not in explicit:
             continue
-        lname = name.lower()
-        if any(sk in lname for sk in _SKIP):
+        if _excluded_projection(name):
             continue
         if classify(name, spec) is None:
             continue
@@ -235,7 +244,7 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
     from .config import effective_context_length
     requested_max_length = int(max_length)
     max_length = effective_context_length(model, requested_max_length)
-    was_training = model.training
+    module_modes = {module: bool(module.training) for module in model.modules()}
     batches = _load_text_batches(model, tokenizer, text_path, n_text_batches,
                                  max_length, stride, device,
                                  allow_fallback=allow_fallback,
@@ -257,7 +266,7 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
     for name, module in model.named_modules():
         if not (isinstance(module, nn.Linear) or type(module).__name__ == "Conv1D"):
             continue
-        if any(sk in name.lower() for sk in _SKIP) or classify(name, spec) is None:
+        if _excluded_projection(name) or classify(name, spec) is None:
             continue
         if explicit_targets is not None and name not in explicit_targets:
             continue
@@ -325,7 +334,10 @@ def compute_activation_covariance(model, tokenizer, layer_indices, device, *,
             })
     finally:
         restore_linears(model)
-        model.train(was_training)
+        # Assign flags directly: ``model.train(root_mode)`` recursively flattens
+        # intentionally mixed train/eval submodule state.
+        for module, training in module_modes.items():
+            module.training = training
     return result
 
 

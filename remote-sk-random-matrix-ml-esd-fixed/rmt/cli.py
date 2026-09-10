@@ -107,13 +107,15 @@ def main(argv: Optional[list] = None) -> int:
 
     if args.selftest:
         from .selftest import run
-        ok = run(seed=args.seed or 1234)
+        from .config import SEED
+        ok = run(seed=SEED)
         return 0 if ok else 1
 
     cfg = _config_from_args(args)
     # gate the real run on the selftest passing
     from .selftest import run as selftest_run
-    if not selftest_run(seed=cfg.seed or 1234, verbose=True):
+    from .config import SEED
+    if not selftest_run(seed=SEED, verbose=True):
         _log.error("selftest FAILED — aborting before touching real matrices")
         return 1
 

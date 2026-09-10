@@ -153,7 +153,7 @@ gamma_minus = (a - b)^2
 gamma_plus  = (a + b)^2.
 ```
 
-`BiRef` supplies the constant-tail Stieltjes solution and `BiRel` propagates it through each finite prefix. `EstimDensity` averages the resulting imaginary parts across probes. `EstimSpike` counts finite-Jacobi Ritz values above `gamma_plus + c N^-delta`, takes the modal count across probes, and reports locations from the longest recurrence. The released detector does not compute a separate fixed-point support equation and does not threshold residues, although Ritz residues are the squared first components of the tridiagonal eigenvectors and are exactly the VEST pole weights.
+`BiRef` supplies the constant-tail Stieltjes solution and `BiRel` propagates it through each finite prefix. `EstimDensity` averages the resulting imaginary parts across probes. The reference `EstimSpike` uses the absolute rule `gamma_plus + c N^-delta`; the production adapter deliberately uses the scale-relative rule `gamma_plus + c gamma_plus N^-delta` so equivalent spectra in transformer-scale units receive equivalent decisions. It takes the modal count across probes and reports locations from a qualifying recurrence. The released detector does not compute a separate fixed-point support equation and does not threshold residues, although Ritz residues are the squared first components of the tridiagonal eigenvectors and are exactly the VEST pole weights.
 
 #### Discrepancies found
 
@@ -172,7 +172,7 @@ The released `EstimSpike` derives its threshold edge from the first true finite 
 - `reference_ritz` takes the modal finite-VEST Ritz count across probes and reports locations from the longest recurrence; `constant_tail` preserves the Phase II extended-section alternative.
 - If several counts have equal modal frequency, the released dictionary traversal does not define a scientifically meaningful tie policy. The port deterministically selects the tied count nearest the probe-count mean and records all per-probe counts.
 - Ritz residues are always reported and may be filtered by an optional nonnegative threshold. A zero threshold reproduces reference counting.
-- The spike threshold uses the consensus `lambda_plus + c N^-delta`, not the first probe's noisy terminal coefficients.
+- The production spike threshold uses the consensus scale-relative `lambda_plus + c lambda_plus N^-delta`, not the first probe's noisy terminal coefficients; output records the effective margin and convention.
 - Rectangular factors use matrix-free covariance products and exact trace scaling without materializing a dense covariance.
 - Diagnostics now report per-probe recurrence lengths, convergence flags, edges, pole counts, residues, consensus coefficients, and selected pole method.
 
@@ -220,7 +220,7 @@ No source-bearing file in codebase2 defines Chebyshev unfolding or `Delta_3` rig
 
 Aspect ratio is stored as `Q=max(shape)/min(shape)`, while the MP law internally uses `1/Q`. Raw eigenvalues are usually `s^2` with no covariance denominator. The archive also contains cells that normalize a Gram matrix by its trace or by a dimension, so notebook plots are not all on one scale.
 
-The simplest MP scale estimate discards a manually chosen number of largest eigenvalues, takes the largest retained eigenvalue as the MP upper edge, and solves backward for `sigma`. The automated fitter builds a linear-kernel KDE over eigenvalues and minimizes the residual between that KDE and the MP density while floating only `sigma`. The Phase II `kde_bulk_fit` reproduces this scientific choice with a pure NumPy triangular kernel and a bounded SciPy optimizer.
+The simplest MP scale estimate discards a manually chosen number of largest eigenvalues, takes the largest retained eigenvalue as the MP upper edge, and solves backward for `sigma`. The automated archive fitter builds a linear-kernel KDE over eigenvalues and minimizes the residual between that KDE and the MP density while floating only `sigma`. The maintained `kde_bulk_fit` keeps its trimming/bandwidth compatibility surface but now minimizes an integrated complete-sample ECDF objective with a bounded SciPy optimizer, avoiding the invalid unsmoothed-density comparison at the square MP hard edge.
 
 The archive defines stable rank as `sum(lambda)/max(lambda)`, MP soft rank as `lambda_plus/lambda_max`, a hard-rank tolerance, convolutional tensor reshapers, IPR-related participation/localization ratios, and spike location formulas. Its matrix entropy first divides a generally rectangular matrix by `trace(W)`, which is undefined for many shapes and unnecessary because the following singular-energy probabilities are scale invariant. Phase I's squared-singular-value entropy is retained, and `normalized_matrix_entropy` reproduces the archive's final division by `log(numerical_rank)` without the invalid trace step.
 
@@ -260,7 +260,7 @@ Implementation decision: `lanczos_stieltjes.py` implements adaptive double-reort
 |---|---|---|
 | `--mp-fit-method analytic_mp` | Robust MP quantile scale fit | Phase I corrected baseline |
 | `--mp-fit-method thamm_modified_singular` | Adaptive-Gaussian singular ESD with empirical lower edge and fitted amplitude/upper edge | Faithful codebase2 curve fit; fitted edges are converted to canonical covariance units for bulk selection |
-| `--mp-fit-method kde_bulk_fit` | Triangular-KDE residual fit of MP scale | Faithful to codebase3's automated notebook, implemented without sklearn |
+| `--mp-fit-method kde_bulk_fit` | Upper-trimmed, complete-sample ECDF fit of MP scale | Hardened descendant of codebase3's automated KDE notebook; finite at the square hard edge |
 | `--mp-fit-method lanczos_stieltjes` | Lanczos-Cholesky support estimate | 2025 paper; requires matrix/operator input, not only eigenvalues |
 | `--mp-fit-method farms_unbiased` | Analytic MP fit on FARMS pooled fixed-ratio spectra | Hu et al. subsampling plus Phase I MP fitting |
 | `--unfolding-strategy polynomial_chebyshev` | Chebyshev smooth staircase fit | Independent compatibility method; not codebase2 |

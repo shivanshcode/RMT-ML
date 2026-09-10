@@ -51,7 +51,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
         digest = weight_digest(W)
         cached = load_svd(cfg.svd_cache_dir, record.name, digest=digest,
                           required_dtype="float64", allow_degraded=False,
-                          return_metadata=True)
+                          return_metadata=True, expected_shape=(n, m))
         if cached is not None:
             U, cached_s, cached_vh, provenance = cached
             svd = SVDResult(U=U, s=cached_s, Vh=cached_vh, n=n, m=m,
@@ -160,24 +160,51 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
             row["LR_p"] = pk["LR_p"] if pk else _nan()
         else:
             row["LR_trunc"] = _nan(); row["LR_p"] = _nan()
-        # optional randomized-control
-        row["alpha_rand"] = _nan(); row["max_ev_rand"] = _nan()
+        # Optional randomized control uses the same estimator, exponent
+        # convention, and support-selection policy as the headline alpha.
+        row.update({
+            "alpha_rand": _nan(), "alpha_rand_estimator": selected_name,
+            "alpha_rand_kind": row["alpha_kind"], "alpha_rand_xmin": _nan(),
+            "alpha_rand_n_tail": 0, "alpha_rand_ks_D": _nan(),
+            "max_ev_rand": _nan(),
+        })
         if cfg.do_randomize:
             rng = np.random.default_rng(cfg.seed)
             Wr = rng.standard_normal(W.shape) * np.std(W)
             sr = np.linalg.svd(Wr, compute_uv=False)
-            row["alpha_rand"] = TAIL.fit_powerlaw_csn((sr ** 2) / N_cov)["alpha"]
-            row["max_ev_rand"] = float(np.max(sr ** 2) / N_cov)
+            random_lam = (sr ** 2) / N_cov
+            row["max_ev_rand"] = float(np.max(random_lam))
+            if selected_name == "csn":
+                random_fit = TAIL.fit_powerlaw_csn(random_lam)
+                row["alpha_rand"] = random_fit["alpha"]
+                row["alpha_rand_xmin"] = random_fit["xmin"]
+                row["alpha_rand_n_tail"] = random_fit["n_tail"]
+                row["alpha_rand_ks_D"] = random_fit["ks_D"]
+            elif selected_name == "hill":
+                ordered_random = np.sort(
+                    random_lam[np.isfinite(random_lam) & (random_lam > 0.0)]
+                )[::-1]
+                random_k = min(max(1, ordered_random.size // 40), ordered_random.size - 1)
+                if ordered_random.size >= 2:
+                    row["alpha_rand"] = TAIL.hill_alpha_at(ordered_random, random_k)
+                    row["alpha_rand_xmin"] = float(ordered_random[random_k])
+                    row["alpha_rand_n_tail"] = int(random_k)
+            else:
+                random_plateau = TAIL.hill_plateau(random_lam, window=cfg.hill_window)
+                row["alpha_rand"] = random_plateau["hill_plateau_alpha"]
     else:
         for kx in ("alpha", "xmin", "ks_D", "n_tail", "alpha_on_nu",
                    "alpha_hill_nu", "alpha_hill_lambda", "hill_plateau_alpha",
                    "hill_plateau_width", "hill_plateau_start_rank",
                    "hill_plateau_end_rank", "hill_window",
                    "hill_support_observations", "hill_is_powerlaw",
-                   "LR_trunc", "LR_p", "alpha_rand", "max_ev_rand"):
+                   "LR_trunc", "LR_p", "alpha_rand", "alpha_rand_xmin",
+                   "alpha_rand_n_tail", "alpha_rand_ks_D", "max_ev_rand"):
             row[kx] = _nan()
         row["alpha_estimator"] = "disabled"
         row["alpha_kind"] = "unavailable"
+        row["alpha_rand_estimator"] = "disabled"
+        row["alpha_rand_kind"] = "unavailable"
 
     # --- scalars ----------------------------------------------------------- #
     row["row_wise_entropy"] = SC.row_wise_entropy(W)
@@ -243,21 +270,24 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
                 # overlap functions, instead of two identical eigh on (d_in x d_in).
                 eig = np.linalg.eigh(C)
                 ov = OV.overlap_analysis(W, C, svd=svd, eig=eig)
-                coi = OV.eigenvector_eigenvalue_coincidence(
-                    W, C, svd=svd, eig=eig, cos_matrix=ov["overlap_matrix"])
-                if ovmat_out is not None:
-                    ovmat_out[record.name] = ov["overlap_matrix"]
-                o = ov["overlap"]
-                row["max_overlap"] = float(np.max(o))
-                row["mean_overlap"] = float(np.mean(o))
-                row["overlap_at_top_sval"] = float(o[0])
-                row["overlap_at_bottom_sval"] = float(o[-1])
-                row["rho_top_eigenvector_vs_svals"] = coi["rho_top_eigenvector_vs_svals"]
-                row["rho_top_singular_vs_evals"] = coi["rho_top_singular_vs_evals"]
-                row["rho_diag_vs_svals"] = coi["rho_diag_vs_svals"]
-                row["max_overlap_with_top_eigenvector"] = coi["max_overlap_with_top_eigenvector"]
-                row["argmax_singular_for_top_eigenvector"] = coi["argmax_singular_for_top_eigenvector"]
-                row["diagonal_coincidence"] = coi["diagonal_coincidence"]
+                row["overlap_status"] = ov["status"]
+                row["activation_covariance_rank"] = int(ov.get("activation_rank", 0))
+                if ov.get("available", False):
+                    coi = OV.eigenvector_eigenvalue_coincidence(
+                        W, C, svd=svd, eig=eig, cos_matrix=ov["overlap_matrix"])
+                    if ovmat_out is not None:
+                        ovmat_out[record.name] = ov["overlap_matrix"]
+                    o = ov["overlap"]
+                    row["max_overlap"] = float(np.max(o))
+                    row["mean_overlap"] = float(np.mean(o))
+                    row["overlap_at_top_sval"] = float(o[0])
+                    row["overlap_at_bottom_sval"] = float(o[-1])
+                    row["rho_top_eigenvector_vs_svals"] = coi["rho_top_eigenvector_vs_svals"]
+                    row["rho_top_singular_vs_evals"] = coi["rho_top_singular_vs_evals"]
+                    row["rho_diag_vs_svals"] = coi["rho_diag_vs_svals"]
+                    row["max_overlap_with_top_eigenvector"] = coi["max_overlap_with_top_eigenvector"]
+                    row["argmax_singular_for_top_eigenvector"] = coi["argmax_singular_for_top_eigenvector"]
+                    row["diagonal_coincidence"] = coi["diagonal_coincidence"]
                 capture = fm_dict[key]
                 row["activation_mean_count"] = int(capture.get("mean_count", 0))
                 row["activation_fm_count"] = int(capture.get("fm_count", 0))
@@ -289,6 +319,8 @@ def _set_overlap_nans(row):
               "max_overlap_with_top_eigenvector", "diagonal_coincidence"):
         row[k] = _nan()
     row["argmax_singular_for_top_eigenvector"] = -1
+    row["overlap_status"] = "not_requested_or_unavailable"
+    row["activation_covariance_rank"] = 0
 
 
 # canonical column order (plan.md §5)
@@ -304,7 +336,9 @@ CSV_COLUMNS = (
      "hill_plateau_alpha", "hill_plateau_width", "hill_plateau_start_rank",
      "hill_plateau_end_rank", "hill_window", "hill_support_observations",
      "hill_is_powerlaw",
-     "LR_trunc", "LR_p", "alpha_rand", "max_ev_rand",
+     "LR_trunc", "LR_p", "alpha_rand", "alpha_rand_estimator",
+     "alpha_rand_kind", "alpha_rand_xmin", "alpha_rand_n_tail",
+     "alpha_rand_ks_D", "max_ev_rand",
      "row_wise_entropy", "spectral_entropy", "stable_rank", "mp_softrank",
      "bulk_mass_frac", "max_sval", "min_sval", "mean_sval", "median_sval",
      "ipr_top10_mean", "ipr_bulk_mean", "pt_ks_mean", "pt_frac_random",
@@ -315,7 +349,8 @@ CSV_COLUMNS = (
      "max_overlap", "mean_overlap", "overlap_at_top_sval", "overlap_at_bottom_sval",
      "rho_top_eigenvector_vs_svals", "rho_top_singular_vs_evals", "rho_diag_vs_svals",
      "max_overlap_with_top_eigenvector", "argmax_singular_for_top_eigenvector",
-     "diagonal_coincidence", "activation_mean_count", "activation_fm_count",
+     "diagonal_coincidence", "overlap_status", "activation_covariance_rank",
+     "activation_mean_count", "activation_fm_count",
      "activation_requested_max_length", "activation_effective_max_length",
      "activation_window_lengths", "activation_window_identity"]
     + [f"entropy_decile_{i}" for i in range(1, 11)]

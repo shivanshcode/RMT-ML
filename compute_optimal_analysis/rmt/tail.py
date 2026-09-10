@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 from scipy.integrate import quad
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar
 from scipy.special import erfc
 
 
@@ -40,6 +40,66 @@ def _empty_fit() -> dict[str, float | int]:
         "standard_error": float("nan"),
         "log_likelihood": float("nan"),
     }
+
+
+def _pareto_fit(tail: np.ndarray, xmin: float, xmax: float | None) -> PowerLawFit | None:
+    """Fit an unbounded or conditionally upper-bounded Pareto density."""
+
+    logs = np.log(tail / xmin)
+    denominator = float(np.sum(logs))
+    if denominator <= 0.0 or not np.isfinite(denominator):
+        return None
+    if xmax is None:
+        beta = tail.size / denominator
+        normalization = 1.0
+        standard_error = beta / np.sqrt(tail.size)
+    else:
+        ratio_log = float(np.log(xmax / xmin))
+        if ratio_log <= 0.0:
+            return None
+
+        def negative_log_likelihood(log_beta: float) -> float:
+            beta_value = float(np.exp(log_beta))
+            log_normalization = float(np.log(-np.expm1(-beta_value * ratio_log)))
+            return float(
+                -tail.size * np.log(beta_value)
+                + tail.size * np.log(xmin)
+                + (beta_value + 1.0) * denominator
+                + tail.size * log_normalization
+            )
+
+        optimum = minimize_scalar(
+            negative_log_likelihood,
+            bounds=(-12.0, 12.0),
+            method="bounded",
+            options={"xatol": 1e-10, "maxiter": 500},
+        )
+        if not optimum.success:
+            return None
+        beta = float(np.exp(optimum.x))
+        normalization = float(-np.expm1(-beta * ratio_log))
+        exp_term = float(np.exp(beta * ratio_log))
+        information = tail.size / beta ** 2 - (
+            tail.size * ratio_log ** 2 * exp_term / np.expm1(beta * ratio_log) ** 2
+        )
+        standard_error = float(1.0 / np.sqrt(information)) if information > 0.0 else float("nan")
+    alpha = 1.0 + beta
+    model = (1.0 - np.exp(-beta * logs)) / normalization
+    empirical_hi = np.arange(1, tail.size + 1, dtype=np.float64) / tail.size
+    empirical_lo = np.arange(0, tail.size, dtype=np.float64) / tail.size
+    ks_distance = float(max(np.max(np.abs(empirical_hi - model)),
+                            np.max(np.abs(model - empirical_lo))))
+    log_likelihood = float(
+        tail.size * np.log(beta)
+        - tail.size * np.log(xmin)
+        - alpha * denominator
+        - tail.size * np.log(normalization)
+    )
+    return PowerLawFit(
+        alpha=alpha, xmin=xmin, ks_distance=ks_distance,
+        n_tail=int(tail.size), standard_error=standard_error,
+        log_likelihood=log_likelihood,
+    )
 
 
 def fit_powerlaw_csn(
@@ -85,32 +145,9 @@ def fit_powerlaw_csn(
     for index in possible:
         xmin = float(data[index])
         tail = data[index:]
-        logs = np.log(tail / xmin)
-        denominator = float(np.sum(logs))
-        if denominator <= 0.0 or not np.isfinite(denominator):
+        candidate = _pareto_fit(tail, xmin, upper if xmax is not None else None)
+        if candidate is None:
             continue
-        alpha = 1.0 + tail.size / denominator
-        if not np.isfinite(alpha) or alpha <= 1.0:
-            continue
-        empirical_hi = np.arange(1, tail.size + 1, dtype=np.float64) / tail.size
-        empirical_lo = np.arange(0, tail.size, dtype=np.float64) / tail.size
-        model = 1.0 - np.power(tail / xmin, 1.0 - alpha)
-        ks_distance = float(max(np.max(np.abs(empirical_hi - model)),
-                                np.max(np.abs(model - empirical_lo))))
-        standard_error = float((alpha - 1.0) / np.sqrt(tail.size))
-        log_likelihood = float(
-            tail.size * np.log(alpha - 1.0)
-            - tail.size * np.log(xmin)
-            - alpha * denominator
-        )
-        candidate = PowerLawFit(
-            alpha=float(alpha),
-            xmin=xmin,
-            ks_distance=ks_distance,
-            n_tail=int(tail.size),
-            standard_error=standard_error,
-            log_likelihood=log_likelihood,
-        )
         if best is None or candidate.ks_distance < best.ks_distance:
             best = candidate
     return _empty_fit() if best is None else best.as_dict()
@@ -216,7 +253,9 @@ def hill_plateau(
     plausible = 0.25 <= median <= 15.0
     stable = relative_iqr <= max(0.25, 1.75 * flat_tol) and relative_drift <= max(0.35, 2.5 * flat_tol)
     start_rank = int(extreme_ks[0])
-    end_rank = int(extreme_ks[-1] + int(window) - 1)
+    # A window of ``window`` adjacent spacings consumes one extra boundary
+    # observation, so observation support ends at start + window.
+    end_rank = int(extreme_ks[-1] + int(window))
     return {
         "hill_plateau_alpha": median,
         "hill_plateau_width": int(extreme_count),
@@ -258,28 +297,8 @@ def fixed_cutoff_mle(
     tail = data[data >= cutoff]
     if tail.size < 2:
         return _empty_fit()
-    denominator = float(np.sum(np.log(tail / cutoff)))
-    if denominator <= 0.0 or not np.isfinite(denominator):
-        return _empty_fit()
-    alpha = float(1.0 + tail.size / denominator)
-    empirical_hi = np.arange(1, tail.size + 1, dtype=np.float64) / tail.size
-    empirical_lo = np.arange(0, tail.size, dtype=np.float64) / tail.size
-    model = 1.0 - np.power(tail / cutoff, 1.0 - alpha)
-    ks_distance = float(max(np.max(np.abs(empirical_hi - model)),
-                            np.max(np.abs(model - empirical_lo))))
-    log_likelihood = float(
-        tail.size * np.log(alpha - 1.0)
-        - tail.size * np.log(cutoff)
-        - alpha * denominator
-    )
-    return PowerLawFit(
-        alpha=alpha,
-        xmin=cutoff,
-        ks_distance=ks_distance,
-        n_tail=int(tail.size),
-        standard_error=float((alpha - 1.0) / np.sqrt(tail.size)),
-        log_likelihood=log_likelihood,
-    ).as_dict()
+    fitted = _pareto_fit(tail, cutoff, upper if xmax is not None else None)
+    return _empty_fit() if fitted is None else fitted.as_dict()
 
 
 def rank_ordered_mle(
@@ -309,7 +328,7 @@ def rank_ordered_mle(
         if not np.isfinite(cutoff) or cutoff <= 0.0:
             raise ValueError("xmin must be finite and positive")
     tail = data[data >= cutoff][::-1]
-    if tail.size < 3 or np.allclose(tail, tail[0]):
+    if tail.size < 3 or bool(np.all(tail == tail[0])):
         return {**_empty_fit(), "r_squared": float("nan")}
     ranks = np.arange(1, tail.size + 1, dtype=np.float64)
     log_values = np.log(tail)

@@ -53,7 +53,7 @@ def save_svd(cache_dir, name, U, s, Vh, *, digest=None,
 
 
 def load_svd(cache_dir, name, *, digest=None, required_dtype=None,
-             allow_degraded=False, return_metadata=False):
+             allow_degraded=False, return_metadata=False, expected_shape=None):
     """Load factors only when identity and requested precision contract match.
 
     ``return_metadata=True`` appends the persisted backend, factorization dtype,
@@ -62,28 +62,45 @@ def load_svd(cache_dir, name, *, digest=None, required_dtype=None,
     path = os.path.join(cache_dir, _safe_stem(name) + ".npz")
     if not os.path.exists(path):
         return None
-    with np.load(path, allow_pickle=False) as d:
-        if "name" not in d or str(d["name"].item()) != str(name):
-            return None
-        if digest is not None and ("digest" not in d or str(d["digest"].item()) != digest):
-            return None
-        cached_dtype = (str(d["factorization_dtype"].item())
-                        if "factorization_dtype" in d else None)
-        degraded = bool(d["degraded"].item()) if "degraded" in d else False
-        if required_dtype is not None and cached_dtype != str(required_dtype):
-            return None
-        if degraded and not allow_degraded:
-            return None
-        U, s, Vh = d["U"], d["s"], d["Vh"]
-        if U.ndim != 2 or s.ndim != 1 or Vh.ndim != 2:
-            return None
-        if U.shape[1] != s.size or Vh.shape[0] != s.size:
-            return None
-        if return_metadata:
-            backend = str(d["backend"].item()) if "backend" in d else "unknown-cache"
-            return U, s, Vh, {
-                "backend": backend,
-                "factorization_dtype": cached_dtype or str(s.dtype),
-                "degraded": degraded,
-            }
-        return U, s, Vh
+    try:
+        with np.load(path, allow_pickle=False) as d:
+            if "name" not in d or str(d["name"].item()) != str(name):
+                return None
+            if digest is not None and ("digest" not in d or str(d["digest"].item()) != digest):
+                return None
+            cached_dtype = (str(d["factorization_dtype"].item())
+                            if "factorization_dtype" in d else None)
+            degraded = bool(d["degraded"].item()) if "degraded" in d else False
+            if required_dtype is not None and cached_dtype != str(required_dtype):
+                return None
+            if degraded and not allow_degraded:
+                return None
+            U, s, Vh = d["U"], d["s"], d["Vh"]
+            if U.ndim != 2 or s.ndim != 1 or Vh.ndim != 2:
+                return None
+            if (U.shape[1] != s.size or Vh.shape[0] != s.size
+                    or s.size > min(U.shape[0], Vh.shape[1])):
+                return None
+            if expected_shape is not None:
+                expected_n, expected_m = map(int, expected_shape)
+                expected_k = min(expected_n, expected_m)
+                if (U.shape != (expected_n, expected_k)
+                        or s.shape != (expected_k,)
+                        or Vh.shape != (expected_k, expected_m)):
+                    return None
+            if (not np.all(np.isfinite(U)) or not np.all(np.isfinite(s))
+                    or not np.all(np.isfinite(Vh)) or np.any(s < 0.0)):
+                return None
+            if return_metadata:
+                backend = str(d["backend"].item()) if "backend" in d else "unknown-cache"
+                return U, s, Vh, {
+                    "backend": backend,
+                    "factorization_dtype": cached_dtype or str(s.dtype),
+                    "degraded": degraded,
+                }
+            return U, s, Vh
+    except Exception:
+        # Cache files are an optional optimization.  Truncated ZIPs, malformed
+        # scalar metadata, and missing members are cache misses; callers can
+        # recompute from the live trusted weight and atomically replace them.
+        return None

@@ -517,10 +517,11 @@ def fit_marchenko_pastur_kde(
     trim_upper: float = 0.1,
     grid_size: int = 512,
 ) -> MPFitResult:
-    """Fit MP scale to a triangular KDE of the retained empirical bulk.
+    """Fit MP scale to retained empirical integrated mass.
 
-    This reproduces the scientific structure of the early automated
-    WeightWatcher notebook while using a bounded scalar optimizer.
+    The historical triangular-KDE bandwidth remains in diagnostics for preset
+    compatibility, while the objective uses complete-sample-normalized ECDF
+    ranks so the square-MP hard edge is finite and upper trimming is normalized.
     """
 
     complete = np.asarray(eigenvalues, dtype=np.float64).ravel()
@@ -543,19 +544,30 @@ def fit_marchenko_pastur_kde(
     size = int(grid_size)
     if size < 64:
         raise ValueError("grid_size must be at least 64")
-    grid_max = float(np.max(retained) + 2.0 * width)
-    grid = np.linspace(max(np.finfo(float).eps, float(np.min(retained)) - width), grid_max, size)
-    empirical_density = triangular_kde(retained, grid, width)
+    # Fit integrated mass rather than comparing an unsmoothed MP density with a
+    # smoothed empirical density.  In particular, the q=1 MP density diverges at
+    # the hard edge; a single near-zero density-grid point used to dominate the
+    # objective and drive the variance to its upper search bound.  Mid-rank ECDF
+    # probabilities retain their complete-sample normalization when the upper
+    # tail is excluded from fitting.
+    grid_indices = (
+        np.arange(retained.size, dtype=int)
+        if retained.size <= size
+        else np.unique(np.linspace(0, retained.size - 1, size, dtype=int))
+    )
+    grid = retained[grid_indices]
+    empirical_cdf = (grid_indices.astype(np.float64) + 0.5) / values.size
     initial = fit_marchenko_pastur(retained, q, trim_upper=0.0).variance
     lower_log = np.log(max(initial * 0.05, np.finfo(float).tiny))
     upper_log = np.log(initial * 20.0)
 
     def objective(log_variance: float) -> float:
         variance = float(np.exp(log_variance))
-        model_density = marchenko_pastur_density(grid, q, variance)
-        weights = np.maximum(empirical_density, 0.05 * float(np.max(empirical_density)))
-        residual = model_density - empirical_density
-        return float(np.sum(weights * np.square(residual)) / np.sum(weights))
+        model_cdf = np.asarray(
+            marchenko_pastur_cdf(grid, q, variance), dtype=np.float64
+        )
+        residual = model_cdf - empirical_cdf
+        return float(np.mean(np.square(residual)))
 
     optimum = minimize_scalar(
         objective,
@@ -564,6 +576,10 @@ def fit_marchenko_pastur_kde(
         options={"xatol": 1e-8, "maxiter": 500},
     )
     variance = float(np.exp(optimum.x))
+    boundary_solution = bool(
+        abs(float(optimum.x) - lower_log) < 1e-5
+        or abs(float(optimum.x) - upper_log) < 1e-5
+    )
     fitted = fit_marchenko_pastur(complete, q, variance=variance, trim_upper=trim)
     return replace(
         fitted,
@@ -573,7 +589,14 @@ def fit_marchenko_pastur_kde(
             "trim_upper": trim,
             "retained_count": int(retained.size),
             "objective": float(optimum.fun),
+            "objective_kind": "complete_sample_ecdf_cvm",
             "optimizer_success": bool(optimum.success),
+            "boundary_solution": boundary_solution,
+            "available": bool(optimum.success and not boundary_solution),
+            "status": (
+                "available" if optimum.success and not boundary_solution
+                else "unavailable: optimization failed or reached a variance boundary"
+            ),
         },
     )
 

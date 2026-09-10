@@ -188,6 +188,8 @@ class LanczosSpikeResult:
     probe_stieltjes_diagonals: Sequence[np.ndarray] = field(default_factory=tuple, repr=False)
     probe_stieltjes_sub_diagonals: Sequence[np.ndarray] = field(default_factory=tuple, repr=False)
     probe_tail_metadata: Sequence[dict[str, object]] = field(default_factory=tuple)
+    threshold_margin: float = 0.0
+    threshold_scale: str = "absolute"
 
     def __post_init__(self) -> None:
         poles = np.asarray(self.poles, dtype=np.float64).ravel()
@@ -825,6 +827,7 @@ def detect_spikes_lanczos(
     tail_window: int | None = None,
     threshold_c: float = 1.0,
     threshold_delta: float = 0.25,
+    threshold_mode: str = "absolute",
     residue_threshold: float = 0.0,
     ridge: float = 0.0,
     extension_size: int | None = None,
@@ -856,6 +859,8 @@ def detect_spikes_lanczos(
         raise ValueError("threshold_c must be finite and nonnegative")
     if not np.isfinite(threshold_delta) or not 0.0 < threshold_delta < 0.5:
         raise ValueError("threshold_delta must lie in (0, 0.5)")
+    if threshold_mode not in {"absolute", "bulk_edge_relative"}:
+        raise ValueError("threshold_mode must be absolute or bulk_edge_relative")
     if pole_method not in {"reference_ritz", "constant_tail"}:
         raise ValueError("pole_method must be reference_ritz or constant_tail")
     generator = _generator(rng)
@@ -916,7 +921,9 @@ def detect_spikes_lanczos(
     # Ridge stabilizes Cholesky only; report support in the original operator
     # domain so it is comparable with unshifted Ritz values/eigenvalues.
     lower, upper = max(0.0, lower - ridge), max(0.0, upper - ridge)
-    gap = threshold_c * size ** (-threshold_delta)
+    margin_scale = (max(upper, np.finfo(float).tiny)
+                    if threshold_mode == "bulk_edge_relative" else 1.0)
+    gap = threshold_c * margin_scale * size ** (-threshold_delta)
     threshold = float(upper + gap)
     per_probe_poles: list[np.ndarray] = []
     per_probe_residues: list[np.ndarray] = []
@@ -1014,6 +1021,8 @@ def detect_spikes_lanczos(
         probe_stieltjes_diagonals=tuple(probe_stieltjes_diagonals),
         probe_stieltjes_sub_diagonals=tuple(probe_stieltjes_sub_diagonals),
         probe_tail_metadata=tuple(tail_metadata),
+        threshold_margin=float(gap),
+        threshold_scale=str(threshold_mode),
     )
 
 
@@ -1026,6 +1035,9 @@ def detect_spikes_from_factor(
     matrix = np.asarray(factor, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("factor must be a finite matrix with both dimensions at least two")
+    # The factor adapter is the production path and opts into a scale-relative
+    # margin.  Direct operator callers retain the paper's absolute convention.
+    kwargs.setdefault("threshold_mode", "bulk_edge_relative")
     dimension = min(matrix.shape)
     normalization = max(matrix.shape)
     if "convergence_tolerance" not in kwargs or kwargs["convergence_tolerance"] is None:

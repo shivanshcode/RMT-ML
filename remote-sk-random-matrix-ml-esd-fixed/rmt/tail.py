@@ -12,6 +12,40 @@ Exponent conventions (plan.md §0.1):
 from __future__ import annotations
 
 import numpy as np
+from scipy.optimize import minimize_scalar
+
+
+def _pareto_alpha_and_cdf(tail, xmin, xmax=None):
+    """Return the MLE density exponent and fitted (possibly bounded) CDF."""
+
+    logs = np.log(tail / xmin)
+    slog = float(np.sum(logs))
+    if slog <= 0.0 or not np.isfinite(slog):
+        return None, None
+    if xmax is None:
+        beta = tail.size / slog
+        normalization = 1.0
+    else:
+        upper_log = float(np.log(xmax / xmin))
+        if upper_log <= 0.0:
+            return None, None
+
+        def objective(log_beta):
+            beta_value = float(np.exp(log_beta))
+            return float(
+                -tail.size * np.log(beta_value)
+                + (beta_value + 1.0) * slog
+                + tail.size * np.log(-np.expm1(-beta_value * upper_log))
+            )
+
+        optimum = minimize_scalar(objective, bounds=(-12.0, 12.0), method="bounded",
+                                  options={"xatol": 1e-10, "maxiter": 500})
+        if not optimum.success:
+            return None, None
+        beta = float(np.exp(optimum.x))
+        normalization = float(-np.expm1(-beta * upper_log))
+    cdf = (1.0 - np.exp(-beta * logs)) / normalization
+    return 1.0 + beta, cdf
 
 
 # --------------------------------------------------------------------------- #
@@ -26,6 +60,9 @@ def fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02,
     x = np.asarray(values, dtype=np.float64)
     x = x[np.isfinite(x) & (x > 0)]
     if xmax is not None:
+        xmax = float(xmax)
+        if not np.isfinite(xmax) or xmax <= 0.0:
+            raise ValueError("xmax must be finite and positive")
         x = x[x <= xmax]
     x = np.sort(x)
     N = x.size
@@ -51,13 +88,9 @@ def fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02,
         n_tail = tail.size
         if n_tail < min_n_tail:
             continue
-        ratios = tail / xmin
-        slog = np.sum(np.log(ratios))
-        if slog <= 0:
+        alpha, theo = _pareto_alpha_and_cdf(tail, xmin, xmax=xmax)
+        if alpha is None:
             continue
-        alpha = 1.0 + n_tail / slog                      # density exponent
-        # theoretical CDF of continuous power law on [xmin, ∞): 1-(x/xmin)^{1-α}
-        theo = 1.0 - (tail / xmin) ** (1.0 - alpha)
         emp_hi = np.arange(1, n_tail + 1) / n_tail
         emp_lo = np.arange(0, n_tail) / n_tail
         D = float(max(np.max(np.abs(emp_hi - theo)),
@@ -194,7 +227,8 @@ def hill_plateau(svals, *, window=20, flat_tol=0.20) -> dict:
     res["hill_plateau_alpha"] = plateau_alpha
     res["hill_plateau_width"] = int(width)
     start_rank = int(ks[best_lo])
-    end_rank = int(ks[best_hi] + int(window) - 1)
+    # ``window`` adjacent log-spacings consume ``window + 1`` observations.
+    end_rank = int(ks[best_hi] + int(window))
     res["hill_plateau_start_rank"] = start_rank
     res["hill_plateau_end_rank"] = end_rank
     res["hill_support_observations"] = end_rank - start_rank + 1

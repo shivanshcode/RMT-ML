@@ -7,9 +7,9 @@ several scattered duplicate folders in `~/Downloads`.
 
 | Path | What it is |
 |---|---|
-| `rmt/` | The package — 20 modules. This is the **only** copy. Includes the REPORT § correctness fixes (fp32/float64 precision contract, reversible activation capture, config-driven CLI, eigh dedup, plot wiring, device placement). |
+| `rmt/` | The maintained package. Includes the float64 precision contract, corruption-tolerant SVD caching, alias-safe decile SVDs, qualified/mixed-mode-safe activation capture, bounded-tail fitting, fixed-seed selftesting, bounded ESD bins, context-limit handling, config-driven CLI, plot wiring, and backend dispatch. |
 | `rmt/plots/`, `rmt/baselines/` | Plotting and WeightWatcher baseline submodules. |
-| `tests/` | 14 pytest files, including the end-to-end CLI regression test. |
+| `tests/` | Pytest suite, including end-to-end CLI and v4 numerical/state-safety regressions. |
 | `docs/` | `design.md`, `plan.md`, `plan-unittest.md`, `signatures_api.md`. |
 | `run_rmt.slurm` | Current LF-normalized SLURM job script (64G mem, OOM notes). |
 | `rmt_pipeline_glm.py` | Non-executable historical monolith. It exits with guidance to use `python -m rmt`. |
@@ -43,7 +43,7 @@ name, different contents. Both retained.
 
 ## Runtime ownership and memory
 
-Production output directories include a digest of the resolved model snapshot and must be fresh. The status JSON begins as `running` and is finalized after all requested stages. Matrix discovery is metadata-only until each matrix is processed; activation covariance is captured one projection at a time; and decile sweeps mutate/restore one pristine model. Synthetic text and synthetic hash-tokenization are separate explicit opt-ins.
+Production output directories include a digest of the resolved model snapshot and must be absent or empty. An exclusive `.run-owner.json` claim prevents concurrent reuse; the status JSON begins as `running` and is finalized after all requested stages. Requested best-effort baselines receive their own status artifact and make the overall status partial when unavailable. Matrix discovery is metadata-only until each matrix is processed; activation covariance is captured one projection at a time without flattening mixed train/eval state; and decile sweeps mutate/restore one pristine model while requiring non-degraded float64 SVDs, deduplicating tied aliases, and rejecting empty partition tranches before mutation. Histogram grids are globally bounded and text windows honor learned-position offsets. Synthetic text and synthetic hash-tokenization are separate explicit opt-ins.
 
 The sibling `compute_optimal_analysis` project has an incompatible package with the same `rmt` import name. Run each project from its own root in a separate Python process and never combine their roots on `PYTHONPATH`.
 

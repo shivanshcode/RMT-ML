@@ -51,15 +51,28 @@ class _DiskTensorStore:
         self._temporary.cleanup()
 
 
+def _qualified_factors(W, *, backend="numpy", gpu_min_dim=1024):
+    """Return factors only when the decile precision contract is satisfied."""
+    from .linalg import cached_svd
+    result = cached_svd(W, full_matrices=False, backend=backend,
+                        gpu_min_dim=gpu_min_dim)
+    if result.degraded or result.factorization_dtype != "float64":
+        raise RuntimeError(
+            "decile lesion requires a non-degraded float64 SVD "
+            f"(backend={result.backend}, dtype={result.factorization_dtype})")
+    # Keep the qualification marker in every memory/disk factor cache entry so
+    # a bare low-precision tuple cannot bypass the guard on reuse.
+    return result.U, result.s, result.Vh, "float64"
+
+
 def _reconstruct_zeroed(W, lo, hi, *, factors=None, backend="numpy", gpu_min_dim=1024):
-    """Zero an ascending singular range, optionally reusing pristine factors."""
+    """Zero an ascending singular range, optionally reusing qualified factors."""
     if factors is None:
-        from .linalg import cached_svd
-        result = cached_svd(W, full_matrices=False, backend=backend,
-                            gpu_min_dim=gpu_min_dim)
-        U, s, Vh = result.U, result.s, result.Vh
-    else:
-        U, s, Vh = factors
+        factors = _qualified_factors(
+            W, backend=backend, gpu_min_dim=gpu_min_dim)
+    if len(factors) != 4 or str(np.asarray(factors[3]).item()) != "float64":
+        raise RuntimeError("cached decile factors lack float64 qualification")
+    U, s, Vh = factors[:3]
     order = np.argsort(s)                       # ascending
     s_new = s.copy()
     zero_idx = order[lo:hi]
@@ -80,67 +93,76 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
         raise ValueError(f"decile {decile} out of range 1..{n_deciles}")
     if spec is None:
         spec = get_model_spec(model)
+    n_deciles = int(n_deciles)
+    if n_deciles < 1:
+        raise ValueError("n_deciles must be positive")
 
+    # Resolve and validate the complete physical scope before any mutation.
+    # Exact aliases share a full-parameter scope and are intervened once, while
+    # Q/K/V blocks of a fused parameter retain distinct physical scopes.
+    prepared = []
+    seen_scopes = set()
     for rec in records:
         name = rec.name
         is_fused = name.endswith("]") and "[" in name
         base = name[: name.index("[")] if is_fused else name
         modname = base[: -len(".weight")] if base.endswith(".weight") else base
         module = model.get_submodule(modname)
-        w = module.weight                          # (out, in)
+        w = module.weight
         cls = type(module).__name__
-        with torch.no_grad():
-            # Read at float64 so the reconstruction is not pre-floored (REPORT §0).
-            full = w.detach().cpu().to(torch.float64).numpy()
-            mat = full.T if cls == "Conv1D" else full
+        full = w.detach().cpu().to(torch.float64).numpy()
+        pristine_mat = np.ascontiguousarray(full.T if cls == "Conv1D" else full)
+        tag = name[name.index("[") + 1: -1] if is_fused else None
+        scope = (id(w), tag if is_fused else "__full_parameter__")
+        if scope in seen_scopes:
+            continue
+        seen_scopes.add(scope)
+        idx = interleaved = nh = None
+        pristine_block = pristine_mat
+        if is_fused:
+            idx = list(spec.fused_qkv_order).index(tag)
+            interleaved = qkv_is_interleaved(base, spec)
+            nh = get_num_heads(model) if interleaved else None
+            if interleaved and nh is None:
+                raise ValueError("num_heads is required for interleaved fused QKV")
+            pristine_block = extract_qkv_block(
+                pristine_mat, idx, num_heads=nh, interleaved=interleaved)
+        rank = min(pristine_block.shape)
+        if n_deciles > rank:
+            raise ValueError(
+                f"n_deciles={n_deciles} exceeds singular count {rank} for {name}"
+            )
+        prepared.append((scope, w, cls, is_fused, idx, interleaved, nh,
+                         pristine_mat, pristine_block))
+
+    with torch.no_grad():
+        for (scope, w, cls, is_fused, idx, interleaved, nh,
+             pristine_mat, pristine_block) in prepared:
+            lo, hi = decile_index_ranges(
+                min(pristine_block.shape), n_deciles, ascending=True
+            )[decile - 1]
+            factors = None if factor_cache is None else factor_cache.get(scope)
+            if factors is None:
+                factors = _qualified_factors(
+                    pristine_block, backend=backend, gpu_min_dim=gpu_min_dim)
+                if factor_cache is not None:
+                    factor_cache[scope] = factors
+            reconstructed = _reconstruct_zeroed(
+                pristine_block, lo, hi, factors=factors, backend=backend,
+                gpu_min_dim=gpu_min_dim,
+            )
             if is_fused:
-                tag = name[name.index("[") + 1: -1]
-                order = list(spec.fused_qkv_order)
-                idx = order.index(tag)
-                # Q/K/V rows may be head-interleaved (GPT-NeoX); slicing
-                # contiguous thirds would ablate the wrong rows.
-                interleaved = qkv_is_interleaved(base, spec)
-                nh = get_num_heads(model) if interleaved else None
-                if interleaved and nh is None:
-                    raise ValueError("num_heads is required for interleaved fused QKV")
-                mat = np.ascontiguousarray(mat)
-                block = extract_qkv_block(mat, idx, num_heads=nh,
-                                          interleaved=interleaved)
-                k = min(block.shape)
-                lo, hi = decile_index_ranges(k, n_deciles, ascending=True)[decile - 1]
-                factors = None if factor_cache is None else factor_cache.get(name)
-                if factors is None and factor_cache is not None:
-                    from .linalg import cached_svd
-                    result = cached_svd(block, backend=backend, gpu_min_dim=gpu_min_dim)
-                    factors = (result.U, result.s, result.Vh)
-                    factor_cache[name] = factors
-                assign_qkv_block(
-                    mat, idx, _reconstruct_zeroed(
-                        block, lo, hi, factors=factors, backend=backend,
-                        gpu_min_dim=gpu_min_dim,
-                    ), num_heads=nh, interleaved=interleaved,
-                )
+                # Preserve modifications already made to other disjoint blocks,
+                # but always derive this block's factors from the pristine copy.
+                live = w.detach().cpu().to(torch.float64).numpy()
+                mat = np.ascontiguousarray(live.T if cls == "Conv1D" else live)
+                assign_qkv_block(mat, idx, reconstructed, num_heads=nh,
+                                 interleaved=interleaved)
             else:
-                k = min(mat.shape)
-                lo, hi = decile_index_ranges(k, n_deciles, ascending=True)[decile - 1]
-                factors = None if factor_cache is None else factor_cache.get(name)
-                if factors is None and factor_cache is not None:
-                    from .linalg import cached_svd
-                    result = cached_svd(mat, backend=backend, gpu_min_dim=gpu_min_dim)
-                    factors = (result.U, result.s, result.Vh)
-                    factor_cache[name] = factors
-                mat = _reconstruct_zeroed(
-                    mat, lo, hi, factors=factors, backend=backend,
-                    gpu_min_dim=gpu_min_dim,
-                )
+                mat = reconstructed
             out = mat.T if cls == "Conv1D" else mat
-            # Preserve the live Parameter object and execution dtype.  Replacing
-            # only a half-precision weight with float32 breaks F.linear against
-            # half inputs/biases and also destroys ties/optimizer references.
-            # The SVD is still evaluated in float64; the intervention is then
-            # explicitly quantized back to the model's execution precision.
-            new_w = torch.as_tensor(out, dtype=w.dtype, device=w.device)
-            w.copy_(new_w)
+            # Preserve Parameter identity/ties and the model execution dtype.
+            w.copy_(torch.as_tensor(out, dtype=w.dtype, device=w.device))
 
 
 def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
@@ -260,6 +282,9 @@ def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
         "requested_stride": int(baseline_result.get("requested_stride", stride)),
         "effective_stride": int(baseline_result.get("effective_stride", stride)),
         "execution_precision": str(next(model.parameters()).dtype),
+        "decile_svd_factorization_dtype": "float64",
+        "decile_svd_degraded": False,
+        "decile_precision_status": "complete",
     }
 
 

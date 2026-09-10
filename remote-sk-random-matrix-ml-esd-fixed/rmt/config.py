@@ -145,7 +145,15 @@ def effective_context_length(model, requested: int) -> int:
         lowered = name.lower()
         if (isinstance(count, int) and count >= 2
                 and ("position" in lowered or lowered.endswith("wpe"))):
-            limits.append(count)
+            # Offset-position tables (for example RoBERTa) reserve indices up
+            # through padding_idx and start real tokens at padding_idx + 1.
+            # A zero/None padding index does not establish that convention.
+            padding_idx = getattr(module, "padding_idx", None)
+            offset = (int(padding_idx) + 1
+                      if isinstance(padding_idx, int) and padding_idx > 0 else 0)
+            usable = count - offset
+            if usable >= 2:
+                limits.append(usable)
     return min([requested, *limits]) if limits else requested
 
 

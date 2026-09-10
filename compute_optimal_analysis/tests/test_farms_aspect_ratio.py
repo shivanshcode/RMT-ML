@@ -129,4 +129,16 @@ def test_reference_raw_and_canonical_pooling_differ_only_by_window_scale() -> No
     )
     assert raw.window_shape == (4, 8)
     assert raw.reference_aspect_ratio == 2.0
+    assert np.all(raw.normalization_denominators == 1.0)
+    assert np.all(canonical.normalization_denominators == 8.0)
     assert np.allclose(raw.eigenvalues / 8.0, canonical.eigenvalues)
+
+
+def test_trace_normalization_records_each_window_denominator() -> None:
+    matrix = np.random.default_rng(31).normal(size=(8, 12))
+    result = farms_spectrum(matrix, FARMSConfig(
+        target_aspect_ratio=1.0, window_size=4, row_windows=2,
+        column_windows=2, normalization="trace"))
+    assert result.normalization_denominators.shape == (result.n_submatrices,)
+    assert np.all(result.normalization_denominators > 0.0)
+    assert np.isclose(np.sum(result.eigenvalues), result.n_submatrices)
