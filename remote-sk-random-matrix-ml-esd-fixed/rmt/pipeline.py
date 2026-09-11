@@ -32,10 +32,19 @@ def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                       **cfg_flags) -> Tuple[str, List[dict]]:
     """Run in a fresh owned directory and finalize status after every stage."""
     # Validate library callers before claiming a directory or writing artifacts.
-    RunConfig(**cfg_flags)
+    resolved_cfg = RunConfig(**{**cfg_flags, "output_dir": str(output_dir)})
     _acquire_output_directory(output_dir)
     status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
-    _write_json(status_path, {"status": "running", "failures": []})
+    source_dtypes = sorted({str(parameter.dtype) for parameter in model.parameters()})
+    manifest = {
+        "model_tag": model_tag,
+        "model_source": getattr(model, "_rmt_resolved_path", None),
+        "requested_source_dtype": getattr(model, "_rmt_source_dtype", resolved_cfg.dtype),
+        "live_parameter_dtypes": source_dtypes,
+        "resolved_config": resolved_cfg.to_dict(),
+    }
+    _write_json(os.path.join(output_dir, f"{model_tag}_run_manifest.json"), manifest)
+    _write_json(status_path, {"status": "running", "failures": [], "manifest": manifest})
     try:
         csv_path, rows, failures = _analyze_one_model(
             model, model_tag, output_dir, tokenizer=tokenizer, **cfg_flags)
@@ -114,6 +123,20 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                 row = per_matrix_analysis(live, fm_dict=fm_dict, cfg=cfg,
                                           svals_out=svals, ovmat_out=local_overlap)
                 rows.append(row)
+                if row.get("precision_status") == "degraded":
+                    pass_failures.append({
+                        "matrix": rec.name,
+                        "stage": "svd_precision",
+                        "status": "degraded",
+                        "actual_dtype": row.get("svd_factorization_dtype"),
+                    })
+                if row.get("random_svd_degraded"):
+                    pass_failures.append({
+                        "matrix": rec.name,
+                        "stage": "random_control_svd_precision",
+                        "status": "degraded",
+                        "actual_dtype": row.get("random_svd_factorization_dtype"),
+                    })
                 if (cfg.use_powerlaw_pkg
                         and row.get("powerlaw_pkg_status") == "failed"):
                     pass_failures.append({"matrix": rec.name, "stage": "powerlaw_pkg",
@@ -200,14 +223,11 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
 
 def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
                         output_dir, model_tag, **cfg_flags) -> str:
-    """Track stable rank of ``probe_layers`` across training checkpoints.
+    """Atomically track stable rank with explicit per-checkpoint coverage."""
 
-    ``checkpoint_loader(frac)`` returns a model at that training fraction.
-    ``checkpoint_fracs`` are e.g. [0.0, 0.1, ..., 1.0] (every ~10% of iters).
-    Writes ``<tag>_stable_rank_per_epoch.csv`` and returns its path.
-    """
-    cfg = RunConfig(**{k: v for k, v in cfg_flags.items()
-                       if k in RunConfig().__dict__})
+    # Do not filter keys: misspellings are caller errors, just as they are for
+    # analyze_one_model.
+    cfg = RunConfig(**cfg_flags)
     checkpoint_fracs = list(checkpoint_fracs)
     probe_layers = list(probe_layers)
     if not checkpoint_fracs:
@@ -215,56 +235,113 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
     if not probe_layers:
         raise ValueError("probe_layers must not be empty")
     os.makedirs(output_dir, exist_ok=True)
-    srk_by_layer: Dict[int, List[float]] = {L: [] for L in probe_layers}
-    backend_by_layer: Dict[int, List[str]] = {L: [] for L in probe_layers}
-    dtype_by_layer: Dict[int, List[str]] = {L: [] for L in probe_layers}
-    for frac in checkpoint_fracs:
-        model = checkpoint_loader(frac)
-        spec = get_model_spec(model)
-        recs = discover_weight_metadata(model, layer_indices=list(probe_layers),
-                                         spec=spec)
-        from .scalars import stable_rank
-        from .linalg import cached_svd
-        per_layer: Dict[int, List[float]] = {L: [] for L in probe_layers}
-        per_layer_backends: Dict[int, set] = {L: set() for L in probe_layers}
-        per_layer_dtypes: Dict[int, set] = {L: set() for L in probe_layers}
-        for meta in recs:
-            if meta.layer_idx in per_layer:
-                r = materialize_record(model, meta, spec=spec)
-                factorization = cached_svd(
-                    np.asarray(r.weight, float), full_matrices=False,
-                    backend=cfg.backend, gpu_min_dim=cfg.gpu_svd_min_dim,
-                )
-                if factorization.degraded and cfg.strict:
-                    raise RuntimeError("checkpoint SVD precision contract was not satisfied")
-                per_layer[r.layer_idx].append(stable_rank(s=factorization.s))
-                per_layer_backends[r.layer_idx].add(factorization.backend)
-                per_layer_dtypes[r.layer_idx].add(factorization.factorization_dtype)
-                r.weight = None
-        for L in probe_layers:
-            vals = per_layer.get(L, [])
-            srk_by_layer[L].append(float(np.mean(vals)) if vals else float("nan"))
-            backend_by_layer[L].append("|".join(sorted(per_layer_backends[L])) or "unavailable")
-            dtype_by_layer[L].append("|".join(sorted(per_layer_dtypes[L])) or "unavailable")
-        del recs, model
-
     path = os.path.join(output_dir, f"{model_tag}_stable_rank_per_epoch.csv")
-    with open(path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(
-            ["training_fraction"]
-            + [f"layer_{L}_stable_rank" for L in probe_layers]
-            + [f"layer_{L}_svd_backend" for L in probe_layers]
-            + [f"layer_{L}_svd_dtype" for L in probe_layers]
-        )
-        for i, frac in enumerate(checkpoint_fracs):
-            w.writerow(
-                [frac]
-                + [srk_by_layer[L][i] for L in probe_layers]
-                + [backend_by_layer[L][i] for L in probe_layers]
-                + [dtype_by_layer[L][i] for L in probe_layers]
+    claim = path + ".claim"
+    status_path = os.path.join(output_dir, f"{model_tag}_checkpoint_status.json")
+    if os.path.exists(path):
+        raise FileExistsError(f"checkpoint artifact already exists: {path}")
+    try:
+        descriptor = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise FileExistsError(f"checkpoint artifact is already claimed: {path}") from error
+    os.close(descriptor)
+
+    srk_by_layer: Dict[int, List[float]] = {layer: [] for layer in probe_layers}
+    backend_by_layer: Dict[int, List[str]] = {layer: [] for layer in probe_layers}
+    dtype_by_layer: Dict[int, List[str]] = {layer: [] for layer in probe_layers}
+    missing = []
+    degraded = []
+    temporary = None
+    try:
+        for frac in checkpoint_fracs:
+            model = checkpoint_loader(frac)
+            spec = get_model_spec(model)
+            recs = discover_weight_metadata(
+                model, layer_indices=list(probe_layers), spec=spec
             )
-    return path
+            from .scalars import stable_rank
+            from .linalg import cached_svd
+            per_layer: Dict[int, List[float]] = {layer: [] for layer in probe_layers}
+            per_layer_backends: Dict[int, set] = {layer: set() for layer in probe_layers}
+            per_layer_dtypes: Dict[int, set] = {layer: set() for layer in probe_layers}
+            for meta in recs:
+                if meta.layer_idx in per_layer:
+                    record = materialize_record(model, meta, spec=spec)
+                    factorization = cached_svd(
+                        np.asarray(record.weight, float), full_matrices=False,
+                        backend=cfg.backend, gpu_min_dim=cfg.gpu_svd_min_dim,
+                    )
+                    if factorization.degraded:
+                        item = {"training_fraction": frac, "layer": record.layer_idx,
+                                "dtype": factorization.factorization_dtype}
+                        degraded.append(item)
+                        if cfg.strict:
+                            raise RuntimeError(
+                                "checkpoint SVD precision contract was not satisfied"
+                            )
+                    per_layer[record.layer_idx].append(stable_rank(s=factorization.s))
+                    per_layer_backends[record.layer_idx].add(factorization.backend)
+                    per_layer_dtypes[record.layer_idx].add(factorization.factorization_dtype)
+                    record.weight = None
+            for layer in probe_layers:
+                values = per_layer[layer]
+                if not values:
+                    missing.append({"training_fraction": frac, "layer": layer})
+                    if cfg.strict:
+                        raise ValueError(
+                            f"checkpoint {frac!r} has no matrices for probe layer {layer}"
+                        )
+                srk_by_layer[layer].append(
+                    float(np.mean(values)) if values else float("nan")
+                )
+                backend_by_layer[layer].append(
+                    "|".join(sorted(per_layer_backends[layer])) or "unavailable"
+                )
+                dtype_by_layer[layer].append(
+                    "|".join(sorted(per_layer_dtypes[layer])) or "unavailable"
+                )
+            del recs, model
+
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{model_tag}-checkpoint-", suffix=".tmp", dir=output_dir
+        )
+        with os.fdopen(descriptor, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["training_fraction"]
+                + [f"layer_{layer}_stable_rank" for layer in probe_layers]
+                + [f"layer_{layer}_svd_backend" for layer in probe_layers]
+                + [f"layer_{layer}_svd_dtype" for layer in probe_layers]
+            )
+            for index, frac in enumerate(checkpoint_fracs):
+                writer.writerow(
+                    [frac]
+                    + [srk_by_layer[layer][index] for layer in probe_layers]
+                    + [backend_by_layer[layer][index] for layer in probe_layers]
+                    + [dtype_by_layer[layer][index] for layer in probe_layers]
+                )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        _write_json(status_path, {
+            "status": "partial" if missing or degraded else "complete",
+            "artifact": path,
+            "missing_selections": missing,
+            "precision_degradations": degraded,
+            "resolved_config": cfg.to_dict(),
+        })
+        return path
+    except BaseException as error:
+        _write_json(status_path, {"status": "failed", "error": repr(error),
+                                  "missing_selections": missing,
+                                  "precision_degradations": degraded})
+        raise
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+        if os.path.exists(claim):
+            os.unlink(claim)
 
 
 # --------------------------------------------------------------------------- #

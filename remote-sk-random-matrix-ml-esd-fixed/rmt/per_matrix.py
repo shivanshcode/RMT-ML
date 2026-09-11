@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Optional, Dict
 import numpy as np
 
-from .linalg import cached_svd, SVDResult
+from .linalg import cached_svd, SVDResult, singular_basis_status
 from . import mp as MP
 from . import tail as TAIL
 from . import scalars as SC
@@ -93,6 +93,7 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     row: Dict[str, object] = {
         "name": record.name, "short": record.short, "layer_idx": record.layer_idx,
         "n": n, "m": m, "is_square": int(n == m), "N_cov": int(N_cov),
+        "source_dtype": getattr(record, "source_dtype", "unknown"),
         "svd_backend": svd.backend,
         "svd_factorization_dtype": svd.factorization_dtype,
         "svd_degraded": int(bool(svd.degraded)),
@@ -187,11 +188,23 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
             "alpha_rand_support_observations": 0,
             "alpha_rand_is_powerlaw": 0,
             "max_ev_rand": _nan(),
+            "random_svd_backend": "not_requested",
+            "random_svd_factorization_dtype": "unavailable",
+            "random_svd_degraded": 0,
         })
         if cfg.do_randomize:
             rng = np.random.default_rng(cfg.seed)
             Wr = rng.standard_normal(W.shape) * np.std(W)
-            sr = np.linalg.svd(Wr, compute_uv=False)
+            random_svd = cached_svd(
+                Wr, full_matrices=False, backend=cfg.backend,
+                gpu_min_dim=cfg.gpu_svd_min_dim,
+            )
+            if random_svd.degraded and cfg.strict:
+                raise RuntimeError("random-control SVD precision contract was not satisfied")
+            sr = random_svd.s
+            row["random_svd_backend"] = random_svd.backend
+            row["random_svd_factorization_dtype"] = random_svd.factorization_dtype
+            row["random_svd_degraded"] = int(bool(random_svd.degraded))
             random_lam = (sr ** 2) / N_cov
             row["max_ev_rand"] = float(np.max(random_lam))
             if selected_name == "csn":
@@ -237,6 +250,9 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
         row["alpha_rand_kind"] = "unavailable"
         row["powerlaw_pkg_status"] = "disabled"
         row["powerlaw_pkg_reason"] = ""
+        row["random_svd_backend"] = "not_requested"
+        row["random_svd_factorization_dtype"] = "unavailable"
+        row["random_svd_degraded"] = 0
 
     # --- scalars ----------------------------------------------------------- #
     row["row_wise_entropy"] = SC.row_wise_entropy(W)
@@ -248,17 +264,25 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
         "max_sval": float(np.max(s)), "min_sval": float(np.min(s)),
         "mean_sval": float(np.mean(s)), "median_sval": float(np.median(s)),
     })
-    # --- IPR — gated on cfg.do_ipr (REPORT §2) ----------------------------- #
-    if cfg.do_ipr:
+    # --- vector diagnostics: individual bases must be identifiable -------- #
+    basis_status = singular_basis_status(svd)
+    row["singular_basis_status"] = basis_status
+    if cfg.do_ipr and basis_status == "available":
         ipr = SC.ipr_summary(Vh, s, n, m, sigma_med)
         row.update(ipr)
+        row["ipr_status"] = "available"
     else:
         row["ipr_top10_mean"] = _nan(); row["ipr_bulk_mean"] = _nan()
-    if cfg.do_porter_thomas:
+        row["ipr_status"] = "not_requested" if not cfg.do_ipr else basis_status
+    if cfg.do_porter_thomas and basis_status == "available":
         pt = SC.porter_thomas_ks(Vh)
         row.update(pt)
+        row["porter_thomas_status"] = "available"
     else:
         row["pt_ks_mean"] = _nan(); row["pt_frac_random"] = _nan()
+        row["porter_thomas_status"] = (
+            "not_requested" if not cfg.do_porter_thomas else basis_status
+        )
 
     # --- RMT bulk (on covariance eigenvalues inside the fitted support) ---- #
     bulk_lam = lam[(lam >= mp_minus_eig) & (lam <= mp_plus_eig)]
@@ -362,7 +386,7 @@ def _set_overlap_nans(row):
 
 # canonical column order (plan.md §5)
 CSV_COLUMNS = (
-    ["name", "short", "layer_idx", "n", "m", "is_square", "N_cov",
+    ["name", "short", "layer_idx", "n", "m", "is_square", "N_cov", "source_dtype",
      "svd_backend", "svd_factorization_dtype", "svd_degraded", "precision_status",
      "sigma_med", "sigma_med_refined", "n_iter_sigma", "mp_minus", "mp_plus",
      "mp_minus_eig", "mp_plus_eig", "n_right_outliers", "n_left_outliers",
@@ -379,10 +403,12 @@ CSV_COLUMNS = (
      "alpha_rand_ks_D", "alpha_rand_plateau_width",
      "alpha_rand_plateau_start_rank", "alpha_rand_plateau_end_rank",
      "alpha_rand_window", "alpha_rand_support_observations",
-     "alpha_rand_is_powerlaw", "max_ev_rand",
+     "alpha_rand_is_powerlaw", "max_ev_rand", "random_svd_backend",
+     "random_svd_factorization_dtype", "random_svd_degraded",
      "row_wise_entropy", "spectral_entropy", "stable_rank", "mp_softrank",
      "bulk_mass_frac", "max_sval", "min_sval", "mean_sval", "median_sval",
-     "ipr_top10_mean", "ipr_bulk_mean", "pt_ks_mean", "pt_frac_random",
+     "singular_basis_status", "ipr_top10_mean", "ipr_bulk_mean", "ipr_status",
+     "pt_ks_mean", "pt_frac_random", "porter_thomas_status",
      "spacing_level_count", "spacing_seed", "spacing_available", "spacing_status",
      "r_statistic_mean", "nn_KS_GOE", "nn_KS_Poisson",
      "delta3_L10", "delta3_L50", "sigma2_L10", "sigma2_L50",

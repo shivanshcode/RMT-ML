@@ -20,7 +20,10 @@ from scipy import integrate, optimize
 def _resolve_s_n_m(weight, s, n, m):
     """Return (s, n, m) from either a weight matrix or precomputed (s, n, m)."""
     if weight is not None:
-        W = np.asarray(weight, dtype=np.float64)
+        raw = np.asarray(weight)
+        if np.iscomplexobj(raw):
+            raise TypeError("complex weights are not supported by the real MP API")
+        W = np.asarray(raw, dtype=np.float64)
         n_, m_ = int(W.shape[0]), int(W.shape[1])
         sv = np.linalg.svd(W, compute_uv=False).astype(np.float64)
         return np.sort(sv)[::-1], n_, m_
@@ -87,13 +90,8 @@ def mp_cdf(x, n, m, sigma):
 
 
 def mp_median(n, m, sigma=1.0) -> float:
-    """Median ν_med of the MP singular-value distribution (root-find on CDF=0.5)."""
-    nu_minus, nu_plus = _edges(n, m, sigma)
-    f = lambda t: float(mp_cdf(t, n, m, sigma)) - 0.5
-    # Bracket strictly inside the open support.
-    lo = nu_minus + 1e-9 * (nu_plus - nu_minus)
-    hi = nu_plus - 1e-9 * (nu_plus - nu_minus)
-    return float(optimize.brentq(f, lo, hi, xtol=1e-10, rtol=1e-12))
+    """Median ν_med of the MP singular-value distribution (scale invariant)."""
+    return float(_mp_quantile_singular(n, m, 0.5, sigma))
 
 
 # --------------------------------------------------------------------------- #
@@ -141,15 +139,23 @@ def mp_cdf_eig(x, n, m, sigma, N):
 # σ estimation — Gavish–Donoho median  (= USVT-cited estimator, Paper 3 §3)    #
 # --------------------------------------------------------------------------- #
 def _mp_quantile_singular(n, m, probability, sigma=1.0):
-    lower, upper = _edges(n, m, sigma)
     p = float(probability)
+    scale = float(sigma)
     if not 0.0 < p < 1.0:
         raise ValueError("probability must lie in (0, 1)")
-    return float(optimize.brentq(
-        lambda value: float(mp_cdf(value, n, m, sigma)) - p,
-        lower + np.finfo(float).eps * max(1.0, upper),
-        upper - np.finfo(float).eps * max(1.0, upper),
-    ))
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("sigma must be finite and positive")
+    lower, upper = _edges(n, m, 1.0)
+    width = upper - lower
+    epsilon = np.finfo(float).eps * max(width, upper, np.finfo(float).tiny)
+    root = optimize.brentq(
+        lambda value: float(mp_cdf(value, n, m, 1.0)) - p,
+        lower + epsilon,
+        upper - epsilon,
+        xtol=np.finfo(float).eps * max(width, 1.0),
+        rtol=4.0 * np.finfo(float).eps,
+    )
+    return float(root * scale)
 
 
 def estimate_sigma_gd_median(weight=None, *, s=None, n=None, m=None,
@@ -253,12 +259,9 @@ def small_sv_deviation(s, n, m, sigma) -> dict:
     frac_mass_below_minus = (float(np.sum(s[s < nu_minus] ** 2)) / total_energy
                              if total_energy > 0 else 0.0)
 
-    # lowest MP decile threshold (q10) via root-find on the CDF
-    try:
-        f = lambda t: float(mp_cdf(t, n, m, sigma)) - 0.10
-        q10 = float(optimize.brentq(f, nu_minus + 1e-9, nu_plus - 1e-9))
-    except Exception:
-        q10 = nu_minus + 0.1 * (nu_plus - nu_minus)
+    # Solve in normalized units; a linear-support fallback is not an MP
+    # quantile and silently changes the scientific diagnostic.
+    q10 = _mp_quantile_singular(n, m, 0.10, sigma)
     n_le_q10 = int(np.sum(s <= q10))
     excess_small_sv = float(n_le_q10 - 0.10 * len(s))
 

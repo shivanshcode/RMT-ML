@@ -290,6 +290,8 @@ def compute_tensor_svd(
 
     if matrix.ndim != 2 or min(matrix.shape) < 1:
         raise ValueError("matrix must be a nonempty two-dimensional tensor")
+    if bool(matrix.is_complex()):
+        raise TypeError("complex matrices are not supported by the real RMT SVD bridge")
     if backend not in {"auto", "cpu", "cuda"}:
         raise ValueError("backend must be auto, cpu, or cuda")
     if driver not in {"default", "gesvdj", "gesvd", "gesvda"}:
@@ -318,6 +320,7 @@ def compute_tensor_svd(
         n=int(matrix.shape[0]),
         m=int(matrix.shape[1]),
         normalization=normalization,
+        factorization_dtype=analysis_dtype,
     )
 
 

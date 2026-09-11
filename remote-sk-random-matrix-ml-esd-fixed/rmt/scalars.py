@@ -12,10 +12,15 @@ import numpy as np
 
 def _svals(weight=None, *, s=None) -> np.ndarray:
     if s is not None:
+        if np.iscomplexobj(np.asarray(s)):
+            raise TypeError("complex singular values are not supported")
         return np.asarray(s, dtype=np.float64)
     if weight is None:
         raise ValueError("provide weight or s")
-    W = np.asarray(weight, dtype=np.float64)
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by real scalar metrics")
+    W = np.asarray(raw, dtype=np.float64)
     return np.linalg.svd(W, compute_uv=False).astype(np.float64)
 
 
@@ -25,13 +30,16 @@ def stable_rank(weight=None, *, s=None) -> float:
     smax = float(np.max(sv))
     if smax <= 0:
         return 0.0
-    return float(np.sum(sv**2) / smax**2)
+    return float(np.sum(np.square(sv / smax)))
 
 
 def spectral_entropy(svals, base=np.e) -> float:
     """Entropy of pᵢ = sᵢ²/Σsᵢ²; max ln k (uniform), min 0 (dominant)."""
     sv = np.asarray(svals, dtype=np.float64)
-    e = sv**2
+    scale = float(np.max(np.abs(sv))) if sv.size else 0.0
+    if scale <= 0:
+        return 0.0
+    e = np.square(sv / scale)
     tot = float(np.sum(e))
     if tot <= 0:
         return 0.0
@@ -43,8 +51,13 @@ def spectral_entropy(svals, base=np.e) -> float:
 
 def row_wise_entropy(weight, base=np.e) -> float:
     """Mean per-row entropy of the squared-entry distribution of W."""
-    W = np.asarray(weight, dtype=np.float64)
-    sq = W**2
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by real scalar metrics")
+    W = np.asarray(raw, dtype=np.float64)
+    scales = np.max(np.abs(W), axis=1, keepdims=True)
+    normalized = np.divide(W, scales, out=np.zeros_like(W), where=scales > 0)
+    sq = np.square(normalized)
     rs = sq.sum(axis=1, keepdims=True)
     rs[rs == 0] = 1.0
     p = sq / rs
@@ -124,11 +137,13 @@ def mp_softrank(s, nu_plus) -> float:
 def bulk_mass_frac(s, nu_plus, *, nu_minus=0.0) -> float:
     """Energy fraction inside the two-sided support ``[nu_minus, nu_plus]``."""
     sv = np.asarray(s, dtype=np.float64)
-    tot = float(np.sum(sv**2))
-    if tot <= 0:
+    scale = float(np.max(np.abs(sv))) if sv.size else 0.0
+    if scale <= 0:
         return float("nan")
+    energy = np.square(sv / scale)
+    tot = float(np.sum(energy))
     mask = (sv >= float(nu_minus)) & (sv <= float(nu_plus))
-    return float(np.sum(sv[mask] ** 2) / tot)
+    return float(np.sum(energy[mask]) / tot)
 
 
 def decile_index_ranges(k, n_deciles=10, ascending=True) -> List[Tuple[int, int]]:
@@ -162,7 +177,8 @@ def per_decile(s, n_deciles=10) -> dict:
         )
     ranges = decile_index_ranges(k, n_deciles, ascending=True)
     out = {}
-    energy = np.square(sv)
+    scale = float(np.max(np.abs(sv))) if sv.size else 0.0
+    energy = np.square(sv / scale) if scale > 0.0 else np.zeros_like(sv)
     total = float(np.sum(energy))
     global_max = float(np.max(energy)) if energy.size else 0.0
     probabilities = energy / total if total > 0.0 else np.zeros_like(energy)

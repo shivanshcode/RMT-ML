@@ -86,7 +86,10 @@ def cosine_warmup_multiplier(
         raise ValueError("scheduler arguments are invalid")
     step = max(0.0, float(step))
     if warmup_steps > 0 and step < warmup_steps:
-        return max(np.finfo(float).eps, (step + 1) / warmup_steps)
+        # ``step`` can be fractional for token-budget runs.  Retain the
+        # update-index convention (the first update uses 1/warmup_steps) while
+        # bounding the continuous interpolation at the configured peak.
+        return min(1.0, max(np.finfo(float).eps, (step + 1.0) / warmup_steps))
     decay_steps = max(1, total_steps - warmup_steps)
     progress = min(1.0, max(0.0, (step - warmup_steps) / decay_steps))
     cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
@@ -367,9 +370,23 @@ class LanguageModelTrainer:
                 gradients_finite = bool(torch.isfinite(raw_gradient_norm).item())
                 scaler_enabled = bool(self.scaler.is_enabled())
                 if gradients_finite:
-                    gradient_norm = torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.config.gradient_clip
+                    # Do not ask clip_grad_norm_ to recompute this norm in the
+                    # gradients' (often FP32) dtype: its sum of squares can
+                    # overflow even though all entries and the FP64 norm are
+                    # finite.  Scale directly from the qualified FP64 norm.
+                    gradient_norm = raw_gradient_norm
+                    clip_coefficient = min(
+                        1.0,
+                        float(self.config.gradient_clip)
+                        / max(float(raw_gradient_norm.item()), np.finfo(float).tiny),
                     )
+                    if clip_coefficient < 1.0:
+                        for parameter in parameters_with_grad:
+                            parameter.grad.mul_(clip_coefficient)
+                    if any(not bool(torch.all(torch.isfinite(parameter.grad)).item())
+                           for parameter in parameters_with_grad):
+                        self.optimizer.zero_grad(set_to_none=True)
+                        raise FloatingPointError("gradient clipping produced non-finite gradients")
                 elif scaler_enabled:
                     # GradScaler recorded the overflow during unscale_.  Do not
                     # clip inf gradients (which can turn them into NaNs); let

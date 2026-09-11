@@ -4,7 +4,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 
 ## `rmt.svd_result`
 
-- `SVDResult(U, s, Vh, n, m, normalization=None, lambda_minus=None, lambda_plus=None)` is a frozen dataclass.
+- `SVDResult(U, s, Vh, n, m, normalization=None, lambda_minus=None, lambda_plus=None, factorization_dtype="float64")` is a frozen dataclass; storage promotion does not erase FP32 factorization provenance.
 - Properties: `gamma`, `aspect_ratio`, `Q`, `V`, `singular_values`, raw `eigenvalues`, normalized `covariance_eigenvalues`, and `spectral_bounds`.
 - `SVDResult.reconstruct() -> np.ndarray`
 - `compute_svd(matrix, *, full_matrices=False, normalization=None) -> SVDResult`
@@ -162,6 +162,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `support_from_cholesky_tail(alpha, beta) -> tuple[float, float]`
 - `vector_empirical_stieltjes(lanczos, z) -> np.ndarray | complex`
 - `extended_stieltjes_transform(z, diagonal, sub_diagonal, *, tail_alpha, tail_beta) -> np.ndarray | complex`
+- `LanczosSpikeResult.stieltjes(z)` evaluates the representative measure matching reported poles/residues; `ensemble_stieltjes(z)` is the separately named probe average used by `density(...)`.
 - `asymptotic_spectral_density(result, energies, *, eta=1e-3) -> np.ndarray`
 - `finite_section_poles(cholesky, *, tail_alpha, tail_beta, threshold, residue_threshold=0.0, tail_window=None, extension_size=None) -> tuple[np.ndarray, np.ndarray]`
 - `finite_vest_poles(lanczos, *, threshold, residue_threshold=0.0) -> tuple[np.ndarray, np.ndarray]`
@@ -190,7 +191,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `allocation_for_regime(optimal, kappa, *, name=None, law=ScalingLaw()) -> Allocation`
 - `isoflop_grid(compute_budgets, kappas=(0.25, 1.0, 4.0), law=ScalingLaw(), *, target_tokens_per_parameter=20.0) -> list[Allocation]`
 - `estimate_transformer_parameters(config) -> int`
-- `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64) -> dict`
+- `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64, max_parameters=None) -> dict`; embedding cost and all feasible lower widths are included, and one-layer searches are supported.
 - `CovarianceEstimate(array, *, observation_count, accumulation_dtype, centered)` is an `np.ndarray` subclass carrying rank/precision provenance into overlap qualification.
 - `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains a stable running mean and centered M2 matrix on one device (historical buffer attribute names are retained).
 - `CovarianceAccumulator.update(activations, *, valid_mask=None, max_samples=None) -> None`; moment arithmetic explicitly disables an enclosing autocast context.
@@ -205,7 +206,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None, analysis_dtype="float64") -> SVDResult`; analysis precision is independent of model/autocast precision.
 - `lesion_matrix(weight, tranche, *, fraction=0.05, mode="count", reference_energy=None, generator=None, svd_backend="auto", svd_driver="gesvdj") -> tuple[Tensor, LesionInfo]`
 - `lesion_matrix_decile(weight, decile, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj") -> tuple[Tensor, LesionInfo]`
-- `spectral_lesion(model, parameter_names, tranche, *, fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj")` returns a restoring context manager.
+- `spectral_lesion(model, parameter_names, tranche, *, fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj", factor_cache=None, analysis_dtype="float64")` returns a restoring context manager. Reusable cache entries are verified against pristine weight bytes and the analysis contract.
 - `spectral_decile_lesion(model, parameter_names, decile, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj")` returns a restoring context manager.
 - `independent_lesion_benchmark(model, parameter_names, evaluate, *, tranches=("top", "bulk", "bottom"), fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj") -> list[dict]`
 - `independent_decile_benchmark(model, parameter_names, evaluate, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj") -> list[dict]`

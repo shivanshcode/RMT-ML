@@ -10,6 +10,7 @@ torch imported lazily inside functions.
 from __future__ import annotations
 
 from typing import Dict, List
+import hashlib
 import tempfile
 from pathlib import Path
 import numpy as np
@@ -51,6 +52,15 @@ class _DiskTensorStore:
         self._temporary.cleanup()
 
 
+def _weight_fingerprint(W):
+    array = np.ascontiguousarray(np.asarray(W))
+    digest = hashlib.sha256()
+    digest.update(str(array.shape).encode("ascii"))
+    digest.update(str(array.dtype).encode("ascii"))
+    digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
 def _qualified_factors(W, *, backend="numpy", gpu_min_dim=1024):
     """Return factors only when the decile precision contract is satisfied."""
     from .linalg import cached_svd
@@ -62,7 +72,7 @@ def _qualified_factors(W, *, backend="numpy", gpu_min_dim=1024):
             f"(backend={result.backend}, dtype={result.factorization_dtype})")
     # Keep the qualification marker in every memory/disk factor cache entry so
     # a bare low-precision tuple cannot bypass the guard on reuse.
-    return result.U, result.s, result.Vh, "float64"
+    return result.U, result.s, result.Vh, "float64", _weight_fingerprint(W)
 
 
 def _reconstruct_zeroed(W, lo, hi, *, factors=None, backend="numpy", gpu_min_dim=1024):
@@ -70,8 +80,9 @@ def _reconstruct_zeroed(W, lo, hi, *, factors=None, backend="numpy", gpu_min_dim
     if factors is None:
         factors = _qualified_factors(
             W, backend=backend, gpu_min_dim=gpu_min_dim)
-    if len(factors) != 4 or str(np.asarray(factors[3]).item()) != "float64":
-        raise RuntimeError("cached decile factors lack float64 qualification")
+    if (len(factors) != 5 or str(np.asarray(factors[3]).item()) != "float64"
+            or str(factors[4]) != _weight_fingerprint(W)):
+        raise RuntimeError("cached decile factors are stale or lack float64 qualification")
     U, s, Vh = factors[:3]
     order = np.argsort(s)                       # ascending
     s_new = s.copy()
@@ -121,11 +132,18 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
             if logical_shape[0] % 3:
                 raise ValueError(f"fused QKV rows are not divisible by three for {name}")
             idx = list(spec.fused_qkv_order).index(tag)
-            interleaved = qkv_is_interleaved(base, spec)
-            nh = get_num_heads(model) if interleaved else None
+            interleaved = (rec.qkv_interleaved
+                           if getattr(rec, "qkv_interleaved", None) is not None
+                           else qkv_is_interleaved(base, spec))
+            nh = (rec.num_heads if getattr(rec, "num_heads", None) is not None
+                  else get_num_heads(model)) if interleaved else None
             if interleaved and nh is None:
                 raise ValueError("num_heads is required for interleaved fused QKV")
             block_shape = (logical_shape[0] // 3, logical_shape[1])
+            if interleaved and block_shape[0] % int(nh):
+                raise ValueError(
+                    f"fused QKV of {logical_shape[0]} rows is not divisible into {nh} heads"
+                )
         if (int(rec.n), int(rec.m)) != tuple(map(int, block_shape)):
             raise ValueError(f"matrix shape changed for {name}")
         rank = min(block_shape)
@@ -137,6 +155,13 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
             (scope, is_fused, idx, interleaved, nh)
         )
 
+    # Scope conflicts are metadata errors and must be rejected before any
+    # physical parameter is changed.
+    for group in groups.values():
+        items = group["items"]
+        if any(not item[1] for item in items) and len(items) > 1:
+            raise ValueError("a parameter cannot be selected as both full and fused scopes")
+
     with torch.no_grad():
         # Materialize and release one physical parameter at a time.  Q/K/V
         # records sharing a fused parameter are reconstructed from this one
@@ -145,9 +170,6 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
             w, cls, items = group["weight"], group["class"], group["items"]
             full = w.detach().cpu().to(torch.float64).numpy()
             pristine_mat = np.ascontiguousarray(full.T if cls == "Conv1D" else full)
-            has_full = any(not item[1] for item in items)
-            if has_full and len(items) > 1:
-                raise ValueError("a parameter cannot be selected as both full and fused scopes")
             mat = pristine_mat.copy()
             for scope, is_fused, idx, interleaved, nh in items:
                 pristine_block = (extract_qkv_block(
@@ -157,6 +179,9 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
                     min(pristine_block.shape), n_deciles, ascending=True
                 )[decile - 1]
                 factors = None if factor_cache is None else factor_cache.get(scope)
+                if (factors is not None
+                        and (len(factors) != 5 or str(factors[4]) != _weight_fingerprint(pristine_block))):
+                    factors = None
                 if factors is None:
                     factors = _qualified_factors(
                         pristine_block, backend=backend, gpu_min_dim=gpu_min_dim)
@@ -195,6 +220,7 @@ def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
     """
     from .perplexity import perplexity_wikitext
 
+    records = list(records)
     if int(n_deciles) < 1:
         raise ValueError("n_deciles must be positive")
     if decile_scope not in {"all", "analyzed"}:
@@ -216,11 +242,15 @@ def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
         raise ValueError("pristine perplexity is unavailable or non-finite")
     selected_roles = {r.short for r in records}
     selected_layers = {r.layer_idx for r in records}
+    head_overrides = {r.num_heads for r in records if getattr(r, "num_heads", None) is not None}
+    if len(head_overrides) > 1:
+        raise ValueError("records contain inconsistent fused-QKV head counts")
+    head_override = next(iter(head_overrides), None)
     if decile_scope == "all":
-        recs = [r for r in discover_weight_metadata(model, spec=sp)
+        recs = [r for r in discover_weight_metadata(model, spec=sp, num_heads=head_override)
                 if r.short in selected_roles]
     else:
-        recs = _rebind_records(model, records, spec=sp)
+        recs = _rebind_records(model, records, spec=sp, num_heads=head_override)
     if not recs:
         raise ValueError("decile scope selected no matrices")
     actual_names = sorted(r.name for r in recs)
@@ -298,11 +328,11 @@ def perplexity_vs_decile(model_factory, tokenizer, records, device, *,
     }
 
 
-def _rebind_records(model, records, *, spec=None):
+def _rebind_records(model, records, *, spec=None, num_heads=None):
     """Re-discover every requested record by exact name on the active model."""
     wanted = {r.name for r in records}
     resolved = spec or get_model_spec(model)
-    fresh = discover_weight_metadata(model, spec=resolved)
+    fresh = discover_weight_metadata(model, spec=resolved, num_heads=num_heads)
     by_name = {r.name: r for r in fresh}
     missing = sorted(wanted - by_name.keys())
     if missing:

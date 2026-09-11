@@ -13,6 +13,14 @@ Spectral-Chinchilla trains compute-allocation-controlled causal Transformers and
 - `differences.md` records all source-level and mathematical reconciliation decisions.
 - `other_requirements.md` defines the air-gap, wheelhouse, asset, and directory contract.
 
+## Numerical and safety guarantees
+
+- Gradient clipping derives its coefficient from an FP64 norm, and token-progress warmup is bounded by the configured peak learning rate.
+- SVD results retain their actual factorization precision. Numerical-rank, overlap, and Porter–Thomas claims are unavailable for unresolved null/repeated bases; real-only APIs reject complex matrices explicitly.
+- MP quantiles, modified-MP fitting, and dimensionless scalar summaries are invariant to finite changes of spectral units.
+- FARMS fit availability is checked on the prepared pooled spectrum. Constant-tail poles and the returned Stieltjes transform use the same resolved recurrence.
+- Reusable lesion factors are content- and analysis-contract-bound, and presets are applied before dependent validation.
+
 ## Guide to run
 
 ### 1. Select and inventory the cluster environment
@@ -180,7 +188,7 @@ Boolean flags use paired `--flag` and `--no-flag` forms. Each paper mode applies
 | `--compute-number-variance` | boolean | true | Compute `Σ²(10)` |
 | `--compute-stable-rank` | boolean | true | Compute stable rank |
 | `--compute-delta3` | boolean | false | Compute Dyson-Mehta `Δ₃(10)` |
-| `--compute-porter-thomas` | boolean | false | Run pooled eigenvector calibration |
+| `--compute-porter-thomas` | boolean | false | Run pooled eigenvector calibration only when the individual singular-vector basis is identifiable; otherwise emit an unavailable status |
 | `--brody-fit-method` | `mle`, `cdf_nls` | `mle` | Brody optimizer |
 | `--number-variance-method` | `sliding`, `monte_carlo` | `sliding` | Number-variance interval estimator |
 | `--run-spectral-lesioning` | boolean | false | Run reversible tranche lesions |

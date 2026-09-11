@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 from dataclasses import asdict, dataclass
 from collections.abc import Callable, Iterable, Iterator, Sequence
 import math
@@ -344,7 +345,7 @@ def spectral_lesion(
     seed: int = 0,
     svd_backend: str = "auto",
     svd_driver: str = "gesvdj",
-    factor_cache: dict[str, tuple[Tensor, Tensor, Tensor]] | None = None,
+    factor_cache: dict[str, tuple[Tensor, ...]] | None = None,
     analysis_dtype: str = "float64",
 ) -> Iterator[list[LesionInfo]]:
     """Temporarily lesion named matrices and restore exact bytes on exit."""
@@ -359,20 +360,35 @@ def spectral_lesion(
     if any(parameters[name].ndim != 2 for name in names):
         raise ValueError("all lesioned parameters must be matrices")
     snapshots = {name: parameters[name].detach().clone() for name in names}
+
+    def fingerprint(parameter: Tensor) -> str:
+        value = parameter.detach().cpu().contiguous()
+        digest = hashlib.sha256()
+        digest.update(str(tuple(value.shape)).encode("ascii"))
+        digest.update(str(value.dtype).encode("ascii"))
+        # Byte views work for BF16 as well as NumPy-compatible torch dtypes.
+        digest.update(value.view(torch.uint8).numpy().tobytes())
+        digest.update(f"{svd_backend}|{svd_driver}|{analysis_dtype}".encode("utf-8"))
+        return digest.hexdigest()
+
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
     information: list[LesionInfo] = []
     try:
         with torch.no_grad():
             for name in names:
-                factors = None if factor_cache is None else factor_cache.get(name)
+                current_fingerprint = fingerprint(parameters[name])
+                entry = None if factor_cache is None else factor_cache.get(name)
+                factors = None
+                if entry is not None and len(entry) == 4 and entry[3] == current_fingerprint:
+                    factors = entry[:3]
                 if factors is None and factor_cache is not None:
                     computed = _svd_components(
                         parameters[name], backend=svd_backend, driver=svd_driver,
                         analysis_dtype=analysis_dtype
                     )
                     factors = tuple(value.detach().cpu() for value in computed)
-                    factor_cache[name] = factors
+                    factor_cache[name] = (*factors, current_fingerprint)
                 modified, info = lesion_matrix(
                     parameters[name],
                     tranche,

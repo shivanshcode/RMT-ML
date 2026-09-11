@@ -2,10 +2,10 @@
 
 ## Review and handoff
 
-- **Baseline:** commit `0bd4a13` (`before another pass`). All findings below are **OPEN**; implementation was not changed.
+- **Baseline:** commit `0bd4a13` (`before another pass`). All 16 findings are now **FIXED** in the working tree. The descriptions below are retained as historical reproducers.
 - **Scope:** maintained `models/`, `pipelines/`, `rmt/`, `run_experiments.py`, asset downloader, dependency declarations, launcher, and test coverage. The sibling project's incompatible `rmt` package was reviewed separately.
 - **Method:** source/control-flow review, Ruff inspection, existing tests, and small offline CPU reproducers. This is a best-effort audit, not a guarantee that every possible bug has been found. Cosmetic lint warnings are not listed as bugs.
-- **Existing tests:** `python -m pytest -q -p no:cacheprovider` → **80 passed**. `bash -n run_hpc.slurm` passed. The findings expose gaps in the passing suite.
+- **Pre-repair test baseline:** `python -m pytest -q -p no:cacheprovider` -> **80 passed**. `bash -n run_hpc.slurm` passed; the focused reproducers exposed gaps in that baseline suite.
 - **Validation environment:** Python 3.13.2, NumPy 2.4.4, SciPy 1.17.1, CPU Torch 2.13.0, Matplotlib 3.10.8, pytest 8.3.3. This is **not** the pinned standalone environment. CUDA, compilation, real HF downloads, and SLURM execution were not available/validated.
 - Paths/line numbers are relative to this directory and refer to the baseline. Reproduce in a separate process launched from this project root.
 
@@ -15,22 +15,28 @@
 
 | ID | Priority | Finding | Status |
 |---|---|---|---|
-| COA-001 | P1 | Safe gradient-norm check is followed by overflowing FP32 clipping | OPEN |
-| COA-002 | P2 | Fractional token-progress warmup can exceed the peak learning rate | OPEN |
-| COA-003 | P2 | Bounded-Pareto log-likelihood uses an overwritten variable | OPEN |
-| COA-004 | P2 | Constant-tail poles and returned Stieltjes transform can describe different operators | OPEN |
-| COA-005 | P2 | FARMS MP admissibility is checked against the wrong spectrum | OPEN |
-| COA-006 | P2 | SVD roundoff turns null modes into an apparently valid MP bulk | OPEN |
-| COA-007 | P2 | Float32 SVD precision is lost before singular-subspace qualification | OPEN |
-| COA-008 | P2 | Direct covariance-overlap APIs accept rotation-ambiguous eigenspaces | OPEN |
-| COA-009 | P2 | Presets enable lesions after tranche validation has already run | OPEN |
-| COA-010 | P2 | Architecture search can reject feasible parameter caps | OPEN |
-| COA-011 | P2 | Caller-supplied lesion cache silently reuses factors of changed weights | OPEN |
-| COA-012 | P2 | MP quantiles fail under simple changes of spectral units | OPEN |
-| COA-013 | P2 | Modified-MP optimization has scale-dependent infeasible bounds | OPEN |
-| COA-014 | P3 | Real casts silently analyze the wrong matrix for complex input | OPEN |
-| COA-015 | P3 | Scale-invariant scalar metrics overflow/underflow before normalization | OPEN |
-| COA-016 | P2 | Porter–Thomas output is emitted for nonidentifiable weight bases | OPEN |
+| COA-001 | P1 | Safe gradient-norm check is followed by overflowing FP32 clipping | FIXED |
+| COA-002 | P2 | Fractional token-progress warmup can exceed the peak learning rate | FIXED |
+| COA-003 | P2 | Bounded-Pareto log-likelihood uses an overwritten variable | FIXED |
+| COA-004 | P2 | Constant-tail poles and returned Stieltjes transform can describe different operators | FIXED |
+| COA-005 | P2 | FARMS MP admissibility is checked against the wrong spectrum | FIXED |
+| COA-006 | P2 | SVD roundoff turns null modes into an apparently valid MP bulk | FIXED |
+| COA-007 | P2 | Float32 SVD precision is lost before singular-subspace qualification | FIXED |
+| COA-008 | P2 | Direct covariance-overlap APIs accept rotation-ambiguous eigenspaces | FIXED |
+| COA-009 | P2 | Presets enable lesions after tranche validation has already run | FIXED |
+| COA-010 | P2 | Architecture search can reject feasible parameter caps | FIXED |
+| COA-011 | P2 | Caller-supplied lesion cache silently reuses factors of changed weights | FIXED |
+| COA-012 | P2 | MP quantiles fail under simple changes of spectral units | FIXED |
+| COA-013 | P2 | Modified-MP optimization has scale-dependent infeasible bounds | FIXED |
+| COA-014 | P3 | Real casts silently analyze the wrong matrix for complex input | FIXED |
+| COA-015 | P3 | Scale-invariant scalar metrics overflow/underflow before normalization | FIXED |
+| COA-016 | P2 | Porter–Thomas output is emitted for nonidentifiable weight bases | FIXED |
+
+## Repair validation
+
+The repair pass uses FP64-qualified clipping, bounded token warmup, one constant-tail operator, prepared-domain MP gates, factorization-precision rank/basis checks, scale-normalized MP/scalar calculations, content-bound lesion caches, post-preset validation, and explicit real-only input checks. Porter–Thomas output is availability-qualified.
+
+Validation after repair: `python -m pytest -q -p no:cacheprovider` -> **80 passed**; `bash -n run_hpc.slurm` passed. Focused reproductions for bounded Pareto likelihood, constant-tail pole residues, low-rank cached SVDs, MP quantile scaling, modified-MP scaling, complex rejection, and capped architecture search also passed. CUDA and SLURM remain deployment gates.
 
 ## Findings
 
@@ -248,7 +254,7 @@ The runner sends all right singular vectors into pooled Porter–Thomas calibrat
 
 **Regression:** inject two valid SVD bases of the same repeated-spectrum matrix into `analyze_model`; PT availability or a replacement invariant diagnostic must not depend on the solver's arbitrary basis.
 
-## Repair order and acceptance
+## Original repair order and acceptance (completed)
 
 1. Fix COA-001/002 before trusting new training budgets or learning curves.
 2. Fix likelihood/Lanczos/domain/rank/precision findings before generating scientific comparisons.

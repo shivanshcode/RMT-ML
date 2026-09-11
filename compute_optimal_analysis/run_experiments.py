@@ -48,7 +48,7 @@ from rmt.factory import (
     prepare_spectrum,
 )
 from rmt.mp import SpikeDetectionResult, fit_marchenko_pastur, mp_soft_rank
-from rmt.overlap import dual_end_alignment
+from rmt.overlap import dual_end_alignment, weight_basis_status
 from rmt.scalars import (
     condition_number,
     porter_thomas_monte_carlo_pooled,
@@ -585,7 +585,13 @@ def analyze_model(
         role, layer = _role_and_layer(parameter_name)
         porter_thomas_ks = float("nan")
         porter_thomas_fraction = float("nan")
-        if compute_porter_thomas and svd.Vh.shape[0] > 10:
+        porter_thomas_status = (
+            weight_basis_status(svd) if compute_porter_thomas else "not_requested"
+        )
+        if compute_porter_thomas and svd.Vh.shape[0] <= 10:
+            porter_thomas_status = "unavailable: pooled calibration requires more than 10 vectors"
+        if (compute_porter_thomas and porter_thomas_status == "available"
+                and svd.Vh.shape[0] > 10):
             porter = porter_thomas_monte_carlo_pooled(
                 svd.Vh,
                 n_reference=256,
@@ -719,6 +725,7 @@ def analyze_model(
             "dyson_mehta_delta3_L10": rigidity_10,
             "porter_thomas_ks_mean": porter_thomas_ks,
             "porter_thomas_fraction_random": porter_thomas_fraction,
+            "porter_thomas_status": porter_thomas_status,
             "top_activation_alignment": top_alignment,
             "bulk_activation_alignment": bulk_alignment,
             "bottom_activation_alignment": bottom_alignment,
@@ -1167,10 +1174,6 @@ def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
         raise ValueError("activation and validation batch limits must be positive")
     if not math.isfinite(args.lesion_fraction) or not 0.0 < args.lesion_fraction <= 1.0:
         raise ValueError("lesion-fraction must be finite and lie in (0, 1]")
-    tranches = tuple(name.strip().lower() for name in args.lesion_tranches.split(",") if name.strip())
-    if (args.run_spectral_lesioning
-            and (not tranches or any(name not in {"top", "bulk", "bottom"} for name in tranches))):
-        raise ValueError("lesion-tranches must be a comma-separated subset of top,bulk,bottom")
     explicit_destinations = set(getattr(args, "_explicit_destinations", ()))
     def preset(attribute: str, value: Any) -> None:
         if attribute not in explicit_destinations:
@@ -1205,6 +1208,15 @@ def _resolve_runtime_configuration(args: argparse.Namespace) -> None:
     }
     for attribute, value in method_presets.get(args.experiment_mode, {}).items():
         preset(attribute, value)
+
+    # Validate dependent options only after presets and explicit --no-* flags
+    # have resolved the effective lesion setting.
+    tranches = tuple(
+        name.strip().lower() for name in args.lesion_tranches.split(",") if name.strip()
+    )
+    if (args.run_spectral_lesioning
+            and (not tranches or any(name not in {"top", "bulk", "bottom"} for name in tranches))):
+        raise ValueError("lesion-tranches must be a comma-separated subset of top,bulk,bottom")
 
     # Constructing the shared config performs selector, numeric, and cross-method
     # compatibility validation before data/model/output acquisition.

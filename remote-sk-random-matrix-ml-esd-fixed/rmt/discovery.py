@@ -54,6 +54,9 @@ class MatrixRecord:
     weight: np.ndarray
     n: int
     m: int
+    source_dtype: str = "unknown"
+    qkv_interleaved: Optional[bool] = None
+    num_heads: Optional[int] = None
 
 
 @dataclass
@@ -235,6 +238,8 @@ def _weight_2d(module, dtype="float64"):
     w = getattr(module, "weight", None)
     if w is None or w.dim() != 2:
         return None
+    if bool(w.is_complex()):
+        raise TypeError("complex model weights are not supported by the real RMT pipeline")
     arr = w.detach().to("cpu").to(torch.float64).numpy()
     # HF Conv1D stores weight as (in, out); detect by class name and transpose.
     cls = type(module).__name__
@@ -294,7 +299,7 @@ def assign_qkv_block(mat, idx: int, block, *, num_heads=None, interleaved=True) 
 
 
 def split_fused_qkv(weight, name, layer_idx, spec, *, num_heads=None,
-                    interleaved=None) -> List[MatrixRecord]:
+                    interleaved=None, source_dtype="unknown") -> List[MatrixRecord]:
     """Split a fused QKV weight (rows = 3·d) into Q/K/V records.
 
     ``interleaved`` defaults to ``qkv_is_interleaved(name, spec)``.  If an
@@ -312,13 +317,19 @@ def split_fused_qkv(weight, name, layer_idx, spec, *, num_heads=None,
             f"{name}: num_heads is required to split a head-interleaved fused QKV; "
             "refusing to guess an incompatible layout"
         )
+    if interleaved and (n_rows // 3) % int(num_heads):
+        raise ValueError(
+            f"fused QKV of {n_rows} rows is not divisible into {num_heads} heads"
+        )
 
     recs = []
     for i, tag in enumerate(spec.fused_qkv_order):
         block = extract_qkv_block(W, i, num_heads=num_heads, interleaved=interleaved)
         recs.append(MatrixRecord(
             name=f"{name}[{tag}]", short=tag, layer_idx=layer_idx,
-            weight=block, n=block.shape[0], m=block.shape[1]))
+            weight=block, n=block.shape[0], m=block.shape[1],
+            source_dtype=source_dtype, qkv_interleaved=bool(interleaved),
+            num_heads=int(num_heads) if interleaved else None))
     return recs
 
 
@@ -366,12 +377,20 @@ def discover_weight_metadata(model, layer_indices=None, *, spec=None,
             if interleaved and num_heads is None:
                 raise ValueError(f"{wname}: num_heads is required for interleaved QKV")
             rows = shape[0] // 3
+            if interleaved and rows % int(num_heads):
+                raise ValueError(
+                    f"fused QKV of {shape[0]} rows is not divisible into {num_heads} heads"
+                )
+            source_dtype = str(weight.dtype)
             for tag in spec.fused_qkv_order:
-                records.append(MatrixRecord(f"{wname}[{tag}]", tag, layer_idx,
-                                            None, rows, shape[1]))
+                records.append(MatrixRecord(
+                    f"{wname}[{tag}]", tag, layer_idx, None, rows, shape[1],
+                    source_dtype, interleaved, int(num_heads) if interleaved else None,
+                ))
         else:
-            records.append(MatrixRecord(wname, short, layer_idx, None,
-                                        shape[0], shape[1]))
+            records.append(MatrixRecord(
+                wname, short, layer_idx, None, shape[0], shape[1], str(weight.dtype)
+            ))
     return records
 
 
@@ -386,11 +405,15 @@ def materialize_record(model, record, *, spec=None, dtype="float64") -> MatrixRe
     if "[" in record.name:
         tag = record.name.rsplit("[", 1)[1][:-1]
         idx = list(spec.fused_qkv_order).index(tag)
-        interleaved = qkv_is_interleaved(base, spec)
-        W = extract_qkv_block(W, idx, num_heads=get_num_heads(model),
-                              interleaved=interleaved)
-    return MatrixRecord(record.name, record.short, record.layer_idx, W,
-                        int(W.shape[0]), int(W.shape[1]))
+        interleaved = (record.qkv_interleaved if record.qkv_interleaved is not None
+                       else qkv_is_interleaved(base, spec))
+        heads = record.num_heads if record.num_heads is not None else get_num_heads(model)
+        W = extract_qkv_block(W, idx, num_heads=heads, interleaved=interleaved)
+    return MatrixRecord(
+        record.name, record.short, record.layer_idx, W,
+        int(W.shape[0]), int(W.shape[1]), record.source_dtype,
+        record.qkv_interleaved, record.num_heads,
+    )
 
 
 def discover_weight_matrices(model, layer_indices=None, *, spec=None,
@@ -423,9 +446,14 @@ def discover_weight_matrices(model, layer_indices=None, *, spec=None,
             continue
         wname = name + ".weight"
         if short == "QKV":
-            records.extend(split_fused_qkv(W, wname, layer_idx, spec,
-                                           num_heads=num_heads))
+            records.extend(split_fused_qkv(
+                W, wname, layer_idx, spec, num_heads=num_heads,
+                source_dtype=str(module.weight.dtype),
+            ))
         else:
-            records.append(MatrixRecord(name=wname, short=short, layer_idx=layer_idx,
-                                        weight=W, n=W.shape[0], m=W.shape[1]))
+            records.append(MatrixRecord(
+                name=wname, short=short, layer_idx=layer_idx,
+                weight=W, n=W.shape[0], m=W.shape[1],
+                source_dtype=str(module.weight.dtype),
+            ))
     return records

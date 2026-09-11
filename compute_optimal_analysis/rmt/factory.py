@@ -71,7 +71,10 @@ def _choice(value: str, choices: Sequence[str], name: str) -> str:
 
 
 def _finite_weight(weight: np.ndarray) -> np.ndarray:
-    matrix = np.asarray(weight, dtype=np.float64)
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by the real RMT engine")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("weight must be a finite matrix with both dimensions at least two")
     return matrix
@@ -292,6 +295,18 @@ def prepare_spectrum(
     )
 
 
+def _qualified_raw_eigenvalues(matrix: np.ndarray, values: np.ndarray,
+                               svd: Any | None) -> np.ndarray:
+    """Zero modes below the factorization's relative resolution."""
+
+    result = np.asarray(values, dtype=np.float64).copy()
+    dtype = np.dtype(getattr(svd, "factorization_dtype", "float64"))
+    relative = np.finfo(dtype).eps * max(matrix.shape)
+    largest = float(np.max(result)) if result.size else 0.0
+    result[result <= largest * relative**2] = 0.0
+    return result
+
+
 def _unavailable_mp_fit(matrix: np.ndarray, method: str, reason: str,
                         eigenvalues: np.ndarray | None = None,
                         aspect_ratio: float | None = None) -> MPFitResult:
@@ -332,14 +347,7 @@ def dispatch_mp_fit(
         )
     cached_values = (mp_eigenvalues(matrix) if svd is None
                      else np.asarray(svd.covariance_eigenvalues, dtype=np.float64))
-    positive_count = int(np.count_nonzero(cached_values > 0.0))
-    minimum_positive = {"analytic_mp": 4, "kde_bulk_fit": 8}.get(method)
-    if minimum_positive is not None and positive_count < minimum_positive:
-        return _unavailable_mp_fit(
-            matrix, method,
-            f"fewer than {minimum_positive} positive eigenvalues",
-            cached_values,
-        )
+    cached_values = _qualified_raw_eigenvalues(matrix, cached_values, svd)
     if method == "thamm_modified_singular":
         singular = np.asarray(svd.s if svd is not None else np.linalg.svd(matrix, compute_uv=False))
         if singular.size < 2 * config.gaussian_kernel_window + 4:
@@ -372,7 +380,7 @@ def dispatch_mp_fit(
             )
     if method == "farms_unbiased" and prepared is not None and prepared.farms is not None:
         prepared_positive = int(np.count_nonzero(prepared.eigenvalues > 0.0))
-        if 0 < prepared_positive < 4:
+        if prepared.eigenvalues.size < 4 or prepared_positive < 4:
             return _unavailable_mp_fit(
                 matrix, method, "fewer than four positive pooled eigenvalues",
                 prepared.eigenvalues, prepared.aspect_ratio,
@@ -393,7 +401,7 @@ def dispatch_mp_fit(
                 "farms_normalized or farms_unbiased")
         compatible = prepare_spectrum(matrix, config, svd=svd)
         compatible_positive = int(np.count_nonzero(compatible.eigenvalues > 0.0))
-        if 0 < compatible_positive < 4:
+        if compatible.eigenvalues.size < 4 or compatible_positive < 4:
             return _unavailable_mp_fit(
                 matrix, method, "fewer than four positive pooled eigenvalues",
                 compatible.eigenvalues, compatible.aspect_ratio,
@@ -408,14 +416,35 @@ def dispatch_mp_fit(
                                "spectral_max": float(np.max(compatible.eigenvalues))}}
         )
     if method == "thamm_modified_singular":
-        return fit_marchenko_pastur_thamm(
-            matrix,
-            singular_values=None if svd is None else svd.s,
-            kernel_window=config.gaussian_kernel_window,
-        )
+        try:
+            return fit_marchenko_pastur_thamm(
+                matrix,
+                singular_values=None if svd is None else svd.s,
+                kernel_window=config.gaussian_kernel_window,
+            )
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as error:
+            return _unavailable_mp_fit(matrix, method, str(error), cached_values)
     prepared = (prepared if prepared is not None else prepare_spectrum(
         matrix, config, variance=1.0 if variance is None else variance, svd=svd
     ))
+    # Availability is a property of the exact sample consumed by the fitter,
+    # not of the raw source matrix.  Raw spectra also inherit numerical-rank
+    # qualification from the actual factorization precision.
+    fit_values = np.asarray(prepared.eigenvalues, dtype=np.float64)
+    if prepared.mode == "raw":
+        fit_values = _qualified_raw_eigenvalues(matrix, fit_values, svd)
+        prepared = PreparedSpectrum(
+            fit_values, prepared.aspect_ratio, prepared.mode,
+            farms=prepared.farms, diagnostics=prepared.diagnostics,
+        )
+    minimum_positive = {"analytic_mp": 4, "kde_bulk_fit": 8}.get(method)
+    positive_count = int(np.count_nonzero(fit_values > 0.0))
+    if minimum_positive is not None and positive_count < minimum_positive:
+        return _unavailable_mp_fit(
+            matrix, method,
+            f"fewer than {minimum_positive} positive eigenvalues",
+            fit_values, prepared.aspect_ratio,
+        )
     if method == "kde_bulk_fit":
         return fit_marchenko_pastur_kde(
             prepared.eigenvalues,
@@ -423,12 +452,17 @@ def dispatch_mp_fit(
             bandwidth=config.kde_bandwidth,
             trim_upper=config.mp_trim_upper,
         )
-    return fit_marchenko_pastur(
-        prepared.eigenvalues,
-        prepared.aspect_ratio,
-        variance=variance,
-        trim_upper=config.mp_trim_upper,
-    )
+    try:
+        return fit_marchenko_pastur(
+            prepared.eigenvalues,
+            prepared.aspect_ratio,
+            variance=variance,
+            trim_upper=config.mp_trim_upper,
+        )
+    except (ValueError, np.linalg.LinAlgError) as error:
+        return _unavailable_mp_fit(
+            matrix, method, str(error), prepared.eigenvalues, prepared.aspect_ratio
+        )
 
 
 def dispatch_tail_solver(

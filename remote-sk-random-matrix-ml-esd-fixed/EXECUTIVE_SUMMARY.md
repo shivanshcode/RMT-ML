@@ -61,11 +61,11 @@ fused `query_key_value` automatically.
 ## Output files (per model `<tag>`)
 
 `<tag>_matrix_metrics.csv` (one row per matrix), `<tag>_summary.json`, `<tag>_run_status.json`,
-`<tag>_perplexity.json`, `<tag>_stable_rank_per_epoch.csv`, optional WeightWatcher result/status JSON, and plots under `<tag>/`.
+`<tag>_run_manifest.json`, `<tag>_perplexity.json`, atomically claimed `<tag>_stable_rank_per_epoch.csv` plus checkpoint status, optional WeightWatcher result/status JSON, and plots under `<tag>/`.
 
 ## CSV columns (groups)
 
-identity (`name, short, layer_idx, n, m, is_square, N_cov`) ·
+identity/provenance (`name, short, layer_idx, n, m, is_square, N_cov, source_dtype, svd_factorization_dtype`) ·
 MP bulk (`sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig],
 n_*_outliers, frac_*_outliers`) · small-SV (`ks_lower, n_below_minus,
 frac_mass_below_minus, excess_small_sv`) · tail (`alpha, xmin, ks_D, n_tail,

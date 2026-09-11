@@ -51,12 +51,28 @@ def _positive_covariance_rank(covariance: np.ndarray, eigenvalues: np.ndarray,
 def _weight_vectors_identifiable(svd: SVDResult) -> str | None:
     values = np.asarray(svd.s, dtype=np.float64)
     scale = float(np.max(np.abs(values))) if values.size else 0.0
-    tolerance = np.finfo(float).eps * max(svd.n, svd.m) * scale
+    epsilon = np.finfo(np.dtype(svd.factorization_dtype)).eps
+    tolerance = epsilon * max(svd.n, svd.m) * scale
     if scale == 0.0 or np.any(values <= tolerance):
         return "weight has a nonidentifiable null singular subspace"
     if values.size > 1 and np.any(np.abs(np.diff(values)) <= tolerance):
         return "weight has an unresolved repeated singular-value subspace"
     return None
+
+
+def weight_basis_status(svd: SVDResult) -> str:
+    """Return ``available`` or an explicit singular-basis limitation."""
+
+    reason = _weight_vectors_identifiable(svd)
+    return "available" if reason is None else f"unavailable: {reason}"
+
+
+def _positive_covariance_clusters(eigenvalues: np.ndarray, positive_rank: int,
+                                  tolerance: float) -> bool:
+    """Whether individually reported positive covariance modes are ambiguous."""
+
+    positive = np.asarray(eigenvalues[:positive_rank], dtype=np.float64)
+    return bool(positive.size > 1 and np.any(np.abs(np.diff(positive)) <= tolerance))
 
 
 def _normalized_columns(vectors: np.ndarray) -> np.ndarray:
@@ -331,7 +347,10 @@ def overlap_analysis(
     reason = (_weight_vectors_identifiable(svd)
               or ("activation covariance is significantly indefinite"
                   if np.any(eigenvalues < -tolerance) else None)
-              or ("activation covariance has numerical rank zero" if positive_rank == 0 else None))
+              or ("activation covariance has numerical rank zero" if positive_rank == 0 else None)
+              or ("activation covariance has an unresolved repeated positive eigenspace"
+                  if _positive_covariance_clusters(eigenvalues, positive_rank, tolerance)
+                  else None))
     if reason is not None:
         return {"svals": svd.s.copy(), "overlap": np.asarray([]),
                 "overlap_matrix": np.empty((svd.s.size, 0)), "evals": eigenvalues,
@@ -382,7 +401,10 @@ def eigenvector_eigenvalue_coincidence(
     reason = (_weight_vectors_identifiable(svd)
               or ("activation covariance is significantly indefinite"
                   if np.any(eigenvalues < -tolerance) else None)
-              or ("activation covariance has numerical rank zero" if positive_rank == 0 else None))
+              or ("activation covariance has numerical rank zero" if positive_rank == 0 else None)
+              or ("activation covariance has an unresolved repeated positive eigenspace"
+                  if _positive_covariance_clusters(eigenvalues, positive_rank, tolerance)
+                  else None))
     if reason is not None:
         return {"available": False, "status": f"unavailable: {reason}",
                 "activation_rank": positive_rank}

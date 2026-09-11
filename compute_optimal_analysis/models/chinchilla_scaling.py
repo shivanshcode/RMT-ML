@@ -246,11 +246,23 @@ def suggest_architecture(
         raise ValueError("target_parameters must be finite and positive")
     if vocab_size < 2 or max_layers < 1 or width_multiple < 8:
         raise ValueError("architecture search bounds are invalid")
+    cap = None if max_parameters is None else float(max_parameters)
+    if cap is not None and (not math.isfinite(cap) or cap <= 0.0):
+        raise ValueError("max_parameters must be finite and positive")
     best: tuple[float, dict[str, Any]] | None = None
-    for layers in range(2, max_layers + 1, 2):
-        approximate_width = math.sqrt(target / max(1.0, 16.0 * layers))
+    layer_options = [1] + list(range(2, max_layers + 1, 2))
+    for layers in layer_options:
+        # Include embedding cost in the center estimate.  More importantly,
+        # search every lower width: a hard cap can make the narrow candidates
+        # feasible even when the unconstrained neighborhood is not.
+        linear = float(vocab_size)
+        discriminant = linear**2 + 64.0 * layers * target
+        approximate_width = max(0.0, (-linear + math.sqrt(discriminant)) / (32.0 * layers))
         center = max(width_multiple, int(round(approximate_width / width_multiple)) * width_multiple)
-        for width in range(max(width_multiple, center - 4 * width_multiple), center + 5 * width_multiple, width_multiple):
+        upper = center + 4 * width_multiple
+        if cap is not None:
+            upper = min(upper, int(cap // vocab_size // width_multiple) * width_multiple)
+        for width in range(width_multiple, upper + 1, width_multiple):
             head_options = [value for value in (4, 8, 12, 16, 24, 32) if value <= width and width % value == 0]
             if not head_options:
                 continue
@@ -269,7 +281,7 @@ def suggest_architecture(
                 "bias": False,
             }
             realized = estimate_transformer_parameters(candidate)
-            if max_parameters is not None and realized > float(max_parameters):
+            if cap is not None and realized > cap:
                 continue
             error = abs(realized - target) / target
             if best is None or error < best[0]:

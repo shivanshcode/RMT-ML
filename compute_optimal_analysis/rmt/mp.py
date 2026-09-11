@@ -178,24 +178,29 @@ def _mp_quantile(probability: float, q: float, variance: float = 1.0) -> float:
     probability = float(probability)
     if not 0.0 < probability < 1.0:
         raise ValueError("probability must lie strictly between zero and one")
-    lower, upper = marchenko_pastur_bounds(q, variance)
-    epsilon = np.finfo(float).eps * max(1.0, upper)
-    return float(
-        brentq(
-            lambda value: _mp_cdf_scalar(value, q, variance) - probability,
-            lower + epsilon,
-            upper - epsilon,
-            xtol=1e-11,
-            rtol=1e-11,
-            maxiter=150,
-        )
+    # Root-find in unit-variance coordinates.  Absolute tolerances in physical
+    # units fail once the whole support is much smaller than one.
+    lower, upper = marchenko_pastur_bounds(q, 1.0)
+    width = upper - lower
+    epsilon = np.finfo(float).eps * max(width, upper, np.finfo(float).tiny)
+    root = brentq(
+        lambda value: _mp_cdf_scalar(value, q, 1.0) - probability,
+        lower + epsilon,
+        upper - epsilon,
+        xtol=np.finfo(float).eps * max(width, 1.0),
+        rtol=4.0 * np.finfo(float).eps,
+        maxiter=150,
     )
+    return float(root * variance)
 
 
 def mp_eigenvalues(weight: np.ndarray, normalization: float | None = None) -> np.ndarray:
     """Return nonzero covariance eigenvalues in descending order."""
 
-    matrix = np.asarray(weight, dtype=np.float64)
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by the real MP API")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 1:
         raise ValueError("weight must be a nonempty two-dimensional matrix")
     if not np.all(np.isfinite(matrix)):
@@ -374,17 +379,26 @@ def fit_modified_mp_singular(
     size = int(grid_size)
     if size < 64:
         raise ValueError("grid_size must be at least 64")
-    lower = max(float(values[index]), minimum)
-    data_range = max(float(values[-1] - values[0]), np.finfo(float).eps)
-    grid = np.linspace(max(minimum, float(values[0])), float(values[-1] + 0.1 * data_range), size)
-    empirical = adaptive_gaussian_spectral_density(values, grid, window=window)
+    spectral_scale = float(np.max(values))
+    if spectral_scale <= 0.0:
+        raise ValueError("modified-MP fitting requires a nonzero spectrum")
+    normalized_values = values / spectral_scale
+    normalized_minimum = minimum / spectral_scale
+    lower = max(float(normalized_values[index]), normalized_minimum)
+    data_range = max(float(normalized_values[-1] - normalized_values[0]), np.finfo(float).eps)
+    grid = np.linspace(
+        max(normalized_minimum, float(normalized_values[0])),
+        float(normalized_values[-1] + 0.1 * data_range),
+        size,
+    )
+    empirical = adaptive_gaussian_spectral_density(normalized_values, grid, window=window)
     peak_index = int(np.argmax(empirical))
-    mask = (grid >= minimum) & (
+    mask = (grid >= normalized_minimum) & (
         (grid <= grid[peak_index]) | (empirical >= fraction * empirical[peak_index])
     )
     selected_grid = grid[mask]
     selected_density = empirical[mask]
-    initial_upper = max(float(values[-1]), lower + data_range * 0.1)
+    initial_upper = max(float(normalized_values[-1]), lower + data_range * 0.1)
     initial_amplitude = max(float(np.max(selected_density)), np.finfo(float).eps) / max(
         initial_upper**2 - lower**2,
         np.finfo(float).eps,
@@ -401,14 +415,16 @@ def fit_modified_mp_singular(
         bounds=(np.asarray([-40.0, -40.0]), np.asarray([40.0, 40.0])),
         max_nfev=5000,
     )
-    amplitude = float(np.exp(optimum.x[0]))
-    upper = lower + float(np.exp(optimum.x[1]))
-    rmse = float(np.sqrt(np.mean(np.square(residual(optimum.x)))))
+    normalized_amplitude = float(np.exp(optimum.x[0]))
+    normalized_upper = lower + float(np.exp(optimum.x[1]))
+    normalized_rmse = float(np.sqrt(np.mean(np.square(residual(optimum.x)))))
+    if not optimum.success or not np.isfinite(normalized_rmse):
+        raise RuntimeError(f"modified-MP optimizer failed: {optimum.message}")
     return ModifiedMPFitResult(
-        amplitude=amplitude,
-        nu_min=lower,
-        nu_max=upper,
-        rmse=rmse,
+        amplitude=normalized_amplitude / spectral_scale**2,
+        nu_min=lower * spectral_scale,
+        nu_max=normalized_upper * spectral_scale,
+        rmse=normalized_rmse / spectral_scale,
         success=bool(optimum.success),
         bandwidth_window=window,
         diagnostics={
@@ -440,7 +456,10 @@ def fit_marchenko_pastur_thamm(
     authoritative and need not obey the one-parameter analytic MP relation.
     """
 
-    matrix = np.asarray(weight, dtype=np.float64)
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by the real MP API")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("weight must be a finite matrix with both dimensions at least two")
     singular_values = (np.linalg.svd(matrix, compute_uv=False)
@@ -952,7 +971,10 @@ def eigenvalues_of_cov(
     """Return ``s**2/N`` from a weight or a supplied singular spectrum."""
 
     if weight is not None:
-        matrix = np.asarray(weight, dtype=np.float64)
+        raw = np.asarray(weight)
+        if np.iscomplexobj(raw):
+            raise TypeError("complex weights are not supported by the real MP API")
+        matrix = np.asarray(raw, dtype=np.float64)
         if matrix.ndim != 2 or not np.all(np.isfinite(matrix)):
             raise ValueError("weight must be a finite two-dimensional matrix")
         n, m = matrix.shape
@@ -1012,7 +1034,10 @@ def _spectrum_and_shape(
     m: int | None,
 ) -> tuple[np.ndarray, int, int]:
     if weight is not None:
-        matrix = np.asarray(weight, dtype=np.float64)
+        raw = np.asarray(weight)
+        if np.iscomplexobj(raw):
+            raise TypeError("complex weights are not supported by the real MP API")
+        matrix = np.asarray(raw, dtype=np.float64)
         if matrix.ndim != 2 or not np.all(np.isfinite(matrix)):
             raise ValueError("weight must be a finite two-dimensional matrix")
         return np.linalg.svd(matrix, compute_uv=False), matrix.shape[0], matrix.shape[1]

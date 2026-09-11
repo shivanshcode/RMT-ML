@@ -253,22 +253,10 @@ class LanczosSpikeResult:
         # Recurrences are built for A + ridge*I; evaluate them at z+ridge to
         # expose the resolvent and density of the original operator A.
         shifted_z = np.asarray(z, dtype=np.complex128) + float(self.ridge)
-        if self.probe_stieltjes_diagonals:
-            estimates = [
-                extended_stieltjes_transform(
-                    shifted_z,
-                    diagonal,
-                    sub_diagonal,
-                    tail_alpha=self.tail_alpha,
-                    tail_beta=self.tail_beta,
-                )
-                for diagonal, sub_diagonal in zip(
-                    self.probe_stieltjes_diagonals,
-                    self.probe_stieltjes_sub_diagonals,
-                )
-            ]
-            averaged = np.mean(np.asarray(estimates), axis=0)
-            return complex(averaged) if np.asarray(z).ndim == 0 else averaged
+        # The public transform is the representative probe measure whose poles
+        # and residues are returned.  Per-probe recurrences remain available as
+        # diagnostics; averaging their transforms would create a mixture whose
+        # poles no longer have the reported residues.
         return extended_stieltjes_transform(
             shifted_z,
             self.stieltjes_diagonal,
@@ -276,6 +264,25 @@ class LanczosSpikeResult:
             tail_alpha=self.tail_alpha,
             tail_beta=self.tail_beta,
         )
+
+    def ensemble_stieltjes(self, z: np.ndarray | complex) -> np.ndarray | complex:
+        """Return the probe-averaged transform used for smooth density plots."""
+
+        if not self.probe_stieltjes_diagonals:
+            return self.stieltjes(z)
+        shifted_z = np.asarray(z, dtype=np.complex128) + float(self.ridge)
+        estimates = [
+            extended_stieltjes_transform(
+                shifted_z, diagonal, sub_diagonal,
+                tail_alpha=self.tail_alpha, tail_beta=self.tail_beta,
+            )
+            for diagonal, sub_diagonal in zip(
+                self.probe_stieltjes_diagonals,
+                self.probe_stieltjes_sub_diagonals,
+            )
+        ]
+        averaged = np.mean(np.asarray(estimates), axis=0)
+        return complex(averaged) if np.asarray(z).ndim == 0 else averaged
 
     def density(self, energies: np.ndarray, *, eta: float = 1e-3) -> np.ndarray:
         return asymptotic_spectral_density(self, energies, eta=eta)
@@ -711,7 +718,9 @@ def asymptotic_spectral_density(
         raise ValueError("energies must be finite")
     if not np.isfinite(broadening) or broadening <= 0.0:
         raise ValueError("eta must be finite and positive")
-    transform = np.asarray(result.stieltjes(grid + 1j * broadening), dtype=np.complex128)
+    transform = np.asarray(
+        result.ensemble_stieltjes(grid + 1j * broadening), dtype=np.complex128
+    )
     return np.maximum(np.imag(transform) / np.pi, 0.0)
 
 
@@ -931,10 +940,11 @@ def detect_spikes_lanczos(
     per_probe_poles: list[np.ndarray] = []
     per_probe_residues: list[np.ndarray] = []
     probe_edges: list[tuple[float, float]] = []
-    for lanczos, cholesky, modified in zip(
+    for lanczos, cholesky, modified, consensus in zip(
         lanczos_results,
         cholesky_results,
         modified_cholesky_results,
+        consensus_modified,
     ):
         probe_alpha = float(np.mean(modified.diagonal[-2:]))
         probe_beta = float(modified.sub_diagonal[-1])
@@ -948,13 +958,17 @@ def detect_spikes_lanczos(
                 residue_threshold=residue_threshold,
             )
         else:
+            # Use the same resolved reference-modified prefix and consensus
+            # tail as stieltjes() below.  Re-cutting the original recurrence
+            # with finite_section_poles' unrelated default suffix describes a
+            # different operator when tail_window is omitted.
             poles, residues = finite_section_poles(
-                cholesky,
+                consensus,
                 tail_alpha=tail_alpha,
                 tail_beta=tail_beta,
                 threshold=threshold + ridge,
                 residue_threshold=residue_threshold,
-                tail_window=tail_window,
+                tail_window=2,
                 extension_size=extension_size,
             )
             poles = poles - ridge
@@ -977,13 +991,10 @@ def detect_spikes_lanczos(
         else:
             poles = np.asarray([], dtype=np.float64)
             residues = np.asarray([], dtype=np.float64)
-    elif spike_count and len(eligible) > 1:
-        representative = eligible[0]
-        pole_stack = np.vstack([per_probe_poles[index][:spike_count] for index in eligible])
-        residue_stack = np.vstack([per_probe_residues[index][:spike_count] for index in eligible])
-        poles = np.median(pole_stack, axis=0)
-        residues = np.median(residue_stack, axis=0)
     else:
+        # A median of poles from several probe measures is not a pole of any
+        # returned resolvent.  Select one qualifying measure so poles,
+        # residues, and stieltjes() retain a single-operator contract.
         representative = eligible[0] if eligible else int(np.argmin(np.abs(counts - spike_count)))
         poles = per_probe_poles[representative][:spike_count]
         residues = per_probe_residues[representative][:spike_count]

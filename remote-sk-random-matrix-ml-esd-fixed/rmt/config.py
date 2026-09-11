@@ -78,7 +78,9 @@ class RunConfig:
     ppl_dataset: str = "wikitext"
     ppl_stride: int = 512
     perplexity_tokens: int = 4096
-    use_svd_cache: bool = True
+    # Persistent caches are opt-in so library/test calls cannot mutate a source
+    # checkout accidentally. Production runs may enable one explicitly.
+    use_svd_cache: bool = False
     svd_cache_dir: str = "./svd_cache"
     text_path: str = "./wikitext-2-raw/wiki.test.raw"
     allow_fallback_text: bool = False

@@ -46,11 +46,11 @@ def _pareto_fit(tail: np.ndarray, xmin: float, xmax: float | None) -> PowerLawFi
     """Fit an unbounded or conditionally upper-bounded Pareto density."""
 
     logs = np.log(tail / xmin)
-    denominator = float(np.sum(logs))
-    if denominator <= 0.0 or not np.isfinite(denominator):
+    log_sum = float(np.sum(logs))
+    if log_sum <= 0.0 or not np.isfinite(log_sum):
         return None
     if xmax is None:
-        beta = tail.size / denominator
+        beta = tail.size / log_sum
         normalization = 1.0
         standard_error = beta / np.sqrt(tail.size)
     else:
@@ -64,7 +64,7 @@ def _pareto_fit(tail: np.ndarray, xmin: float, xmax: float | None) -> PowerLawFi
             return float(
                 -tail.size * np.log(beta_value)
                 + tail.size * np.log(xmin)
-                + (beta_value + 1.0) * denominator
+                + (beta_value + 1.0) * log_sum
                 + tail.size * log_normalization
             )
 
@@ -86,8 +86,8 @@ def _pareto_fit(tail: np.ndarray, xmin: float, xmax: float | None) -> PowerLawFi
             )
         else:
             decaying = float(np.exp(-scaled))
-            denominator = float(-np.expm1(-scaled))
-            correction = decaying / denominator ** 2
+            normalizer_term = float(-np.expm1(-scaled))
+            correction = decaying / normalizer_term ** 2
             information = tail.size / beta ** 2 - tail.size * ratio_log ** 2 * correction
         standard_error = float(1.0 / np.sqrt(information)) if information > 0.0 else float("nan")
     alpha = 1.0 + beta
@@ -99,7 +99,7 @@ def _pareto_fit(tail: np.ndarray, xmin: float, xmax: float | None) -> PowerLawFi
     log_likelihood = float(
         tail.size * np.log(beta)
         - tail.size * np.log(xmin)
-        - alpha * denominator
+        - alpha * log_sum
         - tail.size * np.log(normalization)
     )
     return PowerLawFit(

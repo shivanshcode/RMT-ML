@@ -36,6 +36,7 @@ def load_model(name_or_path, *, model_path=None, dtype="fp32", device=None):
     model.to(device)
     model.eval()
     model._rmt_resolved_path = os.path.realpath(path)
+    model._rmt_source_dtype = dtype
     return model
 
 

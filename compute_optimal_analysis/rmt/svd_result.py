@@ -13,6 +13,8 @@ def _as_finite_matrix(matrix: np.ndarray) -> np.ndarray:
         raise ValueError("matrix must be two-dimensional")
     if min(array.shape) < 1:
         raise ValueError("matrix dimensions must be positive")
+    if np.iscomplexobj(array):
+        raise TypeError("complex matrices are not supported by the real RMT SVD API")
     if not np.all(np.isfinite(array)):
         raise ValueError("matrix must contain only finite values")
     return np.asarray(array, dtype=np.float64)
@@ -36,8 +38,13 @@ class SVDResult:
     normalization: float | None = None
     lambda_minus: float | None = None
     lambda_plus: float | None = None
+    factorization_dtype: str = "float64"
 
     def __post_init__(self) -> None:
+        if self.factorization_dtype not in {"float32", "float64"}:
+            raise ValueError("factorization_dtype must be float32 or float64")
+        if any(np.iscomplexobj(value) for value in (self.U, self.s, self.Vh)):
+            raise TypeError("complex SVD factors are not supported")
         U = np.asarray(self.U, dtype=np.float64)
         s = np.asarray(self.s, dtype=np.float64)
         Vh = np.asarray(self.Vh, dtype=np.float64)
@@ -121,4 +128,5 @@ def compute_svd(
         n=array.shape[0],
         m=array.shape[1],
         normalization=normalization,
+        factorization_dtype="float64",
     )

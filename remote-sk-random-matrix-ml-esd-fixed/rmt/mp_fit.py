@@ -36,7 +36,10 @@ def gaussian_broaden(x, svals, win: int = 15) -> np.ndarray:
     m = s.size
     pad = np.pad(s, (win, win), mode="edge")
     widths = (pad[2 * win:] - pad[:-2 * win]) / 2.0
-    widths = np.maximum(widths, 1e-12)
+    scale = float(np.max(np.abs(s))) if s.size else 0.0
+    floor = max(np.finfo(float).eps * max(scale, np.finfo(float).tiny),
+                np.finfo(float).tiny)
+    widths = np.maximum(widths, floor)
     z = (x[:, None] - s[None, :]) / widths[None, :]
     dens = np.exp(-0.5 * z ** 2) / (np.sqrt(2 * np.pi) * widths[None, :])
     return dens.sum(axis=1) / m
@@ -72,36 +75,48 @@ def fit_modified_mp(svals, *, win: int = 15, n_grid: int = 4000,
         raise ValueError("modified-MP fitting requires at least four finite nonnegative values")
     if not 0 <= int(i_nu_min) < s.size:
         raise ValueError("i_nu_min is outside the singular-value sample")
-    span = float(s[-1] - s[0])
-    scale = max(float(np.max(np.abs(s))), 1.0)
-    if span <= np.sqrt(np.finfo(float).eps) * scale:
+    spectral_scale = float(np.max(np.abs(s)))
+    if spectral_scale <= 0.0:
+        raise ValueError("modified-MP fitting requires a nonzero spectrum")
+    normalized = s / spectral_scale
+    span = float(normalized[-1] - normalized[0])
+    if span <= np.sqrt(np.finfo(float).eps):
         raise ValueError("modified-MP fitting requires a nondegenerate spectrum")
-    nu_min = float(max(s[i_nu_min], x_min))
-    if nu_min >= s[-1]:
+    normalized_x_min = float(x_min) / spectral_scale
+    nu_min = float(max(normalized[i_nu_min], normalized_x_min))
+    if nu_min >= normalized[-1]:
         raise ValueError("modified-MP lower support edge leaves no positive width")
 
-    x = np.linspace(max(s[0], x_min), s[-1], n_grid)
-    pdf = gaussian_broaden(x, s, win=win)
+    x = np.linspace(max(normalized[0], normalized_x_min), normalized[-1], n_grid)
+    pdf = gaussian_broaden(x, normalized, win=win)
 
-    keep = x > x_min
+    keep = x > normalized_x_min
     x, pdf = x[keep], pdf[keep]
+    if x.size < 3:
+        raise ValueError("modified-MP fit interval is empty")
 
     x_peak = x[int(np.argmax(pdf))]
     keep = (x <= x_peak) | (pdf > range_of_y_to_fit * pdf.max())
     x_fit, pdf_fit = x[keep], pdf[keep]
 
-    min_width = max(np.finfo(float).eps * max(abs(nu_min), 1.0), 1e-15)
-    initial_width = max(float(np.percentile(s, 95)) - nu_min, 10.0 * min_width)
+    min_width = max(np.finfo(float).eps * max(abs(nu_min), 1.0), np.finfo(float).tiny)
+    initial_width = max(float(np.percentile(normalized, 95)) - nu_min, 10.0 * min_width)
     p0 = np.array([0.5, initial_width])
-    (a, width), _ = curve_fit(
-        lambda xx, aa, ww: modified_mp(xx, aa, nu_min + ww, nu_min),
-        x_fit, pdf_fit, p0=p0,
-        bounds=((0.0, min_width), (np.inf, np.inf)), maxfev=20000,
-    )
+    try:
+        (a_normalized, width), _ = curve_fit(
+            lambda xx, aa, ww: modified_mp(xx, aa, nu_min + ww, nu_min),
+            x_fit, pdf_fit, p0=p0,
+            bounds=((0.0, min_width), (np.inf, np.inf)), maxfev=20000,
+        )
+    except Exception as error:
+        raise RuntimeError(f"modified-MP optimizer failed: {error}") from error
     nu_max = nu_min + float(width)
-    if not np.isfinite(a) or not np.isfinite(nu_max) or nu_max <= nu_min:
+    if not np.isfinite(a_normalized) or not np.isfinite(nu_max) or nu_max <= nu_min:
         raise RuntimeError("modified-MP optimizer returned an invalid support")
-    return float(a), float(nu_min), float(nu_max)
+    # P_x(x)=P_y(x/scale)/scale and the curve factor contributes one
+    # power of scale, hence amplitude transforms as 1/scale^2.
+    return (float(a_normalized / spectral_scale**2),
+            float(nu_min * spectral_scale), float(nu_max * spectral_scale))
 
 
 def mp_curve_grid(nu_min: float, nu_max: float, n: int = 400) -> np.ndarray:

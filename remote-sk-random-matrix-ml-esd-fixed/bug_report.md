@@ -2,10 +2,10 @@
 
 ## Review and handoff
 
-- **Baseline:** commit `0bd4a13` (`before another pass`). Every finding below is **OPEN**. No implementation fixes were made.
+- **Baseline:** commit `0bd4a13` (`before another pass`). All 16 findings are now **FIXED** in the working tree. The descriptions below are retained as historical reproducers.
 - **Scope:** maintained `rmt/` runtime, CLI/model loading, discovery/capture, numerical routines, lesions, cache, plots, checkpoint workflow, packaging, launcher, and test coverage. `rmt_pipeline_glm.py` is a disabled legacy archive, not the supported runner; it should not be revived to work around these findings.
 - **Method:** source/control-flow review, Ruff inspection, existing tests, and focused offline CPU reproducers. This is a best-effort audit, not proof that no other bugs exist. Style-only lint warnings are omitted.
-- **Existing tests:** `python -m pytest -q -p no:cacheprovider` → **114 passed, 1 skipped**. `bash -n run_rmt.slurm` passed. Passing tests do not exercise the failures below.
+- **Pre-repair test baseline:** `python -m pytest -q -p no:cacheprovider` -> **114 passed, 1 skipped**. `bash -n run_rmt.slurm` passed; focused reproducers exposed gaps in that baseline suite.
 - **Validation environment:** Python 3.13.2, NumPy 2.4.4, SciPy 1.17.1, CPU Torch 2.13.0, Matplotlib 3.10.8, pytest 8.3.3. Real transformers/datasets assets, CUDA/OOM recovery, and SLURM execution were not validated. Fault-injection checks are identified explicitly.
 - The suite modified a tracked SVD cache entry; that test-generated change was restored. Only this report and the sibling report are intended audit changes.
 - Paths/line numbers are relative to this directory at the baseline. Run reproducers/tests **from this project root in a separate process**; the sibling `rmt` API is incompatible.
@@ -16,22 +16,28 @@
 
 | ID | Priority | Finding | Status |
 |---|---|---|---|
-| ESD-001 | P1 | Decile metadata validation can fail after earlier weights were mutated | OPEN |
-| ESD-002 | P2 | Decile sweep consumes one-shot record iterables multiple times | OPEN |
-| ESD-003 | P2 | Metadata discovery loses the supplied QKV head-count override | OPEN |
-| ESD-004 | P2 | Checkpoint analysis silently succeeds for missing probe layers/unknown options | OPEN |
-| ESD-005 | P2 | Checkpoint output bypasses collision protection and atomic writing | OPEN |
-| ESD-006 | P2 | Permissive degraded-SVD runs are finalized as fully complete | OPEN |
-| ESD-007 | P2 | IPR/PT metrics use nonidentifiable singular-vector bases | OPEN |
-| ESD-008 | P2 | MP lower-tail diagnostics change under spectral rescaling | OPEN |
-| ESD-009 | P2 | Modified-MP fit is not invariant to spectral units | OPEN |
-| ESD-010 | P2 | Random-control SVD bypasses the configured backend | OPEN |
-| ESD-011 | P2 | Source precision and resolved run configuration are lost from artifacts | OPEN |
-| ESD-012 | P3 | Complex weights are silently replaced by their real parts | OPEN |
-| ESD-013 | P3 | Bounded histogram construction can overflow before applying its cap | OPEN |
-| ESD-014 | P3 | Tests read/write the real persistent SVD cache | OPEN |
-| ESD-015 | P3 | Scale-invariant scalar metrics overflow/underflow | OPEN |
-| ESD-016 | P2 | Reusable decile cache is not bound to the pristine weight contents | OPEN |
+| ESD-001 | P1 | Decile metadata validation can fail after earlier weights were mutated | FIXED |
+| ESD-002 | P2 | Decile sweep consumes one-shot record iterables multiple times | FIXED |
+| ESD-003 | P2 | Metadata discovery loses the supplied QKV head-count override | FIXED |
+| ESD-004 | P2 | Checkpoint analysis silently succeeds for missing probe layers/unknown options | FIXED |
+| ESD-005 | P2 | Checkpoint output bypasses collision protection and atomic writing | FIXED |
+| ESD-006 | P2 | Permissive degraded-SVD runs are finalized as fully complete | FIXED |
+| ESD-007 | P2 | IPR/PT metrics use nonidentifiable singular-vector bases | FIXED |
+| ESD-008 | P2 | MP lower-tail diagnostics change under spectral rescaling | FIXED |
+| ESD-009 | P2 | Modified-MP fit is not invariant to spectral units | FIXED |
+| ESD-010 | P2 | Random-control SVD bypasses the configured backend | FIXED |
+| ESD-011 | P2 | Source precision and resolved run configuration are lost from artifacts | FIXED |
+| ESD-012 | P3 | Complex weights are silently replaced by their real parts | FIXED |
+| ESD-013 | P3 | Bounded histogram construction can overflow before applying its cap | FIXED |
+| ESD-014 | P3 | Tests read/write the real persistent SVD cache | FIXED |
+| ESD-015 | P3 | Scale-invariant scalar metrics overflow/underflow | FIXED |
+| ESD-016 | P2 | Reusable decile cache is not bound to the pristine weight contents | FIXED |
+
+## Repair validation
+
+The repair pass prevalidates all decile metadata, materializes record iterables once, preserves QKV layout/head and source-dtype provenance, content-binds lesion factors, qualifies vector diagnostics, normalizes MP/scalar fitting units, dispatches random controls through the configured SVD backend, and makes checkpoint coverage/status/writes fail-closed and atomic. Persistent SVD caching is now opt-in.
+
+Validation after repair: `python -m pytest -q -p no:cacheprovider` -> **114 passed, 1 skipped**; `bash -n run_rmt.slurm` passed. Focused reproductions for quantile and modified-MP scaling, bounded histograms, complex rejection, and scalar rescaling also passed. Real HF assets, CUDA fallback, and scheduler execution remain deployment validations.
 
 ## Findings
 
@@ -232,7 +238,7 @@ The internal perplexity sweep currently creates a fresh cache for one pristine m
 
 **Regression:** unchanged pristine sweeps reuse factors, while updated weights and reloaded checkpoints recompute or fail clearly before mutation; preserve Q/K/V scope separation.
 
-## Repair order and acceptance
+## Original repair order and acceptance (completed)
 
 1. Fix metadata prevalidation and stale-cache scope before running interventions on borrowed models.
 2. Correct scientific qualification, numerical unit invariance, backend dispatch, and run/provenance status before publishing new measurements.

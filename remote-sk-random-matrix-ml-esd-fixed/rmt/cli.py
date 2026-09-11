@@ -122,10 +122,10 @@ def main(argv: Optional[list] = None) -> int:
     from .pipeline import analyze_one_model
     from .model_io import load_model, load_tokenizer, _resolve_path
 
-    # `output_dir`, `dtype`, `model_path`, `models` are consumed by the loop /
-    # loader (and `output_dir` is passed positionally), so they must NOT also be
-    # forwarded as keyword overrides — that would collide with analyze_one_model.
-    _skip = {"models", "model_path", "dtype", "output_dir", "selftest"}
+    # output_dir is passed positionally and selftest is CLI control.  Preserve
+    # models/model_path/dtype in the forwarded RunConfig so each run manifest
+    # contains the complete resolved source configuration.
+    _skip = {"output_dir", "selftest"}
     overrides = {f.name: getattr(cfg, f.name)
                  for f in dataclasses.fields(cfg) if f.name not in _skip}
     if cfg.model_path is not None and len(args.models) != 1:

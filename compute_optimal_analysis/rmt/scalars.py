@@ -10,9 +10,14 @@ from .mp import mp_bounds
 
 def _singular_values(weight: np.ndarray | None, s: np.ndarray | None) -> np.ndarray:
     if s is not None:
+        if np.iscomplexobj(np.asarray(s)):
+            raise TypeError("complex singular values are not supported")
         values = np.asarray(s, dtype=np.float64).ravel()
     elif weight is not None:
-        matrix = np.asarray(weight, dtype=np.float64)
+        raw = np.asarray(weight)
+        if np.iscomplexobj(raw):
+            raise TypeError("complex weights are not supported by real scalar metrics")
+        matrix = np.asarray(raw, dtype=np.float64)
         if matrix.ndim != 2 or not np.all(np.isfinite(matrix)):
             raise ValueError("weight must be a finite two-dimensional matrix")
         values = np.linalg.svd(matrix, compute_uv=False)
@@ -46,7 +51,8 @@ def stable_rank(weight: np.ndarray | None = None, *, s: np.ndarray | None = None
     largest = float(values[0])
     if largest == 0.0:
         return 0.0
-    return float(np.sum(np.square(values)) / largest**2)
+    scaled = values / largest
+    return float(np.sum(np.square(scaled)))
 
 
 def condition_number(
@@ -92,10 +98,11 @@ def spectral_entropy(svals: np.ndarray, base: float = np.e) -> float:
     """Return entropy of normalized squared singular values."""
 
     values = _singular_values(None, np.asarray(svals))
-    energies = np.square(values)
-    total = float(np.sum(energies))
-    if total == 0.0:
+    largest = float(values[0])
+    if largest == 0.0:
         return 0.0
+    energies = np.square(values / largest)
+    total = float(np.sum(energies))
     probabilities = energies / total
     positive = probabilities > 0.0
     return float(-np.sum(probabilities[positive] * np.log(probabilities[positive])) / _log_base(base))
@@ -133,10 +140,15 @@ def normalized_matrix_entropy(
 def row_wise_entropy(weight: np.ndarray, base: float = np.e) -> float:
     """Return mean entropy of each row's normalized squared entries."""
 
-    matrix = np.asarray(weight, dtype=np.float64)
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by real scalar metrics")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("weight must be a finite two-dimensional matrix")
-    energies = np.square(matrix)
+    row_scale = np.max(np.abs(matrix), axis=1, keepdims=True)
+    scaled = np.divide(matrix, row_scale, out=np.zeros_like(matrix), where=row_scale > 0.0)
+    energies = np.square(scaled)
     totals = np.sum(energies, axis=1, keepdims=True)
     probabilities = np.divide(energies, totals, out=np.zeros_like(energies), where=totals > 0.0)
     logs = np.zeros_like(probabilities)
@@ -352,9 +364,12 @@ def bulk_mass_frac(s: np.ndarray, nu_plus: float) -> float:
     edge = float(nu_plus)
     if not np.isfinite(edge) or edge < 0.0:
         return float("nan")
-    energies = np.square(values)
+    largest = float(values[0])
+    if largest == 0.0:
+        return 0.0
+    energies = np.square(values / largest)
     total = float(np.sum(energies))
-    return 0.0 if total == 0.0 else float(np.sum(energies[values <= edge]) / total)
+    return float(np.sum(energies[values <= edge]) / total)
 
 
 def decile_index_ranges(
@@ -378,7 +393,9 @@ def per_decile(s: np.ndarray, n_deciles: int = 10) -> dict[str, float]:
     """Return globally additive entropy and stable-rank contributions by tranche."""
 
     values = np.sort(_singular_values(None, s))
-    energies = np.square(values)
+    largest = float(np.max(values)) if values.size else 0.0
+    scaled = values / largest if largest > 0.0 else np.zeros_like(values)
+    energies = np.square(scaled)
     total = float(np.sum(energies))
     maximum = float(np.max(energies)) if energies.size else 0.0
     result: dict[str, float] = {}

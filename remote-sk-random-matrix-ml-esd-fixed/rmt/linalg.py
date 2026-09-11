@@ -36,6 +36,20 @@ class SVDResult:
         return min(self.n, self.m) / max(self.n, self.m)
 
 
+def singular_basis_status(result: SVDResult) -> str:
+    """Qualify diagnostics that depend on individual singular vectors."""
+
+    values = np.asarray(result.s, dtype=np.float64)
+    scale = float(np.max(values)) if values.size else 0.0
+    epsilon = np.finfo(np.dtype(result.factorization_dtype)).eps
+    tolerance = epsilon * max(result.n, result.m) * scale
+    if scale == 0.0 or np.any(values <= tolerance):
+        return "unavailable: nonidentifiable null singular subspace"
+    if values.size > 1 and np.any(np.abs(np.diff(values)) <= tolerance):
+        return "unavailable: unresolved repeated singular-value subspace"
+    return "available"
+
+
 def _gpu_available() -> bool:
     try:
         import torch
@@ -141,8 +155,12 @@ def _as_float_2d(weight) -> np.ndarray:
     """
     if hasattr(weight, "detach"):  # torch.Tensor
         import torch
+        if bool(weight.is_complex()):
+            raise TypeError("complex weights are not supported by the real RMT SVD API")
         weight = weight.detach().to("cpu").to(torch.float64).numpy()
     W = np.asarray(weight)
+    if np.iscomplexobj(W):
+        raise TypeError("complex weights are not supported by the real RMT SVD API")
     if W.ndim != 2:
         raise ValueError(f"expected a 2-D weight, got shape {W.shape}")
     return W.astype(np.float64, copy=False)

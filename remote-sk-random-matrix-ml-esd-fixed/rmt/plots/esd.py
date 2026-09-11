@@ -36,12 +36,17 @@ def _bin_edges(vals, lo, hi, *, max_bins=400):
     if right <= left:
         scale = max(abs(left), 1.0)
         left, right = left - 0.5e-6 * scale, right + 0.5e-6 * scale
-    requested = (None if h is None or not np.isfinite(h)
-                 else int(np.ceil((right - left) / h)))
-    if requested is None:
+    if h is None or not np.isfinite(h):
         count = min(50, limit)
     else:
-        count = min(limit, max(2, requested))
+        # Compare before converting to int: for a subnormal IQR the finite
+        # division can overflow to infinity even though the final cap is tiny.
+        span = right - left
+        if h <= 0.0 or h < span / limit:
+            count = limit
+        else:
+            ratio = span / h
+            count = limit if not np.isfinite(ratio) else min(limit, max(2, int(np.ceil(ratio))))
     # linspace allocates exactly count+1 values; no intermediate unbounded grid.
     return np.linspace(left, right, count + 1)
 
