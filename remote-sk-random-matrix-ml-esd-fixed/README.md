@@ -1,42 +1,37 @@
-# rmt — Random Matrix Theory analysis of LLM weight matrices
+# rmt: Random Matrix Theory analysis of LLM weight matrices
 
-A model-agnostic, fully-offline toolkit for analyzing the singular-value /
-eigenvalue spectra of LLM weight matrices during and after training. It
-implements the methods of three source papers:
+`rmt` is an offline tool for spectra from Large Language Model (LLM) weight matrices. A spectrum is the set of singular values or eigenvalues. The tool can examine matrices during or after training. It supports methods from three sources:
 
-1. **Thamm, Staats & Rosenow, PRE 2022** (windowed Hill estimator, level statistics).
-2. **Martin & Mahoney, JMLR 2021** (power-law tail index α of the ESD).
-3. **Staats, Thamm & Rosenow, arXiv:2410.17770v3** (Marchenko–Pastur fit, small
-   singular-value deviations, activation-covariance overlap, decile ablation).
+1. Thamm, Staats, and Rosenow, PRE 2022: windowed Hill estimates and level statistics.
+2. Martin and Mahoney, JMLR 2021: the power-law tail index `α` of the ESD.
+3. Staats, Thamm, and Rosenow, arXiv:2410.17770v3: MP fits, small-value differences, activation overlap, and decile ablation.
 
-## Design in one paragraph
+An empirical spectral distribution (ESD) is the distribution of measured spectrum values. Marchenko-Pastur (MP) theory gives the expected bulk spectrum for specified random matrices.
 
-The scientific core (`config, linalg, ensembles, mp, tail, scalars, spacing,
-overlap`) is **pure numpy/scipy** — no torch — so it is fast to unit-test and
-trustworthy. The model-I/O layer (`discovery, activations, decile, perplexity,
-per_matrix, pipeline, model_io, plots, baselines`) adds torch/HF only where
-real models are touched. Every heavy SVD goes through a single dispatcher
-(`linalg.cached_svd`) that uses the A100 (torch+cuda) for large matrices and
-numpy otherwise, but **always returns numpy**, so downstream math never sees a
-GPU tensor. `per_matrix_analysis` computes **exactly one SVD per matrix** and
-threads it to every sub-analysis.
+## Design
 
-## Install
+The scientific core uses only NumPy and SciPy. It contains `config`, `linalg`, `ensembles`, `mp`, `tail`, `scalars`, `spacing`, and `overlap`. It does not import torch.
+
+The model layer imports torch and Hugging Face only when it accesses models. This layer contains `discovery`, `activations`, `decile`, `perplexity`, `per_matrix`, `pipeline`, `model_io`, `plots`, and `baselines`.
+
+A singular value decomposition (SVD) factors one matrix into singular values and vectors. `linalg.cached_svd` sends large SVD operations to torch and CUDA on an A100. It uses NumPy for other operations. It always returns NumPy arrays. `per_matrix_analysis` does one SVD for each matrix and gives the result to each analysis.
+
+## Installation
 
 ```bash
 pip install -e .                 # core (numpy, scipy)
 pip install -e ".[torch,plots]"  # add torch / transformers / datasets / matplotlib
 ```
 
-## Run
+## Operation
 
-Always gate a real run on the analytic self-check:
+Before analysis of a real model, do the analytic self-test:
 
 ```bash
 python -m rmt --selftest         # exit 0 if the RMT core matches known ground truth
 ```
 
-Full offline analysis (see `run_rmt.slurm` for the A100 batch version). Each model atomically claims an identity-hashed fresh/empty directory with `.run-owner.json`; concurrent or sequential reuse fails before artifacts can be mixed:
+`run_rmt.slurm` gives the A100 batch procedure. For a full offline analysis, enter this command:
 
 ```bash
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m rmt \
@@ -46,22 +41,29 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m rmt \
   --backend auto --do_overlap --do_spacing --do_powerlaw
 ```
 
-Real text analyses fail closed unless the matching tokenizer loads. Synthetic tests must opt into text and tokenizer fallbacks separately:
+Each model claims a new or empty identity-hashed directory with `.run-owner.json`. Concurrent or later reuse stops before output files can mix.
+
+Real-text analysis stops if it cannot load the matching tokenizer. For synthetic tests, enable text and tokenizer substitutes separately:
 
 ```bash
 python -m rmt --models ./models/tiny-test --allow_fallback_text --allow_fallback_tokenizer
 ```
 
-## Outputs (per model `<tag>`)
+## Output for each model
 
-- `<tag>_matrix_metrics.csv` — one row per matrix, full schema (see `EXECUTIVE_SUMMARY.md`).
-- `<tag>_summary.json` — model-level aggregates.
-- `<tag>_run_status.json` — initialized before work and finalized only after requested stages; precision degradation makes permissive runs partial and strict partial failures exit nonzero.
-- `<tag>_run_manifest.json` — resolved configuration, model source, requested source dtype, and live parameter dtypes, written before analysis.
-- `<tag>_perplexity.json` — decile-ablation perplexity (if `--do_perplexity`).
-- `<tag>_stable_rank_per_epoch.csv` — atomically claimed/written backend-dispatched epoch tracking with actual backend/dtype provenance. Strict mode rejects missing probes; permissive mode also writes `<tag>_checkpoint_status.json` with partial coverage.
-- `<tag>_weightwatcher_status.json` — truthful complete/unavailable/failed status whenever WeightWatcher is requested; requested failures are enforced after all stages in strict mode.
-- plots under `<tag>/` (ESD, Hill, NN-spacing, heatmaps, summary).
+For each model `<tag>`, the tool writes these artifacts:
+
+- `<tag>_matrix_metrics.csv` contains one row for each matrix. `EXECUTIVE_SUMMARY.md` gives the full schema.
+- `<tag>_summary.json` contains model-level aggregates.
+- `<tag>_run_status.json` starts before analysis and finishes after the requested stages.
+- `<tag>_run_manifest.json` records the resolved configuration, model source, requested source dtype, and live parameter dtypes before analysis.
+- `<tag>_perplexity.json` contains decile-ablation perplexity when `--do_perplexity` is active.
+- `<tag>_stable_rank_per_epoch.csv` contains epoch tracking and actual backend and dtype data.
+- `<tag>_checkpoint_status.json` records partial checkpoint coverage in permissive mode.
+- `<tag>_weightwatcher_status.json` records `complete`, `unavailable`, or `failed` when the user requests WeightWatcher.
+- The `<tag>/` directory contains ESD, Hill, nearest-neighbor spacing, heatmap, and summary plots.
+
+A precision decrease makes a permissive execution partial. In strict mode, a partial requested stage causes a nonzero exit. Strict mode rejects a missing checkpoint probe. Requested WeightWatcher failures are applied after all stages in strict mode.
 
 ## Tests
 
@@ -70,18 +72,32 @@ pytest -m "not torch"   # pure-science tests (no torch needed)
 pytest                  # full suite (adds tiny in-process torch models)
 ```
 
-## Conventions (locked)
+## Fixed conventions
 
-- Eigenvalue domain `λ = ν²/N`, `C = WWᵀ/N`, default `N = #cols`.
-- σ̂ = Gavish–Donoho median estimator.
-- Deciles ascending: decile 1 = smallest group, final decile = largest. `n_deciles` must not exceed any selected matrix's singular count; tied parameter aliases are lesioned once while distinct fused Q/K/V blocks remain separate.
-- Fused QKV uses architecture-verified layout: GPT-2 is contiguous and GPT-NeoX/Pythia is head-interleaved. Unknown fused layouts are rejected rather than guessed.
-- Exponents: CSN α is the **density** exponent; Hill α = 1/H is the **survival** exponent; for a pure law `α_csn = α_hill + 1` and `α(λ) = α(ν)/2` for Hill. A finite `xmax` uses a normalized bounded-Pareto likelihood/CDF. Random controls use the selected headline estimator and serialize their own kind/cutoff/support metadata. Headline windowed Hill is computed on `λ`; rank/window support is serialized instead of inventing a single cutoff.
-- Repeated levels retain zero spacing mass and the complete spacing sample is normalized to mean one. Continuous Brody fits are explicitly conditional on positive spacings.
-- Persistent SVD caching is opt-in (`--use_svd_cache`; default false), preventing ordinary library/test calls from writing into a source checkout. Entries include actual backend/factorization dtype/degraded status; array dtypes must agree with metadata and singular values must be descending. Malformed, contradictory, unsorted, or corrupt entries are cache misses and are recomputed. Degraded float32 fallbacks cannot satisfy the float64 contract. Independent decile factors are content-bound as well as precision-qualified.
-- ESD histogram construction has a hard 400-bin bound, including nearly constant spectra whose empirical IQR is tiny.
-- Learned-position context limits account for positive reserved-position offsets as well as table size.
-- Discovery is metadata-first and records source dtype plus resolved fused-QKV layout/head overrides; analysis/covariance capture is projection-at-a-time, and decile interventions prevalidate all metadata then materialize one physical parameter at a time. Exact projection targets under names such as `multihead_attention`, `pre_norm_attention`, and `embed_projection` remain valid; only actual embedding/output-head path components are excluded. Null/unresolved activation eigenspaces and repeated/null weight singular subspaces are marked unavailable, and borrowed models retain every submodule's original train/eval mode.
-- Number-variance and rigidity window sampling receive and serialize `RunConfig.seed`. The mandatory analytic gate alone uses fixed `rmt.config.SEED` calibration.
-- MP quantiles, modified-MP fitting, and dimensionless scalar summaries are scale invariant. Random controls use the configured SVD backend and record independent precision provenance. IPR/Porter–Thomas outputs require an identifiable singular basis, real-only APIs reject complex input, histogram bins remain capped before integer conversion, and requested optional failures carry explicit status/reason fields into run status.
-- `rmt_pipeline_glm.py` is a non-executable archive. The supported entry point is `python -m rmt`.
+The eigenvalue domain is `λ = ν²/N`, with `C = WWᵀ/N`. By default, `N = #cols`. The noise estimate `σ̂` uses the Gavish-Donoho median estimator.
+
+Deciles use ascending order. Decile 1 contains the smallest values. The final decile contains the largest values. `n_deciles` must not exceed the singular-value count of a selected matrix. Lesions process tied parameter aliases one time. Distinct fused Q, K, and V blocks stay separate.
+
+Fused QKV uses a layout identified from the architecture. GPT-2 uses contiguous blocks. GPT-NeoX and Pythia use head-interleaved blocks. The tool rejects an unknown fused layout.
+
+CSN `α` is a density exponent. Hill `α = 1/H` is a survival exponent. For a pure law, `α_csn = α_hill + 1`. For Hill estimates, `α(λ) = α(ν)/2`.
+
+A finite `xmax` uses a normalized bounded-Pareto likelihood and CDF. Random controls use the selected main estimator. They record estimator kind, cutoff, support, and other applicable metadata. The main windowed Hill estimate uses `λ`. It records rank and window support instead of one false cutoff.
+
+Repeated levels keep zero spacing mass. The full spacing sample is normalized to a mean of one. Continuous Brody fits use only positive spacings and state this condition.
+
+Persistent SVD caching requires `--use_svd_cache` and is off by default. Thus, normal library and test calls do not write to the source tree. Cache records include backend, factorization dtype, and degraded status. Array dtypes must agree with metadata. Singular values must use descending order.
+
+A malformed, inconsistent, unsorted, or corrupt cache record is a miss. The tool computes and writes a replacement. A degraded float32 result does not satisfy a float64 contract. Independent decile factors bind to weight content and precision.
+
+ESD histograms have at most 400 bins. This limit also applies to spectra with a very small empirical IQR. Learned-position context limits include positive reserved-position offsets.
+
+Discovery reads metadata before matrix data. It records source dtype, fused-QKV layout, and head overrides. Analysis and covariance capture process one projection at a time. Decile changes make sure of all metadata before they materialize one physical parameter.
+
+Exact projection names such as `multihead_attention`, `pre_norm_attention`, and `embed_projection` stay valid. Exclusion applies only to actual embedding and output-head path components. Unresolved activation eigenspaces and weight singular subspaces are unavailable. The tool restores the original training mode of each borrowed submodule.
+
+Number variance and rigidity use and record `RunConfig.seed`. Only the required analytic gate uses fixed `rmt.config.SEED` calibration.
+
+MP quantiles, modified-MP fits, and dimensionless scalar summaries do not change with spectral units. Random controls use the selected SVD backend and record separate precision data. IPR and Porter-Thomas output requires an identifiable singular basis. Real-only APIs reject complex input.
+
+The histogram code applies its bin limit before integer conversion. Each requested optional failure adds a status and reason to the execution status. `rmt_pipeline_glm.py` is a non-executable archive. Use `python -m rmt` as the supported entry point.

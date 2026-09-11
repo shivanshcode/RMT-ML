@@ -2,98 +2,139 @@
 
 ## Scope
 
-The repository has two dependency layers. `rmt/` is a mathematically pure spectral library with no torch import. `models/` and `pipelines/` own transformer construction, training, activation hooks, and in-place model surgery. The experiment runner composes the layers but does not hide training caps or substitute synthetic observations for trained-model results.
+The repository has two dependency layers. `rmt/` is a pure spectral library and does not import torch. `models/` and `pipelines/` contain Transformer construction, training, activation hooks, and model surgery. The experiment runner combines these layers. It does not hide training limits or replace trained-model data with synthetic data.
 
 ## Mathematical conventions
 
-Let a real matrix have shape `n x m`, reduced rank `k=min(n,m)`, and singular values in descending order. `SVDResult.eigenvalues` exposes the raw Gram values `s_i^2`; `SVDResult.covariance_eigenvalues` exposes the normalized values used by MP diagnostics. For the canonical MP view, orient the reduced covariance along the smaller dimension and normalize by `max(n,m)`. Thus
+Let a real matrix have shape `n x m` and reduced rank `k=min(n,m)`. Singular values use descending order. `SVDResult.eigenvalues` gives raw Gram values `s_i^2`. `SVDResult.covariance_eigenvalues` gives normalized values for MP diagnostics.
+
+For the canonical MP view, use the smaller dimension for reduced covariance. Normalize by `max(n,m)`:
 
 `lambda_i = s_i^2 / max(n,m)` and `q = min(n,m) / max(n,m)`.
 
-For entry variance `sigma^2`, the continuous MP support is
+For entry variance `sigma^2`, the continuous MP support is:
 
 `lambda_pm = sigma^2 (1 +/- sqrt(q))^2`.
 
-The explicit compatibility API `eigenvalues_of_cov(weight=None, s=None, N=denominator)` also supports the supplied contract's `s^2/N` convention; its default is the matrix column count. Callers must record `N` whenever they use that view.
+The compatibility API `eigenvalues_of_cov(weight=None, s=None, N=denominator)` also supports `s^2/N`. Its default denominator is the matrix column count. If callers use this view, they must record `N`.
 
-The CSN estimate `alpha` is a density exponent in `p(x) proportional to x^(-alpha)`. The Hill estimate is the positive survival exponent. For an ideal continuous Pareto law, `alpha_CSN = alpha_Hill + 1`. Squaring singular values halves the Hill survival exponent. Reports label the base variable and estimator to prevent accidental comparison of unlike exponents.
+The CSN estimate `alpha` is the density exponent in `p(x) proportional to x^(-alpha)`. The Hill estimate is the positive survival exponent. For a continuous Pareto law, `alpha_CSN = alpha_Hill + 1`. If singular values are squared, the Hill survival exponent is divided by two. Reports identify the base variable and estimator.
 
-Spectral unfolding fits the smooth cumulative staircase and then renormalizes mean nearest-neighbor spacing to one. Brody `beta=0` is Poisson and `beta=1` is the GOE Wigner surmise. Number variance and Dyson-Mehta rigidity are evaluated only where the unfolded interval supports the requested window.
+Spectral unfolding fits a smooth cumulative staircase. It then normalizes mean nearest-neighbor spacing to one. Brody `beta=0` is Poisson. Brody `beta=1` is the GOE Wigner surmise. Number variance and Dyson-Mehta rigidity require enough unfolded interval for the selected window.
 
-Activation covariance is centered by default, matching the referenced small-singular-value analysis. The extractor can return the uncentered second moment `X^T X / n` when explicitly requested. The default overlap uses squared, sign-invariant projections. Numerical-rank-zero activation covariance is explicitly unavailable, null directions are excluded, and a dominant-subspace cutoff expands to include an unresolved eigenvalue cluster rather than splitting it. Selectable alternatives use principal angles or the normalized projector trace; the sign-sensitive maximum-cosine archive convention remains an explicit diagnostic API rather than the default. Weight tranches are always indexed with singular values descending: top means largest, bottom means smallest, and bulk excludes both ends.
+Activation covariance uses centering by default. The extractor can return uncentered `X^T X / n` when the user requests it. Default overlap uses squared projections that do not depend on signs.
 
-## Phase II and Phase III bulk/signal boundary design
+Overlap is unavailable for a zero numerical rank. The method excludes null directions. If an eigenvalue cluster crosses a cutoff, the selected subspace includes the full cluster. Other choices use principal angles or normalized projector trace.
 
-### FARMS fixed-ratio pooled ESD
+The sign-sensitive maximum-cosine method stays as a separate diagnostic. It is not the default. Weight tranches use descending singular values. Top means largest, bottom means smallest, and bulk excludes both ends.
 
-For a source matrix, preserve its orientation by default; transpose only when the explicit compatibility option `orient_tall=True` is selected. The released FARMS convention is `Q_F=m'/n'`, sampled columns divided by sampled rows, and `window_size=n'`, the sampled row count. The reference sampler uses either a floor-stride schedule chosen from requested row/column operation counts or a fixed-step sliding schedule. Deterministic uniform-grid and seeded-random schedules are additional, separately named alternatives. For each equal-shape window `W_ab`, compute
+## FARMS pooled ESD
 
-`lambda_i^(ab) = s_i(W_ab)^2` for byte-for-formula reference reproduction, or `s_i(W_ab)^2/max(m',n')` for the canonical covariance normalization used by cross-shape MP fitting.
+FARMS means Fixed-Aspect-Ratio Matrix Subsampling. By default, preserve the orientation of the source matrix. Transpose only if `orient_tall=True`.
 
-The FARMS spectrum is the concatenation of these equal-length series. Because each window contributes the same number of levels, its empirical measure is the arithmetic mean of the window ESDs. Results record source/oriented/window shape, starts, the reference ratio `m'/n'`, canonical `q_F=min(m',n')/max(m',n')`, normalization, every window's exact denominator (including per-window traces), transpose state, number of windows, and estimated source coverage. Overlapping windows are correlated; pooled level spacings must therefore not be interpreted as one matrix's NNSD.
+The released ratio is `Q_F=m'/n'`, which means sampled columns divided by sampled rows. `window_size=n'` is the sampled row count. The reference sampler offers two schedules. One uses floor strides from requested row and column operation counts. The other uses a fixed sliding step.
 
-Accordingly, the experiment runner performs NNSD, Brody, gap-ratio, number variance, and rigidity on the full matrix's canonical spectrum, selected by an independent raw-domain MP fit. FARMS remains available for pooled ESD and tail comparisons without contaminating level statistics with duplicated overlapping-window levels. Every row records separate ESD, MP-fit, spike-detector, and spacing domains, geometries, observation counts, and normalization provenance. Operator-only Lanczos/Thamm methods remain in the raw domain; the Golden path simultaneously performs its configured FARMS ESD/tail stage. A FARMS-unbiased fit with non-FARMS preprocessing is rejected rather than comparing different observation sets.
+Grid and seeded-random schedules are separate alternatives. For each equal-shape window `W_ab`, use one of these spectra:
 
-`shape_normalized` instead applies the explicit analytic baseline
+`lambda_i^(ab) = s_i(W_ab)^2`
+
+or
+
+`s_i(W_ab)^2/max(m',n')`.
+
+The first formula reproduces the reference bytes and formula. The second is canonical covariance normalization for MP comparisons across shapes.
+
+FARMS concatenates the equal-length spectra. Thus, its empirical measure is the arithmetic mean of window ESDs. Output records source, oriented, and window shapes. It records `m'/n'`, `q_F=min(m',n')/max(m',n')`, starts, normalization, denominators, orientation, window count, and estimated coverage.
+
+Overlapping windows are correlated. Do not interpret their pooled spacings as the NNSD of one matrix.
+
+The runner computes NNSD, Brody, gap ratio, number variance, and rigidity from the canonical spectrum of the full matrix. An independent raw-domain MP fit selects that spectrum. FARMS supplies pooled ESD and tail comparisons only.
+
+Each row identifies separate ESD, MP-fit, detector, and spacing domains. It gives geometry, observation counts, and normalization data. Lanczos and Thamm operator methods stay in the raw domain. The Golden workflow also does its selected FARMS ESD and tail stage.
+
+A FARMS-unbiased fit requires FARMS preparation. The dispatcher rejects a combination that compares different observation sets.
+
+`shape_normalized` is a separate analytic baseline:
 
 `lambda_tilde = lambda * 4 / (sigma^2 (1+sqrt(q))^2)`.
 
-This maps the null upper MP edge to four but does not recover the correlations that FARMS samples. The two methods have distinct names and result metadata.
+This map puts the null upper MP edge at four. It does not restore correlations outside a FARMS window. Output uses different names for the two methods.
 
-### Lanczos–Cholesky Stieltjes support
+## Lanczos-Cholesky Stieltjes support
 
-For a positive covariance operator `A` and unit probe `b`, full- or partial-reorthogonalized Lanczos produces a Jacobi matrix `J_k` with diagonal `a_j` and nonnegative off-diagonal `b_j`. Its finite vector empirical Stieltjes transform is
+For a positive covariance operator `A` and unit probe `b`, Lanczos makes a Jacobi matrix `J_k`. Its diagonal is `a_j`, and its off-diagonal is nonnegative `b_j`. Full and partial reorthogonalization are available.
+
+The finite vector empirical Stieltjes transform is:
 
 `s_b(z) = e_1^T (J_k-zI)^(-1) e_1`.
 
-The paper-faithful support estimator Cholesky-factorizes `J_k=L_k L_k^T`. If sufficiently deep diagonal and subdiagonal entries of the lower bidiagonal factor converge to constants `alpha` and `beta`, the one-cut support estimate is
+The reference support estimator factors `J_k=L_k L_k^T`. Deep diagonal and subdiagonal entries of the lower bidiagonal factor can converge to constants `alpha` and `beta`. If they do, the one-cut support estimate is:
 
 `gamma_minus=(alpha-beta)^2`, `gamma_plus=(alpha+beta)^2`.
 
-Phase III follows the released Julia recurrence more closely. Gaussian probes are normalized to the sphere, full reorthogonalization uses two projection passes, and optional adaptive stopping compares successive local means and sample deviations of Jacobi coefficients. The reference tail path averages the stable suffix in Jacobi coordinates, appends two diagonal entries and one off-diagonal entry, Cholesky-factorizes that modified finite matrix, and forms a cross-probe consensus from the terminal Cholesky coefficients. The implementation reports per-probe stopping and edge diagnostics and averages the continued-fraction VEST across probe recurrences.
+Phase III follows the released Julia recurrence. It normalizes Gaussian probes to the sphere. Full reorthogonalization uses two projection passes. Optional adaptive stopping compares local means and sample deviations of consecutive Jacobi coefficients.
 
-The default `reference_ritz` pole rule counts finite-Jacobi Ritz values outside the consensus support, matching the released detector. It also reports their first-component VEST residues and permits an optional residue floor without silently making that extension part of the reference result. The separately named `constant_tail` rule uses a finite section of the semi-infinite tail. A right pole is retained only above
+The reference tail method averages the stable suffix in Jacobi coordinates. It adds two diagonal entries and one off-diagonal entry. Then it applies Cholesky factorization to the changed finite matrix. Cross-probe terminal Cholesky coefficients give one consensus. Output gives stop and edge diagnostics for each probe. VEST uses the average continued fraction from all probes.
 
-`gamma_plus + C gamma_plus n^(-delta)`, with `C>=0` and `0<delta<1/2`, and above an optional residue threshold. Scaling the production margin by the fitted edge makes the decision invariant to matrix units (including transformer initialization scales). Defaults use `C=1`, `delta=0.25`; the effective margin and its `bulk_edge_relative` convention are serialized.
+The default `reference_ritz` rule counts finite-Jacobi Ritz values outside the consensus support. This agrees with the released detector. Output also gives first-component VEST residues. An optional residue floor is an extension, not part of the reference result.
 
-The method assumes a positive one-cut limiting spectrum with square-root edges and finitely many separated right outliers. A failed convergence diagnostic is reported rather than converted into a claim of an exact, fluctuation-free boundary. The released repository does not contain the generic fixed-point solver described in the Phase II shorthand, so this implementation does not mislabel the Cholesky-tail estimator as that absent algorithm.
+The separate `constant_tail` rule uses a finite section of the semi-infinite tail. It keeps a right pole only if the pole satisfies two limits. The pole must be more than `gamma_plus + C gamma_plus n^(-delta)`. It must also be more than the optional residue threshold.
 
-### Tracy–Widom and BBP separation
+The limits are `C>=0` and `0<delta<1/2`. A margin relative to the fitted edge makes decisions independent of matrix units. Defaults are `C=1` and `delta=0.25`. Output records the effective margin and `bulk_edge_relative` convention.
 
-For real Wishart covariance normalized by the larger dimension, the finite Johnstone center and scale define the selectable TW1 threshold. The implementation tabulates standard TW1 right quantiles and interpolates only on the supported confidence range.
+The method assumes a positive one-cut limiting spectrum. It also assumes square-root edges and a finite number of separate right outliers. A failed convergence diagnostic does not become an exact boundary claim.
 
-For identity-noise population covariance and canonical `q`, the BBP population transition is
+The released repository has no generic fixed-point solver from the Phase II short description. Thus, this project does not give that name to the Cholesky-tail estimator.
+
+## Tracy-Widom and BBP
+
+For real Wishart covariance normalized by the larger dimension, a finite Johnstone center and scale define the TW1 threshold. The method uses tabulated standard TW1 right quantiles. It interpolates only in the supported confidence interval.
+
+For identity-noise population covariance and canonical `q`, the BBP population transition is:
 
 `theta_c=sigma^2(1+sqrt(q))`.
 
-The null sample edge is `sigma^2(1+sqrt(q))^2`. A supercritical population eigenvalue `theta` maps to
+The null sample edge is `sigma^2(1+sqrt(q))^2`. A supercritical population eigenvalue `theta` maps to:
 
 `lambda(theta)=sigma^2 t (1+q/(t-1))`, where `t=theta/sigma^2`.
 
-Population and sample thresholds are never conflated in result fields.
+Result fields keep population and sample thresholds separate.
 
-## Multi-method semantics
+## Meanings of selectable methods
 
 - `analytic_mp` is the corrected one-parameter quantile fit.
-- `kde_bulk_fit` retains the historical upper-tail/bandwidth interface but fits MP integrated mass to complete-sample-normalized retained ECDF ranks. This removes the square-matrix hard-edge density singularity and records boundary-seeking solutions.
-- `fit_modified_mp_singular` reproduces codebase2's unconstrained singular-domain curve with fixed empirical lower edge and free amplitude/upper edge. `thamm_modified_singular` dispatches that curve for the Paper 2 track, converts its fitted support to canonical covariance units, and labels the reported variance as an upper-edge compatibility projection rather than an analytic MP fit.
-- `polynomial_chebyshev`, `spline_monotone`, and `gaussian_kernel` estimate a smooth staircase. `raw_rank_order` is a diagnostic that intentionally removes spacing fluctuations.
-- Brody MLE and CDF least squares are both bounded to `[0,1]`; optional seeded bootstrap estimates CDF-fit uncertainty.
-- Deterministic sliding and seeded Monte Carlo number variance coexist. `Delta_3` uses exact interval integration of the empirical staircase.
-- CSN, fixed-cutoff, and rank regression report density exponents. Hill reports a survival exponent. `csn_goodness_of_fit` supplies the semiparametric bootstrap probability separately from the observed KS distance.
-- The production default is the Golden synthesis: FARMS canonical fixed-ratio pooling, Lanczos-Stieltjes MP support and `reference_ritz` spike counting, monotone-spline unfolding, CSN MLE, and Staats dual-end overlap. Historical paper reproductions override these choices explicitly through the CLI.
+- `kde_bulk_fit` keeps the upper-tail and bandwidth interface. It fits integrated MP mass to retained ECDF ranks from the full sample.
+- The ECDF fit includes zero-mass rank offsets and records solutions at a bound.
+- `fit_modified_mp_singular` reproduces the unconstrained codebase2 curve. It fixes the empirical lower edge and fits amplitude and upper edge.
+- `thamm_modified_singular` converts that curve to canonical covariance units. It labels variance as an upper-edge compatibility value, not an analytic MP fit.
+- `polynomial_chebyshev`, `spline_monotone`, and `gaussian_kernel` fit a smooth staircase.
+- `raw_rank_order` is a diagnostic that intentionally removes spacing variation.
+- Brody MLE and CDF least-squares fits use bounds `[0,1]`. Optional seeded bootstrap gives uncertainty for the CDF fit.
+- Number variance has deterministic sliding and seeded Monte Carlo forms. `Delta_3` uses exact integration of the empirical staircase.
+- CSN, fixed-cutoff, and rank regression give density exponents. Hill gives a survival exponent.
+- `csn_goodness_of_fit` gives the semiparametric bootstrap probability separately from the observed KS distance.
+- Golden defaults combine canonical FARMS, Lanczos-Stieltjes support, `reference_ritz`, monotone spline, CSN MLE, and Staats dual-end overlap.
+- Paper reproduction modes explicitly override these choices through the CLI.
 
-## Phase III offline and accelerator boundary
+## Offline and accelerator boundary
 
-Compute jobs have no network fallback. `scripts/download_assets.py` is an operator-run staging utility that requires the explicit `--allow-network` acknowledgement on a connected host and writes a checksum manifest. Runtime data loading accepts only local NPY/NPZ token arrays. The cluster launcher calls the recorded `/home/shivansh/.conda/envs/rmt_ml_env/bin/python` directly, without a project `.venv`, module purge, or guessed Python/CUDA module; any alternate interpreter or CUDA module is an explicit validated override. Hugging Face caches remain under the project, compilation caches use job-local scratch when available, and all three offline switches are set by `run_hpc.slurm`. `PYTHONPATH` is restricted to this project so its `rmt` package cannot resolve to the sibling ESD implementation.
+Compute jobs have no network substitute. An operator uses `scripts/download_assets.py` on a connected host. The utility requires `--allow-network` and writes a checksum manifest. Runtime data accepts only local NPY or NPZ token arrays.
 
-The numerical boundary remains array-based: `rmt/` consumes NumPy arrays and SciPy linear operators only. The model/pipeline layer owns mixed precision, TF32, compilation, pinned-memory transfer, CUDA covariance reduction, and accelerated SVD. Activation hooks use a stable batch-merge centered-moment algorithm in float32 or float64 on the selected device and transfer only the final reduced covariance to host memory. `compute_tensor_svd` similarly promotes stored weights to the explicitly selected `--analysis-dtype` (float64 by default), computes a reduced device SVD, and constructs the pure `SVDResult` only after transferring reduced factors. Lesioning uses the same independently recorded analysis dtype and CUDA SVD driver while reconstructing weights on their original execution dtype/device.
+The cluster launcher calls `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`. It does not use a project `.venv`, module purge, or guessed module. Another interpreter or CUDA module requires an explicit override that passed its tests.
 
-The supplied SLURM profile requests one accelerator per task, as specified by the deployment contract. Independent grid cells can be submitted as separate tasks or cluster arrays by the operator; the code does not claim unimplemented distributed-data-parallel semantics.
+Hugging Face caches stay under the project. Compilation caches use local job storage when available. `run_hpc.slurm` sets all three offline controls. `PYTHONPATH` contains only this project, so it cannot load the sibling `rmt` implementation.
+
+The pure layer receives NumPy arrays and SciPy linear operators. The model and pipeline layer owns mixed precision, TF32, compilation, pinned transfers, CUDA covariance, and accelerator SVD.
+
+Activation hooks merge centered batch moments in float32 or float64 on the selected device. They transfer only the final covariance to the host. `compute_tensor_svd` changes stored weights to `--analysis-dtype`, with float64 as the default. It does a reduced device SVD and then makes `SVDResult` from transferred reduced factors.
+
+Lesions use the same recorded analysis dtype and CUDA SVD driver. They reconstruct weights with the original execution dtype and device.
+
+The SLURM profile requests one accelerator for each task. Operators can submit independent cells as tasks or arrays. The code does not implement distributed-data-parallel operation.
 
 ## Compute allocation
 
-For `L=E+A/N^alpha+B/D^beta` under `C=c_f N D`, direct constrained minimization gives
+For `L=E+A/N^alpha+B/D^beta` under `C=c_f N D`, constrained minimization gives:
 
 `N* = (alpha A/(beta B))^(1/(alpha+beta)) (C/c_f)^(beta/(alpha+beta))`
 
@@ -101,27 +142,30 @@ and
 
 `D* = (beta B/(alpha A))^(1/(alpha+beta)) (C/c_f)^(alpha/(alpha+beta))`.
 
-This corrects the frequently transposed `alpha`/`beta` prefactor. A separate `target_tokens_per_parameter` mode enforces the empirical `D/N=20` rule exactly while conserving compute. At fixed compute, applying regime multiplier `kappa` means `D=kappa D*` and `N=N*/kappa`; changing only `D` would leave the IsoFLOP surface.
+This corrects the transposed `alpha` and `beta` prefactor. A separate `target_tokens_per_parameter` mode enforces `D/N=20` and preserves compute. At fixed compute, the multiplier `kappa` gives `D=kappa D*` and `N=N*/kappa`. A change to only `D` leaves the IsoFLOP surface.
 
 ## Literature audit
 
-- Hoffmann et al. support equal proportional scaling of model size and training tokens under compute-optimal training; `C approximately 6ND` remains an accounting approximation. Outputs separately record successful-update targets, attempted targets, forwarded positions, skipped updates, and requested/realized allocation ratios. Capped duplicate designs are rejected unless explicitly labeled as calibration runs.
-- Qiu et al. report normalized loss-curve collapse for compute-optimally scaled models and breakdown under suboptimal hyperparameter scaling. Spectral collapse in this project is a new hypothesis, not a result attributed to that paper.
-- Thamm, Staats, and Rosenow find universal RMT behavior through much of trained-network spectra and explicitly caution that the large-value tail is not generally characterized by one tail index.
-- Staats, Thamm, and Rosenow connect RMT deviations and activation-covariance overlap, and show that removing small singular values can increase perplexity, especially after alignment.
-- Martin and Mahoney motivate MP bulk diagnostics, soft rank, heavy-tailed self-regularization, and the 5+1 phase language.
-- Hu et al. define FARMS as fixed-aspect-ratio matrix subsampling and pooled ESD fitting, with window geometry as a hyperparameter.
-- Abi Younes, Ding, and Trogdon derive the Lanczos–Cholesky constant-tail support and pole estimator under one-cut sample-covariance assumptions.
+Hoffmann et al. support equal proportional scaling of model size and training tokens. `C approximately 6ND` stays an accounting estimate. Output separately records targets, attempts, forwarded positions, skipped updates, and allocation ratios. It rejects capped duplicate designs unless the user identifies them as calibration.
 
-Primary sources: arXiv:2203.15556, arXiv:2507.02119, arXiv:2203.14661, arXiv:2410.17770, JMLR 22(165), 2021, arXiv:2506.06280, and arXiv:2504.03066.
+Qiu et al. report normalized loss-curve collapse for compute-optimal scaling. They report a failure of collapse with suboptimal hyperparameter scaling. Spectral collapse is a new hypothesis in this project.
+
+Thamm, Staats, and Rosenow report universal RMT behavior in much of trained-network spectra. They state that one tail index does not generally describe the large-value tail.
+
+Staats, Thamm, and Rosenow connect RMT differences with activation-covariance overlap. They show that removal of small singular values can increase perplexity, especially after alignment.
+
+Martin and Mahoney motivate MP bulk diagnostics, soft rank, heavy-tail self-regularization, and the 5+1 phase names. Hu et al. define FARMS with fixed-ratio subsampling, pooled ESD fitting, and a window-shape hyperparameter.
+
+Abi Younes, Ding, and Trogdon derive the Lanczos-Cholesky constant-tail support and pole estimator. Their assumptions apply to a one-cut sample covariance.
+
+Primary sources are arXiv:2203.15556, arXiv:2507.02119, arXiv:2203.14661, and arXiv:2410.17770. They also include JMLR 22(165), 2021, arXiv:2506.06280, and arXiv:2504.03066.
 
 ## Reliability decisions
 
-- Pure functions validate dimensions, finiteness, positivity, and non-degenerate spectra.
-- A single `SVDResult` can be threaded through downstream analyses.
-- Tail fit failures return structured non-finite estimates rather than fabricated values.
-- Lesions restore original parameters in a `finally` path and each benchmark starts from a pristine state.
-- Unit tests calibrate mathematics only. Trained-model hypotheses belong to experiment reports.
-- Every CLI selection is validated once in `RMTMethodConfig` and serialized before optional training begins.
-- The requested `10^15`, `10^16`, and `10^17` FLOP tiers are represented exactly in manifests. Any operator-selected token cap is recorded as a realized-budget deviation.
-- Source construction never certifies runtime success: numerical tests, CUDA compatibility, asset checksums, and SLURM execution remain explicit operator gates on the target cluster.
+Pure functions examine dimensions, finite values, positivity, and nondegenerate spectra. Downstream methods can share one `SVDResult`. Tail-fit errors return structured nonfinite estimates and do not invent values.
+
+Lesion contexts restore original parameters in a `finally` path. Each benchmark starts from unchanged data. Unit tests calibrate mathematics only. Trained-model hypotheses belong in experiment reports.
+
+`RMTMethodConfig` examines each CLI selection one time. The runner records it before optional training. Manifests contain exact FLOP tiers `10^15`, `10^16`, and `10^17`. A token limit selected by an operator becomes a recorded difference in realized budget.
+
+Source construction does not certify runtime success. Operators must do numerical, CUDA, asset, and SLURM gates on the target cluster.

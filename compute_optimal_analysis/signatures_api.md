@@ -1,14 +1,14 @@
 # Public API contract
 
-The signatures below are fixed for this repository. All symbols under `rmt` accept and return NumPy arrays and must not import torch.
+This document gives the fixed signatures for this repository. All symbols under `rmt` accept and return NumPy arrays and must not import torch.
 
 ## `rmt.svd_result`
 
-- `SVDResult(U, s, Vh, n, m, normalization=None, lambda_minus=None, lambda_plus=None, factorization_dtype="float64")` is a frozen dataclass; storage promotion does not erase FP32 factorization provenance.
+- `SVDResult(U, s, Vh, n, m, normalization=None, lambda_minus=None, lambda_plus=None, factorization_dtype="float64")` is a frozen dataclass. Storage promotion does not erase FP32 factorization provenance.
 - Properties: `gamma`, `aspect_ratio`, `Q`, `V`, `singular_values`, raw `eigenvalues`, normalized `covariance_eigenvalues`, and `spectral_bounds`.
 - `SVDResult.reconstruct() -> np.ndarray`
 - `compute_svd(matrix, *, full_matrices=False, normalization=None) -> SVDResult`
-- `rmt.linalg.cached_svd(weight, full_matrices=False, *, backend="auto") -> SVDResult`; strict core isolation permits `auto` and `numpy` only.
+- `rmt.linalg.cached_svd(weight, full_matrices=False, *, backend="auto") -> SVDResult`. Strict core isolation permits `auto` and `numpy` only.
 
 ## `rmt.ensembles`
 
@@ -41,7 +41,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `modified_mp_singular_density(x, amplitude, nu_min, nu_max) -> np.ndarray`
 - `adaptive_gaussian_spectral_density(singular_values, grid, *, window=15) -> np.ndarray`
 - `fit_modified_mp_singular(singular_values, *, lower_index=0, x_min=0.0, fit_peak_fraction=0.7, kernel_window=15, grid_size=512) -> ModifiedMPFitResult`
-- `fit_marchenko_pastur_thamm(weight, *, lower_index=0, x_min=0.0, fit_peak_fraction=0.7, kernel_window=15, grid_size=512) -> MPFitResult`; preserves the empirical singular-domain fit, converts its edges by `s**2/max(shape)`, and marks `variance` as an upper-edge compatibility scale.
+- `fit_marchenko_pastur_thamm(weight, *, lower_index=0, x_min=0.0, fit_peak_fraction=0.7, kernel_window=15, grid_size=512) -> MPFitResult`. Preserves the empirical singular-domain fit, converts its edges by `s**2/max(shape)`, and marks `variance` as an upper-edge compatibility scale.
 - `tracy_widom_edge_scale(n, m, variance=1.0, *, edge="upper") -> float`
 - `tracy_widom_quantile(confidence=0.95) -> float`
 - `tracy_widom_upper_threshold(n, m, variance=1.0, *, confidence=0.95) -> float`
@@ -67,16 +67,16 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 
 ## `rmt.tail`
 
-- `fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02, max_xmin_candidates=200, xmax=None) -> dict`; finite `xmax` uses the normalized bounded-Pareto likelihood and conditional CDF.
+- `fit_powerlaw_csn(values, *, min_tail=50, tail_frac=0.02, max_xmin_candidates=200, xmax=None) -> dict`. Finite `xmax` uses the normalized bounded-Pareto likelihood and conditional CDF.
 - `csn_goodness_of_fit(values, *, n_bootstrap=250, min_tail=50, tail_frac=0.02, max_xmin_candidates=200, rng=0) -> dict`
-- `fixed_cutoff_mle(values, *, xmin=None, tail_fraction=0.1, xmax=None) -> dict`; finite `xmax` uses the same bounded likelihood/CDF contract.
-- `rank_ordered_mle(values, *, xmin=None, tail_fraction=0.1) -> dict`; degeneracy detection is exact/relative rather than absolute-scale dependent.
+- `fixed_cutoff_mle(values, *, xmin=None, tail_fraction=0.1, xmax=None) -> dict`. Finite `xmax` uses the same bounded likelihood/CDF contract.
+- `rank_ordered_mle(values, *, xmin=None, tail_fraction=0.1) -> dict`. Degeneracy detection is exact/relative rather than absolute-scale dependent.
 - `hill_estimator(values, k_min=5) -> tuple[np.ndarray, np.ndarray]`
 - `hill_alpha_at(values, k) -> float`
 - `hill_estimator_windowed(values, *, window=20, k_min=5) -> tuple[np.ndarray, np.ndarray]`
 - `hill_plateau(values, *, window=20, flat_tol=0.15) -> dict`
-- `select_tail_estimator(values, estimator="csn", **kwargs) -> dict`; accepted canonical names are `clauset_mle`, `hill_estimator`, `hill_windowed`, `fixed_cutoff_mle`, `rank_ordered_mle`, and `all`, with legacy `csn`/`hill` aliases. Windowed-Hill reports start/end rank, window width, and union support; its inapplicable single-cutoff `xmin`/`n_tail` fields remain unavailable.
-- `powerlaw_pkg_fit(values, xmax=None) -> dict | None`; both nested models use the same finite support, `LR_trunc = log L_pure - log L_truncated`, and `LR_p` uses the one-sided boundary chi-square law for a nonnegative truncation rate.
+- `select_tail_estimator(values, estimator="csn", **kwargs) -> dict`. Accepted canonical names are `clauset_mle`, `hill_estimator`, `hill_windowed`, `fixed_cutoff_mle`, `rank_ordered_mle`, and `all`, with legacy `csn`/`hill` aliases. Windowed-Hill reports start/end rank, window width, and union support. Its inapplicable single-cutoff `xmin`/`n_tail` fields remain unavailable.
+- `powerlaw_pkg_fit(values, xmax=None) -> dict | None`. Both nested models use the same finite support, `LR_trunc = log L_pure - log L_truncated`, and `LR_p` uses the one-sided boundary chi-square law for a nonnegative truncation rate.
 
 ## `rmt.scalars`
 
@@ -112,7 +112,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `brody_cdf(s, beta) -> np.ndarray`
 - `fit_brody(spacings, *, method="mle", n_bootstrap=0, rng=0) -> BrodyFit`
 - `fit_brody_cdf_nls(spacings, *, n_bootstrap=0, rng=0) -> BrodyFit`
-- `r_statistic(levels) -> float`; three finite levels are sufficient for one adjacent-gap ratio.
+- `r_statistic(levels) -> float`. Three finite levels are sufficient for one adjacent-gap ratio.
 - `number_variance(levels, L, *, unfolded=False, degree=7, n_windows=None, method="sliding", tolerance=1e-4, rng=0) -> float`
 - `sigma2(levels, L, deg=7) -> float`
 - `dyson_mehta_delta3(levels, L, *, unfolded=False, degree=7, n_windows=None) -> float`
@@ -133,16 +133,16 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `reference_max_cosine_overlap(weight_vectors, activation_vectors, *, absolute=False, squared=False) -> np.ndarray`
 - `evaluate_overlap_metric(weight_vectors, activation_vectors, *, metric="staats_dual_end") -> dict`
 - `tranche_indices(n_values, *, top_fraction=0.1, bottom_fraction=0.1) -> dict[str, np.ndarray]`
-- `dual_end_alignment(svd, covariance, *, activation_fraction=0.1, top_fraction=0.1, bottom_fraction=0.1, metric="staats_dual_end") -> dict`; returns availability/rank status, uses source-array precision for covariance qualification, rejects significant indefiniteness, excludes null modes, does not split a tied positive cluster at the target cutoff, and marks nonidentifiable weight singular subspaces unavailable.
-- `overlap_analysis(weight, feature_matrix, *, svd=None) -> dict`; legacy convention with the same covariance/weight qualification and explicit availability status.
-- `eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None) -> dict`; legacy convention with the same qualification/status contract.
+- `dual_end_alignment(svd, covariance, *, activation_fraction=0.1, top_fraction=0.1, bottom_fraction=0.1, metric="staats_dual_end") -> dict` returns availability and rank status. It uses source precision for covariance qualification. It rejects significant indefiniteness and excludes null modes. It does not split a tied positive cluster. Nonidentifiable weight subspaces are unavailable.
+- `overlap_analysis(weight, feature_matrix, *, svd=None) -> dict`. Legacy convention with the same covariance/weight qualification and explicit availability status.
+- `eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None) -> dict`. Legacy convention with the same qualification/status contract.
 - `three_sigma_band(N, sigma_level=3.0) -> tuple[float, float]`
 - `resolve_fm_key(record_name, fm_keys) -> str | None`
 
 ## `rmt.farms_aspect_ratio`
 
 - `FARMSConfig(target_aspect_ratio=1.0, window_size=None, row_windows=5, column_windows=5, sampling="reference_fixed", n_submatrices=None, step_size=10, normalization="canonical", orient_tall=False, seed=0)` is frozen. The target ratio is sampled columns divided by sampled rows, and `window_size` is the sampled row count.
-- `FARMSResult` is a frozen dataclass containing the descending pooled spectrum, source/oriented/window shapes, starts, reference and canonical aspect ratios, normalization and one exact normalization denominator per window, transpose state, coverage, and window counts.
+- `FARMSResult` is a frozen dataclass. It contains the descending pooled spectrum, shapes, starts, both aspect ratios, normalization denominators, transpose state, coverage, and window counts.
 - `fixed_ratio_window_shape(source_shape, target_aspect_ratio=1.0, window_size=None) -> tuple[int, int]`
 - `farms_window_starts(source_shape, window_shape, *, row_windows=5, column_windows=5, sampling="reference_fixed", n_submatrices=None, step_size=10, rng=0) -> np.ndarray`
 - `iter_farms_submatrices(weight, window_shape, starts) -> Iterator[np.ndarray]`
@@ -156,31 +156,31 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `covariance_linear_operator(factor, *, normalization=None) -> scipy.sparse.linalg.LinearOperator`
 - `default_lanczos_steps(dimension) -> int`
 - `lanczos_tridiagonalize(matrix, *, dimension=None, steps=None, probe=None, reorthogonalization="full", tolerance=None, adaptive=False, convergence_tolerance=None, sequence_length=None, check_interval=2, rng=0, return_basis=False) -> LanczosResult`
-- `jacobi_cholesky(lanczos, *, ridge=0.0, pivot_tolerance=None) -> JacobiCholesky`; the default pivot threshold is operator-scale-relative.
+- `jacobi_cholesky(lanczos, *, ridge=0.0, pivot_tolerance=None) -> JacobiCholesky`. The default pivot threshold is operator-scale-relative.
 - `estimate_constant_tail(cholesky, *, tail_window=None) -> tuple[float, float, float, float]`
 - `reference_modified_cholesky(lanczos, *, tail_window=None, ridge=0.0) -> tuple[JacobiCholesky, dict[str, float | int | str]]`
 - `support_from_cholesky_tail(alpha, beta) -> tuple[float, float]`
 - `vector_empirical_stieltjes(lanczos, z) -> np.ndarray | complex`
 - `extended_stieltjes_transform(z, diagonal, sub_diagonal, *, tail_alpha, tail_beta) -> np.ndarray | complex`
-- `LanczosSpikeResult.stieltjes(z)` evaluates the representative measure matching reported poles/residues; `ensemble_stieltjes(z)` is the separately named probe average used by `density(...)`.
+- `LanczosSpikeResult.stieltjes(z)` evaluates the representative measure matching reported poles/residues, `ensemble_stieltjes(z)` is the separately named probe average used by `density(...)`.
 - `asymptotic_spectral_density(result, energies, *, eta=1e-3) -> np.ndarray`
 - `finite_section_poles(cholesky, *, tail_alpha, tail_beta, threshold, residue_threshold=0.0, tail_window=None, extension_size=None) -> tuple[np.ndarray, np.ndarray]`
 - `finite_vest_poles(lanczos, *, threshold, residue_threshold=0.0) -> tuple[np.ndarray, np.ndarray]`
 - `detect_spikes_lanczos(matrix, *, dimension=None, steps=None, n_probes=1, reorthogonalization="full", tail_window=None, threshold_c=1.0, threshold_delta=0.25, threshold_mode="absolute", residue_threshold=0.0, ridge=0.0, extension_size=None, adaptive=True, convergence_tolerance=None, sequence_length=None, check_interval=2, pole_method="reference_ritz", rng=0) -> LanczosSpikeResult`
-- `detect_spikes_from_factor(factor, **kwargs) -> LanczosSpikeResult`; the production factor adapter defaults `threshold_mode` to `bulk_edge_relative`, while direct operator calls retain the reference absolute convention.
+- `detect_spikes_from_factor(factor, **kwargs) -> LanczosSpikeResult`. The production factor adapter defaults `threshold_mode` to `bulk_edge_relative`, while direct operator calls retain the reference absolute convention.
 - `lanczos_tridiagonalization`, `vector_empirical_stieltjes_transform`, and `lanczos_stieltjes_detector` are compatibility aliases.
 
 ## `rmt.factory`
 
 - Choice tuples: `MP_FIT_METHODS`, `UNFOLDING_STRATEGIES`, `TAIL_SOLVERS`, `OVERLAP_METRICS`, `ASPECT_RATIO_MODES`, and `SPIKE_DETECTORS`.
-- `RMTMethodConfig(mp_fit_method="lanczos_stieltjes", unfolding_strategy="spline_monotone", tail_solver="clauset_mle", overlap_metric="staats_dual_end", aspect_ratio_mode="farms_normalized", spike_detector="lanczos_poles", polynomial_degree=15, spline_smoothing=None, gaussian_kernel_window=15, mp_trim_upper=0.1, kde_bandwidth=None, tail_minimum=50, tail_fraction=0.1, farms_target_aspect_ratio=1.0, farms_window_size=None, farms_row_windows=5, farms_column_windows=5, farms_sampling="reference_fixed", farms_step_size=10, farms_normalization="canonical", farms_orient_tall=False, lanczos_steps=50, lanczos_probes=3, lanczos_tail_window=None, lanczos_threshold_c=1.0, lanczos_threshold_delta=0.25, lanczos_residue_threshold=0.0, lanczos_ridge=0.0, lanczos_adaptive=True, lanczos_convergence_tolerance=None, lanczos_sequence_length=None, lanczos_check_interval=2, lanczos_pole_method="reference_ritz", seed=0)` is the frozen validated method/hyperparameter contract.
+- `RMTMethodConfig(mp_fit_method="lanczos_stieltjes", unfolding_strategy="spline_monotone", tail_solver="clauset_mle", overlap_metric="staats_dual_end", aspect_ratio_mode="farms_normalized", spike_detector="lanczos_poles", polynomial_degree=15, spline_smoothing=None, gaussian_kernel_window=15, mp_trim_upper=0.1, kde_bandwidth=None, tail_minimum=50, tail_fraction=0.1, farms_target_aspect_ratio=1.0, farms_window_size=None, farms_row_windows=5, farms_column_windows=5, farms_sampling="reference_fixed", farms_step_size=10, farms_normalization="canonical", farms_orient_tall=False, lanczos_steps=50, lanczos_probes=3, lanczos_tail_window=None, lanczos_threshold_c=1.0, lanczos_threshold_delta=0.25, lanczos_residue_threshold=0.0, lanczos_ridge=0.0, lanczos_adaptive=True, lanczos_convergence_tolerance=None, lanczos_sequence_length=None, lanczos_check_interval=2, lanczos_pole_method="reference_ritz", seed=0)` is the frozen contract for methods and their parameters.
 - `PreparedSpectrum` is a frozen spectrum, canonical aspect ratio, mode, optional FARMS result, and diagnostics container.
 - `prepare_spectrum(weight, config=RMTMethodConfig(), *, variance=1.0) -> PreparedSpectrum`
 - `dispatch_mp_fit(weight, config=RMTMethodConfig(), *, variance=None) -> MPFitResult`
 - `dispatch_tail_solver(eigenvalues, config=RMTMethodConfig(), **overrides) -> dict`
 - `dispatch_unfolding(levels, config=RMTMethodConfig()) -> np.ndarray`
 - `dispatch_overlap(weight_vectors, activation_vectors, config=RMTMethodConfig()) -> dict`
-- `dispatch_spike_detector(weight, config=RMTMethodConfig(), *, variance=1.0, eigenvalues=None, aspect_ratio=None, operator_shape=None) -> SpikeDetectionResult`; Tracy--Widom finite-size corrections use `operator_shape`, never pooled observation count, and Lanczos assumption failures return a structured unavailable result.
+- `dispatch_spike_detector(weight, config=RMTMethodConfig(), *, variance=1.0, eigenvalues=None, aspect_ratio=None, operator_shape=None) -> SpikeDetectionResult`, Tracy--Widom finite-size corrections use `operator_shape`, never pooled observation count, and Lanczos assumption failures return a structured unavailable result.
 
 ## Model and pipeline contracts
 
@@ -191,22 +191,22 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `allocation_for_regime(optimal, kappa, *, name=None, law=ScalingLaw()) -> Allocation`
 - `isoflop_grid(compute_budgets, kappas=(0.25, 1.0, 4.0), law=ScalingLaw(), *, target_tokens_per_parameter=20.0) -> list[Allocation]`
 - `estimate_transformer_parameters(config) -> int`
-- `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64, max_parameters=None) -> dict`; embedding cost and all feasible lower widths are included, and one-layer searches are supported.
+- `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64, max_parameters=None) -> dict`. Embedding cost and all feasible lower widths are included, and one-layer searches are supported.
 - `CovarianceEstimate(array, *, observation_count, accumulation_dtype, centered)` is an `np.ndarray` subclass carrying rank/precision provenance into overlap qualification.
-- `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains a stable running mean and centered M2 matrix on one device (historical buffer attribute names are retained).
-- `CovarianceAccumulator.update(activations, *, valid_mask=None, max_samples=None) -> None`; moment arithmetic explicitly disables an enclosing autocast context.
+- `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains a stable cumulative mean and centered M2 matrix on one device (historical buffer attribute names are retained).
+- `CovarianceAccumulator.update(activations, *, valid_mask=None, max_samples=None) -> None`. Moment arithmetic explicitly disables an enclosing autocast context.
 - `CovarianceAccumulator.second_moment() -> Tensor`
 - `CovarianceAccumulator.covariance(*, centered=True, unbiased=False) -> Tensor`
 - `ActivationExtractor(model, module_filter=None, *, capture=("pre", "post"), max_samples_per_hook=None, accumulation_device="auto", accumulation_dtype="auto")`
 - `ActivationExtractor.__enter__() -> ActivationExtractor`
 - `ActivationExtractor.__exit__(exc_type, exc_value, traceback) -> bool`
 - `ActivationExtractor.covariances(*, centered=True, unbiased=False) -> dict[str, np.ndarray]`
-- `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None) -> SVDResult`
+- `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None) -> SVDResult` is the compatibility call form. It uses the default analysis dtype.
 - `compute_activation_covariances(model, dataloader, *, device, module_filter=None, max_batches=None, centered=True, accumulation_device="auto", accumulation_dtype="auto", amp_dtype="float32") -> dict[str, np.ndarray]`
-- `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None, analysis_dtype="float64") -> SVDResult`; analysis precision is independent of model/autocast precision.
+- `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None, analysis_dtype="float64") -> SVDResult`. Analysis precision is independent of model/autocast precision.
 - `lesion_matrix(weight, tranche, *, fraction=0.05, mode="count", reference_energy=None, generator=None, svd_backend="auto", svd_driver="gesvdj") -> tuple[Tensor, LesionInfo]`
 - `lesion_matrix_decile(weight, decile, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj") -> tuple[Tensor, LesionInfo]`
-- `spectral_lesion(model, parameter_names, tranche, *, fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj", factor_cache=None, analysis_dtype="float64")` returns a restoring context manager. Reusable cache entries are verified against pristine weight bytes and the analysis contract.
+- `spectral_lesion(model, parameter_names, tranche, *, fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj", factor_cache=None, analysis_dtype="float64")` returns a restoring context manager. The code compares reusable cache entries with original weight bytes and the analysis contract.
 - `spectral_decile_lesion(model, parameter_names, decile, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj")` returns a restoring context manager.
 - `independent_lesion_benchmark(model, parameter_names, evaluate, *, tranches=("top", "bulk", "bottom"), fraction=0.05, mode="count", reference_energy=None, seed=0, svd_backend="auto", svd_driver="gesvdj") -> list[dict]`
 - `independent_decile_benchmark(model, parameter_names, evaluate, *, n_deciles=10, svd_backend="auto", svd_driver="gesvdj") -> list[dict]`
@@ -224,7 +224,7 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - The primary flags are `--mp-fit-method`, `--unfolding-strategy`, `--tail-solver`, `--overlap-metric`, `--aspect-ratio-mode`, and `--spike-detector`.
 - `--overlap-mode` is an alias of `--overlap-metric`.
 - `--boundary-detector` is a compatibility flag whose resolved MP/spike pair takes precedence when supplied.
-- The complete runner schema additionally owns experiment/data/scaling/training/device/covariance/SVD/diagnostic/lesion flags. `README.md` is the exhaustive user-facing dictionary; `pipelines.cli_config` is the executable source of truth.
+- The full runner schema additionally owns experiment/data/scaling/training/device/covariance/SVD/diagnostic/lesion flags. `README.md` is the exhaustive user-facing dictionary, `pipelines.cli_config` is the executable source of truth.
 
 ## Data and training contracts
 
@@ -235,5 +235,5 @@ The signatures below are fixed for this repository. All symbols under `rmt` acce
 - `build_synthetic_corpus(length, vocab_size, *, seed=0, noise_probability=0.05) -> np.ndarray`
 - `TrainConfig` is a frozen optimizer/schedule/accelerator dataclass containing AMP dtype, compile mode, TF32 policy, and nonblocking-transfer policy.
 - `evaluate_language_model(model, dataloader, device, *, max_batches=None, amp_dtype="float32", non_blocking_transfers=True) -> dict[str, float]`
-- `LanguageModelTrainer.fit(train_dataloader, validation_dataloader=None, *, callback=None) -> list[dict]`; token-budget schedules follow successful target-token progress across recycled loader passes, and recoverable GradScaler overflows back off without advancing tokens, scheduler, or optimizer-update counters.
+- `LanguageModelTrainer.fit(train_dataloader, validation_dataloader=None, *, callback=None) -> list[dict]`. Token-budget schedules follow successful target-token progress across recycled loader passes, and recoverable GradScaler overflows back off without advancing tokens, scheduler, or optimizer-update counters.
 - `LanguageModelTrainer.save_checkpoint(path, *, metadata=None) -> None`

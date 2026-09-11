@@ -1,80 +1,64 @@
-# Executive summary — `rmt`
+# Executive summary for `rmt`
 
-## What this code does
+## Function
 
-`rmt` analyzes the spectra of LLM weight matrices to characterize how training
-shapes them, using three complementary Random-Matrix-Theory lenses. For every
-analyzable 2-D weight (attention Q/K/V/O, MLP gate/up/down, fused QKV split by
-an architecture-verified contiguous or head-interleaved layout) it computes **one SVD** and derives, in a single flat CSV row:
+`rmt` examines LLM weight matrices with three Random Matrix Theory (RMT) method groups. It does one singular value decomposition (SVD) for each applicable two-dimensional weight. Applicable weights include attention, MLP, and fused QKV projections. It identifies fused contiguous or head-interleaved layouts from the architecture. The tool writes results for one matrix in one flat CSV row.
 
-**Marchenko–Pastur bulk + noise scale.** The Gavish–Donoho median estimator
-gives σ̂; the MP edges (ν₋, ν₊) and their eigenvalue images (ν₋²/N, ν₊²/N) bound
-the random-noise bulk. Singular values above ν₊ are "signal" outliers; mass
-below ν₋ measures small-singular-value depletion — the central thesis of Paper 3.
+The Marchenko-Pastur group estimates `σ̂` with the Gavish-Donoho median. MP edges `(ν₋, ν₊)` and eigenvalue images `(ν₋²/N, ν₊²/N)` define the random-noise bulk. Values more than `ν₊` are signal outliers. Mass less than `ν₋` measures small-value depletion, which is the main statement of Paper 3.
 
-**Power-law tail (Paper 2).** The CSN maximum-likelihood + KS fit returns the
-density exponent α on λ=ν² (and on ν), with the standard Hill survival exponent
-on both domains, and the Paper-1 *windowed* Hill estimator with a plateau
-diagnostic that distinguishes a genuine heavy tail from an MP edge.
+The power-law group applies the CSN maximum-likelihood and KS fit to `λ=ν²` and `ν`. It also gives the standard Hill survival exponent in both domains. The Paper 1 windowed Hill estimate includes a plateau diagnostic. This diagnostic separates a stable heavy tail from an MP edge.
 
-**Scalars.** Stable rank, spectral/row-wise entropy, IPR (localization), MP
-soft-rank (ν₊/ν_max), bulk-mass fraction, and a 10-bin ascending per-decile
-breakdown of entropy and stable-rank.
+Scalar output includes stable rank, spectral entropy, row entropy, IPR, MP soft rank, and bulk-mass fraction. It also includes ten ascending decile groups for entropy and stable rank.
 
-**Bulk universality (level statistics).** The Atas r-statistic, nearest-neighbour
-spacing KS vs Wigner-GOE / Poisson, Dyson–Mehta Δ₃(L) and number variance Σ²(L)
-at L=10, 50, plus the complex spacing ratio for the Ginibre test on square matrices.
+Level statistics include the Atas `r` statistic and nearest-neighbor KS values for Wigner-GOE and Poisson. They include Dyson-Mehta `Δ₃(L)` and number variance `Σ²(L)` at `L=10, 50`. Square matrices also receive the Ginibre complex spacing ratio.
 
-**Activation-covariance overlap (Paper 3).** When activations are captured, the
-overlap O_k = maxⱼ|v_k·f_j| between right singular vectors and identifiable positive activation-covariance eigenvectors, plus the eigenvector/eigenvalue coincidence summaries. Rank-zero/unresolved activation eigenspaces and repeated/null weight singular subspaces are explicitly unavailable rather than basis-dependent.
+If activation capture is active, the tool computes `O_k = maxⱼ|v_k·f_j|`. It also computes summaries for coincidence between eigenvectors and eigenvalues. The tool reports unavailable results for zero-rank or unresolved activation eigenspaces. It does the same for repeated or null weight singular subspaces. Thus, output does not depend on an arbitrary basis.
 
-**Decile ablation + epoch tracking.** Perplexity after zeroing each singular-value
-decile (scope = all-matrices-of-type or only-analyzed), and backend-dispatched stable-rank tracking with actual backend/dtype provenance across training checkpoints (every ~10% of iterations). Tied parameter aliases are lesioned once and oversized partition counts fail before mutation.
+Decile ablation sets each singular-value decile to zero and measures perplexity. Scope can include all matrices of one type or only analyzed matrices. Epoch tracking uses the selected backend and records actual backend and dtype information. By default, probes occur at intervals of approximately ten percent of training. Tied parameter aliases receive one lesion. An excessive partition count stops before mutation.
 
-## Architecture and why it is trustworthy
+## Architecture and tests
 
-The scientific core is pure numpy/scipy and is validated against closed-form RMT
-ground truth (GOE/GUE/Ginibre/Wishart/Pareto) in the current pure-science test suite. The torch/HF layer is exercised using tiny in-process models—no network or downloads. Run the suite for environment-specific counts rather than relying on historical totals. A single SVD dispatcher (`cached_svd`) drives
-the A100 for large matrices but always hands numpy back to the analysis, and
-`per_matrix_analysis` is proven to call it exactly once per matrix. Everything
-runs fully offline (HF offline env vars set before any model touch).
+The scientific core uses only NumPy and SciPy. Tests compare it with closed-form RMT results for GOE, GUE, Ginibre, Wishart, and Pareto data. Tests of the torch and Hugging Face layer use small in-process models without downloads. Current local test output gives the applicable test count. Old test counts are not a release promise.
 
-The repair suite additionally covers fail-closed tokenizer provenance, strict run/stage status, fixed-seed selftesting, complete-mean spacing, bounded-Pareto likelihoods, matched random-control estimators, lambda-domain windowed Hill support (including its final boundary observation), alias-safe reversible decile sweeps, metadata-first bounded processing, corruption-tolerant precision-qualified SVD caching, and atomic output ownership. ESD bins are globally bounded for tiny-IQR spectra; text contexts account for learned-position offsets; activation capture preserves mixed submodule modes and accepts explicitly named projections without numeric layer indices. Run the current suite locally for an environment-specific count; historical pass totals are not a release guarantee.
+`cached_svd` sends large SVD operations to an A100 and returns NumPy arrays. `per_matrix_analysis` calls it one time for each matrix. Offline environment variables are active before model access.
 
-## How to run
+The repair tests cover tokenizer provenance, strict stage status, fixed-seed self-tests, and spacing with a mean from the full sample. They cover bounded-Pareto likelihoods, matching random estimators, and full windowed Hill support in the lambda domain. They also cover alias-safe decile sweeps, bounded metadata processing, SVD cache corruption, and atomic output ownership.
 
-1. Install: `pip install -e ".[torch,plots]"` (core works with just numpy/scipy).
-2. Gate: `python -m rmt --selftest` — must exit 0 before any real run.
-3. Analyze (offline):
+ESD bins have a fixed upper limit for a very small IQR. Text windows include learned-position offsets. Activation capture keeps mixed submodule modes and accepts exact projection names without numeric layer indices.
+
+## Procedure
+
+1. Install the tool with `pip install -e ".[torch,plots]"`. The core requires only NumPy and SciPy.
+2. Enter `python -m rmt --selftest`. Do not analyze a real model unless this command returns exit code 0.
+3. For offline analysis, enter this command:
+
    ```
    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m rmt \
      --models ./models/Llama-3.1-8B --output_dir ./RMT_Local_Outputs \
      --layers 0 4 9 14 19 24 29 --backend auto \
      --do_overlap --do_spacing --do_powerlaw --do_perplexity
    ```
-4. On the cluster: submit `run_rmt.slurm` (A100, offline, selftest-gated).
 
-Set `--layers` to any list of layer indices (start/middle/end). Validate on
-`pythia-410m` by passing it in `--models`; the discovery registry handles its
-fused `query_key_value` automatically.
+4. On the cluster, submit `run_rmt.slurm`. The job uses an A100, offline mode, and the required self-test.
 
-## Output files (per model `<tag>`)
+`--layers` accepts a list of layer indices. For a Pythia test, give `pythia-410m` to `--models`. The discovery registry processes its fused `query_key_value` layout.
 
-`<tag>_matrix_metrics.csv` (one row per matrix), `<tag>_summary.json`, `<tag>_run_status.json`,
-`<tag>_run_manifest.json`, `<tag>_perplexity.json`, atomically claimed `<tag>_stable_rank_per_epoch.csv` plus checkpoint status, optional WeightWatcher result/status JSON, and plots under `<tag>/`.
+## Output files
 
-## CSV columns (groups)
+For each `<tag>`, output includes `<tag>_matrix_metrics.csv`, `<tag>_summary.json`, and `<tag>_run_status.json`. It also includes `<tag>_run_manifest.json` and optional `<tag>_perplexity.json`. Epoch output uses `<tag>_stable_rank_per_epoch.csv` and checkpoint status. WeightWatcher output and status are optional. The `<tag>/` directory contains plots.
 
-identity/provenance (`name, short, layer_idx, n, m, is_square, N_cov, source_dtype, svd_factorization_dtype`) ·
-MP bulk (`sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig],
-n_*_outliers, frac_*_outliers`) · small-SV (`ks_lower, n_below_minus,
-frac_mass_below_minus, excess_small_sv`) · tail (`alpha, xmin, ks_D, n_tail,
-alpha_on_nu, alpha_hill_nu, alpha_hill_lambda, hill_plateau_alpha/width/start/end/window/support,
-hill_is_powerlaw, LR_trunc, LR_p, powerlaw_pkg_status/reason, alpha_rand plus estimator/kind/cutoff/plateau-union-support/KS metadata, max_ev_rand`) · scalars
-(`row_wise_entropy, spectral_entropy, stable_rank, mp_softrank, bulk_mass_frac,
-max/min/mean/median_sval, ipr_top10_mean, ipr_bulk_mean, pt_ks_mean,
-pt_frac_random`) · bulk stats (`spacing_seed, r_statistic_mean, nn_KS_GOE, nn_KS_Poisson,
-delta3_L10/L50, sigma2_L10/L50, complex_r_abs_mean, complex_r_cos_mean`) ·
-overlap (`max/mean_overlap, overlap_at_top/bottom_sval, rho_*,
-max_overlap_with_top_eigenvector, argmax_singular_for_top_eigenvector,
-diagonal_coincidence, overlap_status, activation_covariance_rank`) · per-decile (`entropy_decile_1..10, srk_decile_1..10`).
+## CSV column groups
+
+Identity and provenance columns are `name, short, layer_idx, n, m, is_square, N_cov, source_dtype, svd_factorization_dtype`.
+
+MP columns are `sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig], n_*_outliers, frac_*_outliers`. Small-value columns are `ks_lower, n_below_minus, frac_mass_below_minus, excess_small_sv`.
+
+Tail columns include `alpha, xmin, ks_D, n_tail, alpha_on_nu, alpha_hill_nu, alpha_hill_lambda`. They include all `hill_plateau_*` and support fields. They also include `hill_is_powerlaw, LR_trunc, LR_p, powerlaw_pkg_status/reason`. Random-control columns include `alpha_rand` and its estimator, kind, cutoff, support, KS, and plateau metadata. `max_ev_rand` contains the maximum random eigenvalue.
+
+Scalar columns are `row_wise_entropy, spectral_entropy, stable_rank, mp_softrank, bulk_mass_frac`. They include summary singular values, IPR groups, and Porter-Thomas groups.
+
+Bulk columns are `spacing_seed, r_statistic_mean, nn_KS_GOE, nn_KS_Poisson`. They include `delta3_L10/L50, sigma2_L10/L50, complex_r_abs_mean, complex_r_cos_mean`.
+
+Overlap columns include maximum, mean, top-value, and bottom-value overlap. They include all `rho_*` values and coincidence values. They also include `overlap_status` and `activation_covariance_rank`.
+
+Per-decile columns are `entropy_decile_1..10` and `srk_decile_1..10`.

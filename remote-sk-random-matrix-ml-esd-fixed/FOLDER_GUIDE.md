@@ -1,54 +1,56 @@
 # Folder guide
 
-Single working copy of the RMT pipeline. Created 2026-08-02 by consolidating
-several scattered duplicate folders in `~/Downloads`.
+This directory is one working copy of the RMT pipeline. It was made on 2026-08-02 from duplicate folders in `~/Downloads`. Some historical output paths in this guide are not in this repository checkout.
 
-## Code (the current, latest version)
+## Current code
 
-| Path | What it is |
+| Path | Description |
 |---|---|
-| `rmt/` | The maintained package. Includes the float64 precision contract, corruption-tolerant SVD caching, alias-safe decile SVDs, qualified/mixed-mode-safe activation capture, bounded-tail fitting, fixed-seed selftesting, bounded ESD bins, context-limit handling, config-driven CLI, plot wiring, and backend dispatch. |
-| `rmt/plots/`, `rmt/baselines/` | Plotting and WeightWatcher baseline submodules. |
-| `tests/` | Pytest suite, including end-to-end CLI and v4 numerical/state-safety regressions. |
-| `docs/` | `design.md`, `plan.md`, `plan-unittest.md`, `signatures_api.md`. |
-| `run_rmt.slurm` | Current LF-normalized SLURM job script (64G mem, OOM notes). |
-| `rmt_pipeline_glm.py` | Non-executable historical monolith. It exits with guidance to use `python -m rmt`. |
-| `test_rmt_critical.py`, `_synthetic_models.py` | Root-level test helpers. |
+| `rmt/` | This maintained package includes the float64 contract, SVD cache, decile operations, activation capture, tail fits, self-tests, ESD limits, CLI, plots, and backends. |
+| `rmt/plots/`, `rmt/baselines/` | These directories contain plots and the WeightWatcher baseline. |
+| `tests/` | This directory contains pytest tests, CLI tests, and v4 numerical and state-safety tests. |
+| `docs/` | The historical working copy contained `design.md`, `plan.md`, `plan-unittest.md`, and `signatures_api.md`. This repository checkout does not contain `docs/`. |
+| `run_rmt.slurm` | This is the current LF SLURM script. It requests 64 GiB and contains OOM notes. |
+| `rmt_pipeline_glm.py` | This is a historical monolith that does not operate. It directs users to `python -m rmt`. |
+| `test_rmt_critical.py`, `tests/synthetic_models.py` | The first file is a root test. The second file contains shared synthetic models. |
 
-## Model outputs — `RMT_Local_Outputs/`
+## Historical model output in `RMT_Local_Outputs/`
 
-| Folder | Model | Layers analysed | Notes |
+The inventory that follows describes the consolidated working copy. This repository checkout does not contain `RMT_Local_Outputs/`.
+
+| Directory | Model | Analyzed layers | Notes |
 |---|---|---|---|
-| `llama-3.1-8b/` | Llama-3.1-8B | 0, 10, 25 | 90 files. Current run. |
-| `pythia-160m-fixed-layers-0-4-9/` | pythia-160m | 0, 4, 9 | 80 files. `alpha_mean` 3.818. |
-| `pythia-160m-run1-layers-0-5-10/` | pythia-160m | 0, 5, 10 | 80 files. `alpha_mean` 3.985. |
-| `legacy/` | bert, llama, pythia-160m | — | 15 files. Older run, different output format. Subfolders start with `.` so use `ls -a`. |
+| `llama-3.1-8b/` | Llama-3.1-8B | 0, 10, 25 | It contains 90 files from the current execution. |
+| `pythia-160m-fixed-layers-0-4-9/` | pythia-160m | 0, 4, 9 | It contains 80 files and `alpha_mean` 3.818. |
+| `pythia-160m-run1-layers-0-5-10/` | pythia-160m | 0, 5, 10 | It contains 80 files and `alpha_mean` 3.985. |
+| `legacy/` | bert, llama, pythia-160m | Not applicable | It contains 15 older files with another output format. Use `ls -a` for directories that start with `.`. |
 
-The two pythia folders are **different runs over different layers**, not duplicates —
-neither is a superset of the other. Both were kept deliberately.
+The two Pythia directories contain different executions with different layers. Neither directory contains all data from the other directory. The consolidation kept both directories.
 
-Each current run folder contains `esd/`, `hill/`, `overlap/`, `spacing/`, `qkv/`
-(and `perplexity/` for pythia), plus a `_matrix_metrics.csv` and `_summary.json`.
-The files inside still carry the pipeline's auto-generated `._models_<tag>_` prefix;
-only the containing folders were renamed for readability.
+Each current execution directory contains `esd/`, `hill/`, `overlap/`, `spacing/`, and `qkv/`. The Pythia directory also contains `perplexity/`. Each directory contains `_matrix_metrics.csv` and `_summary.json`. Files keep the generated `._models_<tag>_` prefix. Only the names of the parent directories changed.
 
-## Archive — `legacy/`
+## Historical archive in `legacy/`
 
-Earlier generation of the project: `ai_studio_code.py` (33K monolith), its SLURM
-script, old job logs, and `legacy/RMT_Local_Outputs/` (113 files covering
-alexnet, vgg16, pythia-410m, pythia-160m, bert, Llama-3_1-8B).
+The consolidated working copy had `legacy/`, but this repository checkout does not. `legacy/` contained an earlier generation of the project. It contains the 33K-line `ai_studio_code.py` monolith, its SLURM script, and old job logs. It also contains 113 files in `legacy/RMT_Local_Outputs/`. Those files cover alexnet, vgg16, pythia-410m, pythia-160m, bert, and Llama-3_1-8B.
 
-Note this is a **different** result set from `RMT_Local_Outputs/legacy/` — same
-name, different contents. Both retained.
+This result set differs from `RMT_Local_Outputs/legacy/`. Both sets have the name `legacy`, but their contents differ. The consolidation kept both sets.
 
-## Runtime ownership and memory
+## Output ownership and memory
 
-Production output directories include a digest of the resolved model snapshot and must be absent or empty. An exclusive `.run-owner.json` claim prevents concurrent reuse; a run manifest records resolved configuration and source/live precision before work, and the status JSON begins as `running` and is finalized after all requested stages. Checkpoint CSVs use their own exclusive claim and atomic replacement, with missing probe coverage recorded as partial in permissive mode. Requested best-effort baselines receive their own status artifact and make the overall status partial when unavailable. Matrix discovery is metadata-only until each matrix is processed; activation covariance is captured one projection at a time without flattening mixed train/eval state; and decile sweeps mutate/restore one pristine model while requiring non-degraded float64 SVDs, prevalidating metadata, materializing one physical parameter at a time, deduplicating tied aliases, and rejecting empty partition tranches before mutation. Histogram grids are globally bounded and text windows honor learned-position offsets. Synthetic text and synthetic hash-tokenization are separate explicit opt-ins. Persistent SVD caching is opt-in, so ordinary tests do not read or mutate production cache entries. Tiny-model tests use the single canonical `tests.synthetic_models` fixture, including verified head-interleaved GPT-NeoX/Pythia QKV semantics.
+A production output directory includes a digest of the resolved model snapshot. It must not exist, or it must be empty. An exclusive `.run-owner.json` claim prevents concurrent use.
 
-The sibling `compute_optimal_analysis` project has an incompatible package with the same `rmt` import name. Run each project from its own root in a separate Python process and never combine their roots on `PYTHONPATH`.
+An execution manifest records the resolved configuration and precision before analysis. The status file starts with `running`. The pipeline writes its final value after all requested stages.
 
-## Notes
+Checkpoint CSV files use a separate exclusive claim and atomic replacement. In permissive mode, missing probe coverage gives partial status. A requested best-effort baseline gets a status artifact. If it is unavailable, the full execution gets partial status.
 
-- `~/Downloads` is itself a git repo, so changes here show up in its `git status`.
-- Full backup of the pre-cleanup state: `~/Downloads/to_port_sk-random-matrix-ml-fixed (2).zip`.
-- Everything removed during cleanup went to the Trash, not `rm` — still recoverable.
+Discovery reads only metadata until it processes one matrix. Activation capture processes one projection and preserves all train and evaluation modes. Decile sweeps change and restore one model. They require non-degraded float64 SVD results.
+
+Before mutation, a decile sweep makes sure of all metadata. It materializes one physical parameter at a time and removes tied aliases. It rejects an empty partition tranche. Histogram grids have a fixed bound. Text windows obey learned-position offsets.
+
+Synthetic text and synthetic hash tokenization require separate options. Persistent SVD caching is off by default. Small-model tests use the single `tests.synthetic_models` fixture. The fixture includes head-interleaved GPT-NeoX and Pythia QKV behavior.
+
+The sibling `compute_optimal_analysis` project has another, incompatible package named `rmt`. Operate each project from its own root and in a separate process. Do not combine their roots on `PYTHONPATH`.
+
+## Historical notes
+
+`~/Downloads` is a Git repository, so its `git status` includes changes in this directory. The archive `~/Downloads/to_port_sk-random-matrix-ml-fixed (2).zip` contains the state before consolidation. Removed items went to the Trash and not through `rm`, so recovery was possible.

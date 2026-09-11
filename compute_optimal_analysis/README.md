@@ -1,65 +1,77 @@
 # Spectral-Chinchilla
 
-Spectral-Chinchilla trains compute-allocation-controlled causal Transformers and measures random-matrix signatures, level statistics, activation alignment, and spectral-lesion effects. Phase III calibrates FARMS and Lanczos against the supplied reference repositories and provides a strictly offline HPC workflow.
+Spectral-Chinchilla trains causal Transformers with controlled compute allocation. It measures random-matrix signatures, level statistics, activation alignment, and spectral-lesion effects. Phase III compares FARMS and Lanczos with the supplied reference repositories. It also gives an offline High-Performance Computing (HPC) workflow.
 
 ## Repository map
 
-- `rmt/` is the pure NumPy/SciPy engine. No accelerator-framework import is permitted in this directory.
+- `rmt/` contains the pure NumPy and SciPy engine. Do not import an accelerator framework in this directory.
 - `models/` contains the decoder-only Transformer and Chinchilla allocator.
-- `pipelines/` contains offline datasets, mixed-precision training, in-device activation covariance, accelerated SVD bridges, lesions, and the centralized CLI.
-- `scripts/download_assets.py` is the explicit connected-node prefetch utility.
-- `run_experiments.py` is the production experiment and plotting runner.
-- `run_hpc.slurm` contains the three paper tracks and the Golden Compute-Optimal RMT track.
-- `differences.md` records all source-level and mathematical reconciliation decisions.
-- `other_requirements.md` defines the air-gap, wheelhouse, asset, and directory contract.
+- `pipelines/` contains offline data, training, activation covariance, SVD bridges, lesions, and the CLI.
+- `scripts/download_assets.py` stages assets on a connected computer.
+- `run_experiments.py` controls experiments and plots.
+- `run_hpc.slurm` contains three paper tracks and the Golden Compute-Optimal RMT track.
+- `differences.md` records source and mathematical reconciliation decisions.
+- `other_requirements.md` specifies the air-gap, wheelhouse, asset, and directory contracts.
 
-## Numerical and safety guarantees
+## Numerical and safety contracts
 
-- Gradient clipping derives its coefficient from an FP64 norm, and token-progress warmup is bounded by the configured peak learning rate.
-- SVD results retain their actual factorization precision. Numerical-rank, overlap, and Porter–Thomas claims are unavailable for unresolved null/repeated bases; real-only APIs reject complex matrices explicitly.
-- MP quantiles, modified-MP fitting, and dimensionless scalar summaries are invariant to finite changes of spectral units.
-- FARMS fit availability is checked on the prepared pooled spectrum. Constant-tail poles and the returned Stieltjes transform use the same resolved recurrence.
-- Reusable lesion factors are content- and analysis-contract-bound, and presets are applied before dependent validation.
+Gradient clipping gets its coefficient from an FP64 norm. Token-progress warmup cannot exceed the selected peak learning rate.
 
-## Guide to run
+SVD results keep the actual factorization precision. Numerical rank, overlap, and Porter-Thomas output is unavailable for an unresolved null or repeated basis. Real-only APIs reject complex matrices.
 
-### 1. Select and inventory the cluster environment
+Finite changes of spectral units do not change MP quantiles, modified-MP fits, or dimensionless scalar summaries. FARMS availability uses the prepared pooled spectrum. Constant-tail poles and the Stieltjes transform use the same recurrence.
 
-The existing ESD jobs use `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`. `run_hpc.slurm` calls that interpreter directly by default; set `RMT_PYTHON` only to select a separately validated prefix or clone. It does not activate a project `.venv`, purge modules, load a Python module, or assume a CUDA module version. Set `RMT_CUDA_MODULE` only when the live environment inventory proves that a site module is required.
+Reusable lesion factors bind to matrix content and the analysis contract. Presets apply before dependent input tests.
 
-Before changing packages, capture `pip freeze --all`, `pip check`, Conda's explicit package list, loaded modules, OS/architecture, compiler, driver, Torch CUDA build, GPU capability, BF16 support, and package versions as described in `other_requirements.md`. Do not downgrade the live ESD stack to the standalone pins without inventory and validation. The sibling Delta3 implementation supports both `np.trapezoid` and NumPy 1.x's `np.trapz`, so NumPy 1.26 is not by itself a known incompatibility; the complete live stack still requires validation.
+## Cluster procedure
 
-`requirements.txt` remains the original **standalone environment** contract. If the live inventory is incompatible, create a separate environment and an inventory-derived, reviewed `requirements-cluster.txt`; never invent that lock from the unpinned ESD requirements or install the standalone pins into `rmt_ml_env` in place. Build any wheelhouse on a connected Linux host matching the cluster's Python ABI, architecture, glibc/libstdc++, and selected Torch/CUDA build. See `other_requirements.md` for the optional standalone and wheelhouse procedures.
+### 1. Record the environment
 
-### 2. Prefetch assets on a connected node
+The existing ESD jobs use `/home/shivansh/.conda/envs/rmt_ml_env/bin/python`. By default, `run_hpc.slurm` calls this interpreter directly. Use `RMT_PYTHON` only for a prefix or clone that passed separate tests.
+
+The launcher does not activate a project `.venv`. It does not purge modules or load a Python module. It does not assume a CUDA module version. Set `RMT_CUDA_MODULE` only if the site requires a module that passed its tests.
+
+Before package changes, record the environment as specified in `other_requirements.md`. Record `pip freeze --all`, `pip check`, the explicit Conda package list, loaded modules, and operating-system data. Also record the compiler, driver, Torch CUDA build, GPU capability, BF16 support, and package versions.
+
+Do not replace packages in the working ESD environment without an inventory and tests. The sibling Delta3 code supports `np.trapezoid` and NumPy 1.x `np.trapz`. Thus, NumPy 1.26 alone is not a known incompatibility. The full stack still requires tests.
+
+`requirements.txt` is the original standalone environment contract. If the cluster stack is incompatible, make a separate environment. Make a reviewed `requirements-cluster.txt` from the inventory and test results. Do not infer that file from unpinned ESD requirements. Do not install standalone pins into `rmt_ml_env` in place.
+
+Build a wheelhouse on a connected Linux host. It must match the cluster Python ABI, architecture, C library, and selected Torch and CUDA build. Read `other_requirements.md` for the standalone and wheelhouse procedures.
+
+### 2. Stage assets on a connected computer
 
 ```bash
 python scripts/download_assets.py --assets all --allow-network
 ```
 
-Before partial staging, the utility verifies both membership and content of every untouched asset family against the existing manifest; it refuses to silently re-certify added, removed, or modified files. Tokenizer snapshots are downloaded into a fresh tree before replacement, so files deleted upstream cannot survive a revision change. Manifest paths are POSIX-relative and portable between Windows staging and Linux execution. This resolves the current dataset and tokenizer repositories to immutable commit SHAs, stages `Salesforce/wikitext` configuration `wikitext-103-raw-v1`, the `openai-community/gpt2` tokenizer, raw JSONL splits, a contiguous integer token array, cache directories, a deterministic synthetic corpus, and `data/asset_manifest.json` with source revisions and SHA-256 checksums.
+Before partial staging, the utility examines unchanged asset families against the manifest. It examines both membership and content. It rejects added, removed, or changed files instead of certifying them again.
 
-Verify a copied asset tree without network access:
+The utility downloads a tokenizer snapshot into a new tree before replacement. Thus, a file that upstream removed cannot stay after a revision change. Manifest paths use relative POSIX syntax and work for Windows staging and Linux use.
+
+The utility resolves the dataset and tokenizer repositories to fixed commit SHAs. It stages `Salesforce/wikitext` configuration `wikitext-103-raw-v1` and the `openai-community/gpt2` tokenizer. It also stages raw JSONL splits, one integer token array, cache directories, and a deterministic synthetic corpus. `data/asset_manifest.json` records source revisions and SHA-256 checksums.
+
+To examine a copied asset tree without network access, enter:
 
 ```bash
 python scripts/download_assets.py --verify-only
 ```
 
-For a compact staging calibration:
+For a small staging calibration, enter:
 
 ```bash
 python scripts/download_assets.py --assets all --allow-network --max-wikitext-tokens 10000000
 ```
 
-Synthetic-only generation performs no network access:
+To make only synthetic data without network access, enter:
 
 ```bash
 python scripts/download_assets.py --assets synthetic --synthetic-tokens 1000000
 ```
 
-### 3. Validate and submit on the air-gapped cluster
+### 3. Do preflight and submit the job
 
-Run these commands from the deployed `compute_optimal_analysis` directory with the selected interpreter. Create `logs/` **before** `sbatch`, because SLURM opens its log files before the script starts.
+Enter these commands from the deployed `compute_optimal_analysis` directory. Use the selected interpreter. Make `logs/` before `sbatch`, because SLURM opens log files before the script starts.
 
 ```bash
 cd /absolute/deployed/path/to/compute_optimal_analysis
@@ -76,9 +88,9 @@ bash -n run_hpc.slurm
 if LC_ALL=C grep -q $'\r' run_hpc.slurm; then echo "run_hpc.slurm is not LF" >&2; exit 2; fi
 ```
 
-Also confirm that `rmt.__file__` resolves to this directory, then perform a short allocated-GPU smoke run covering forward/backward, evaluation, covariance, the requested SVD driver, and lesions. Start with `--no-compile-model`; validate compilation separately before a production launch. A login node without a GPU is not a failed GPU compatibility test.
+Make sure that `rmt.__file__` points to this project. In a short GPU allocation, do forward, backward, evaluation, covariance, SVD-driver, and lesion tests. First use `--no-compile-model`. Do a separate compilation test before production. No GPU on a login node does not show a GPU incompatibility.
 
-`TRACK` selects one batch track; default `all` executes all four sequentially. The known queue is `gpulong`. Submit from this directory (or provide a validated absolute `PROJECT_ROOT`):
+`TRACK` selects one batch track. Its default, `all`, operates all four tracks in sequence. The known queue is `gpulong`. Submit from this directory, or give an absolute `PROJECT_ROOT` that passed its tests:
 
 ```bash
 sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=paper1 run_hpc.slurm
@@ -87,192 +99,212 @@ sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=paper3 run_hpc.slur
 sbatch --chdir="$PWD" --export=ALL,PROJECT_ROOT="$PWD",TRACK=golden run_hpc.slurm
 ```
 
-The launcher requests one process and one GPU; it implements no DDP/FSDP. It validates the interpreter, Python version, local `rmt` import, CUDA/BF16 availability, and staged assets before work. Outputs go to the fresh per-job directory `results/jobs/$SLURM_JOB_ID`; setting `OUTPUT_ROOT` is allowed, but a nonempty or already-owned target is rejected. An intentionally pre-created empty directory is claimed with the launcher's exclusive `.job-owner` file; each child runner then claims its own track directory with `.run-owner.json`. `COMPILE_MODEL=0` disables compilation for calibration. Set `RMT_CUDA_MODULE` only to a module name already validated with this Conda stack. Confirm account/QoS, the 16-CPU request, 24-hour wall time, GPU model, and any longer limit with the site before production.
+The launcher requests one process and one GPU. It does not implement DDP or FSDP. Before work, it examines the interpreter, Python version, local `rmt` import, CUDA, BF16, and staged assets.
 
-### 4. Manifest-only configuration
+Output goes to a new `results/jobs/$SLURM_JOB_ID` directory. `OUTPUT_ROOT` can select another location. The selected location must be absent or empty and unowned.
 
-Omit `--execute` to write allocation and resolved-method manifests without loading data or training. The runner requires an empty/fresh output directory for both manifest and execution modes:
+The launcher claims an intentionally pre-created empty directory with `.job-owner`. Each child runner claims its track directory with `.run-owner.json`. `COMPILE_MODEL=0` turns compilation off for calibration.
+
+For `RMT_CUDA_MODULE`, use only a module that passed its tests. Before production, ask the site about account, QoS, 16 CPUs, 24 hours, GPU model, and longer time limits.
+
+### 4. Write manifests without training
+
+Do not give `--execute` if you only want allocation and method manifests. Manifest and execution modes both require a new or empty output directory.
 
 ```bash
 python run_experiments.py --output-dir results/manifest_check
 ```
 
-### 5. Standalone paper tracks
+### 5. Operate one paper track
 
-These tracks reproduce each paper's analytical protocol on the Spectral-Chinchilla causal-Transformer family. They do not claim byte-identical reproduction of the papers' original checkpoints, datasets, or training histories.
+These tracks apply each paper analysis protocol to the Spectral-Chinchilla Transformer family. They do not reproduce original checkpoints, datasets, or training histories byte for byte.
 
-Staats et al. dual-end overlap and singular-value lesions:
+For Staats et al. dual-end overlap and singular-value lesions, enter:
 
 ```bash
 python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-raw-v1_gpt2.npy --experiment-mode reproduce_paper1 --model-type causal_transformer --aspect-ratio-mode raw --mp-fit-method analytic_mp --spike-detector tracy_widom_95 --overlap-metric staats_dual_end --unfolding-strategy gaussian_kernel --tail-solver rank_ordered_mle --run-spectral-lesioning --lesion-tranches top,bulk,bottom --device cuda --output-dir results/paper1
 ```
 
-Thamm et al. unfolding, NNSD, Brody, number variance, and rigidity:
+For Thamm et al. unfolding, NNSD, Brody, number variance, and rigidity, enter:
 
 ```bash
 python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-raw-v1_gpt2.npy --experiment-mode reproduce_paper2 --model-type causal_transformer --aspect-ratio-mode raw --mp-fit-method thamm_modified_singular --spike-detector tracy_widom_95 --unfolding-strategy polynomial_chebyshev --unfolding-degree 15 --compute-spacing-distribution --compute-number-variance --compute-delta3 --device cuda --output-dir results/paper2
 ```
 
-Martin and Mahoney heavy-tail and empirical MP diagnostics:
+For Martin and Mahoney heavy-tail and empirical MP diagnostics, enter:
 
 ```bash
 python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-raw-v1_gpt2.npy --experiment-mode reproduce_paper3 --model-type causal_transformer --aspect-ratio-mode raw --mp-fit-method kde_bulk_fit --spike-detector tracy_widom_95 --tail-solver clauset_mle --compute-stable-rank --device cuda --output-dir results/paper3
 ```
 
-### 6. Golden Compute-Optimal RMT pipeline
+### 6. Operate the Golden pipeline
 
 ```bash
 python run_experiments.py --execute --dataset-path data/tokenized/wikitext-103-raw-v1_gpt2.npy --experiment-mode compute_optimal_rmt --scaling-budget-flops 1e16 --allocation-ratios 0.25 1.00 4.00 --aspect-ratio-mode farms_normalized --farms-sampling reference_fixed --mp-fit-method lanczos_stieltjes --spike-detector lanczos_poles --lanczos-steps 50 --lanczos-adaptive --lanczos-pole-method reference_ritz --unfolding-strategy spline_monotone --tail-solver clauset_mle --overlap-metric staats_dual_end --run-spectral-lesioning --device cuda --amp-dtype bfloat16 --compile-model --svd-backend cuda --covariance-device cuda --output-dir results/golden_compute_optimal
 ```
 
-## Exhaustive CLI reference
+## CLI reference
 
-Boolean flags use paired `--flag` and `--no-flag` forms. Each paper mode applies its complete documented scientific-method preset; any explicitly supplied option (including `--no-*`) overrides that preset. `custom` uses parser defaults.
+Boolean controls have matching `--flag` and `--no-flag` forms. Each paper mode applies its documented method preset. An explicit option, including `--no-*`, overrides that preset. `custom` uses parser defaults.
 
-### Pipeline control and scaling
+### Pipeline and scaling controls
 
-| Flag | Type and allowed values | Default | Purpose |
+| Flag | Type and permitted values | Default | Function |
 |---|---|---|---|
-| `--experiment-mode` | `reproduce_paper1`, `reproduce_paper2`, `reproduce_paper3`, `compute_optimal_rmt`, `custom` | `compute_optimal_rmt` | Workflow dispatcher and run metadata |
-| `--model-type` | `causal_transformer` | `causal_transformer` | Model family |
-| `--output-dir` | path | `results` | Metrics, manifests, checkpoints, and figures |
-| `--execute` | boolean | false | Train and analyze; false writes manifests only |
-| `--dataset-path` | local NPY/NPZ path | `data/tokenized/wikitext-103-raw-v1_gpt2.npy` | Offline token stream |
-| `--cells` | `all` or comma-separated indices | `all` | Manifest cells to execute |
-| `--scaling-budget-flops` | one or more positive floats | `1e16` | Requested budgets in `C≈6ND` |
-| `--allocation-ratios` | one or more positive floats | `0.25 1.0 4.0` | Undertrained, optimal, and overtrained token multipliers |
-| `--vocab-size` | integer | `50257` | Embedding and output vocabulary |
-| `--parameter-cap` | positive float or omitted | omitted | Explicit local model-size cap |
-| `--max-train-tokens` | positive float or omitted | omitted | Authoritative successful-update target-token budget; finite loaders are recycled |
-| `--allow-collapsed-allocations` | boolean | false | Permit capped calibration cells whose realized N/D designs are identical; otherwise execution rejects them |
+| `--experiment-mode` | `reproduce_paper1`, `reproduce_paper2`, `reproduce_paper3`, `compute_optimal_rmt`, `custom` | `compute_optimal_rmt` | It selects the workflow and metadata. |
+| `--model-type` | `causal_transformer` | `causal_transformer` | It selects the model family. |
+| `--output-dir` | path | `results` | It selects the output directory. |
+| `--execute` | boolean | false | True trains and analyzes. False writes manifests. |
+| `--dataset-path` | local NPY or NPZ path | `data/tokenized/wikitext-103-raw-v1_gpt2.npy` | It selects the offline token stream. |
+| `--cells` | `all` or comma-separated indices | `all` | It selects manifest cells. |
+| `--scaling-budget-flops` | one or more positive floats | `1e16` | It selects budgets in `C≈6ND`. |
+| `--allocation-ratios` | one or more positive floats | `0.25 1.0 4.0` | It selects token multipliers. |
+| `--vocab-size` | integer | `50257` | It sets the embedding and output vocabulary. |
+| `--parameter-cap` | positive float or omitted | omitted | It sets a local model-size limit. |
+| `--max-train-tokens` | positive float or omitted | omitted | It sets the successful-update token target. Finite loaders recycle. |
+| `--allow-collapsed-allocations` | boolean | false | It permits equal realized N/D designs in capped calibration cells. |
 
-### Offline loading and training
+### Offline data and training controls
 
-| Flag | Type and allowed values | Default | Purpose |
+| Flag | Type | Default | Function |
 |---|---|---|---|
-| `--sequence-length` | integer | `256` | Causal training context length |
-| `--batch-size` | integer | `8` | Sequences per optimizer step |
-| `--dataloader-workers` | nonnegative integer | `4` | Local loader workers |
-| `--prefetch-factor` | positive integer | `2` | Batches prefetched per worker |
-| `--pin-memory` | boolean | true | Page-lock host batches for asynchronous transfers |
-| `--learning-rate` | float | `3e-4` | AdamW peak learning rate |
-| `--warmup-steps` | nonnegative integer | `100` | Linear warmup length |
-| `--gradient-clip` | positive float | `1.0` | Global gradient-norm ceiling |
-| `--log-every` | positive integer | `50` | Validation and log interval |
-| `--seed` | integer | `0` | Training, sampling, and diagnostic seed |
+| `--sequence-length` | integer | `256` | It sets the causal context length. |
+| `--batch-size` | integer | `8` | It sets sequences for each optimizer step. |
+| `--dataloader-workers` | nonnegative integer | `4` | It sets local loader workers. |
+| `--prefetch-factor` | positive integer | `2` | It sets prefetched batches for each worker. |
+| `--pin-memory` | boolean | true | It page-locks host batches for asynchronous transfer. |
+| `--learning-rate` | float | `3e-4` | It sets the AdamW peak rate. |
+| `--warmup-steps` | nonnegative integer | `100` | It sets linear warmup length. |
+| `--gradient-clip` | positive float | `1.0` | It sets the global gradient-norm limit. |
+| `--log-every` | positive integer | `50` | It sets the evaluation and log interval. |
+| `--seed` | integer | `0` | It sets seeds for training, sampling, and diagnostics. |
 
-### Hardware acceleration
+### Accelerator controls
 
-| Flag | Type and allowed values | Default | Purpose |
+| Flag | Type and permitted values | Default | Function |
 |---|---|---|---|
-| `--device` | `cuda`, `cpu`, `auto` | `cuda` | Training and inference device |
-| `--amp-dtype` | `float32`, `float16`, `bfloat16` | `bfloat16` | Autocast dtype |
-| `--compile-model` | boolean | true | Enable model compilation for CUDA training |
-| `--compile-mode` | `default`, `reduce-overhead`, `max-autotune` | `default` | Compilation strategy |
-| `--allow-tf32` | boolean | true | Permit TensorFloat-32 matrix multiplication |
-| `--svd-backend` | `auto`, `cuda`, `cpu` | `auto` | SVD execution backend outside the pure engine |
-| `--svd-driver` | `gesvdj`, `gesvd`, `gesvda`, `default` | `gesvdj` | CUDA linear-algebra driver |
-| `--analysis-dtype` | `float32`, `float64` | `float64` | Weight SVD/lesion factorization dtype, independent of training/autocast dtype |
-| `--covariance-device` | `auto`, `cuda`, `cpu` | `auto` | Activation moment-buffer placement |
-| `--covariance-dtype` | `float32`, `float64` | `float32` | Activation moment accumulation dtype |
+| `--device` | `cuda`, `cpu`, `auto` | `cuda` | It selects the training and inference device. |
+| `--amp-dtype` | `float32`, `float16`, `bfloat16` | `bfloat16` | It selects the autocast dtype. |
+| `--compile-model` | boolean | true | It compiles the model for CUDA training. |
+| `--compile-mode` | `default`, `reduce-overhead`, `max-autotune` | `default` | It selects compilation behavior. |
+| `--allow-tf32` | boolean | true | It permits TensorFloat-32 matrix multiplication. |
+| `--svd-backend` | `auto`, `cuda`, `cpu` | `auto` | It selects SVD processing outside the pure engine. |
+| `--svd-driver` | `gesvdj`, `gesvd`, `gesvda`, `default` | `gesvdj` | It selects the CUDA linear-algebra driver. |
+| `--analysis-dtype` | `float32`, `float64` | `float64` | It selects weight and lesion SVD precision. |
+| `--covariance-device` | `auto`, `cuda`, `cpu` | `auto` | It selects activation-buffer placement. |
+| `--covariance-dtype` | `float32`, `float64` | `float32` | It selects activation-moment precision. |
 
-### Diagnostics and lesions
+### Diagnostics and lesion controls
 
-| Flag | Type and allowed values | Default | Purpose |
+| Flag | Type and permitted values | Default | Function |
 |---|---|---|---|
-| `--activation-batches` | integer | `5` | Batches used for covariance estimates |
-| `--validation-batches` | integer | `20` | Batches used for perplexity evaluations |
-| `--activation-centered` | boolean | true | Subtract activation means |
-| `--compute-activation-overlap` | boolean | true | Compute weight/activation alignment |
-| `--compute-spacing-distribution` | boolean | true | Compute unfolded NNSD and Brody beta |
-| `--compute-number-variance` | boolean | true | Compute `Σ²(10)` |
-| `--compute-stable-rank` | boolean | true | Compute stable rank |
-| `--compute-delta3` | boolean | false | Compute Dyson-Mehta `Δ₃(10)` |
-| `--compute-porter-thomas` | boolean | false | Run pooled eigenvector calibration only when the individual singular-vector basis is identifiable; otherwise emit an unavailable status |
-| `--brody-fit-method` | `mle`, `cdf_nls` | `mle` | Brody optimizer |
-| `--number-variance-method` | `sliding`, `monte_carlo` | `sliding` | Number-variance interval estimator |
-| `--run-spectral-lesioning` | boolean | false | Run reversible tranche lesions |
-| `--lesion-tranches` | comma-separated subset of `top,bulk,bottom` | `top,bulk,bottom` | Tranches to remove |
-| `--lesion-fraction` | float in `(0,1]` | `0.05` | Singular-value fraction or energy target |
-| `--lesion-mode` | `count`, `energy` | `count` | Match removed count or Frobenius energy |
-| `--save-checkpoints` | boolean | false | Save model and optimizer states |
+| `--activation-batches` | integer | `5` | It sets batches for covariance estimates. |
+| `--validation-batches` | integer | `20` | It sets batches for perplexity. |
+| `--activation-centered` | boolean | true | It subtracts activation means. |
+| `--compute-activation-overlap` | boolean | true | It computes weight and activation alignment. |
+| `--compute-spacing-distribution` | boolean | true | It computes unfolded NNSD and Brody beta. |
+| `--compute-number-variance` | boolean | true | It computes `Σ²(10)`. |
+| `--compute-stable-rank` | boolean | true | It computes stable rank. |
+| `--compute-delta3` | boolean | false | It computes Dyson-Mehta `Δ₃(10)`. |
+| `--compute-porter-thomas` | boolean | false | It gives pooled calibration only for an identifiable singular-vector basis. |
+| `--brody-fit-method` | `mle`, `cdf_nls` | `mle` | It selects the Brody optimizer. |
+| `--number-variance-method` | `sliding`, `monte_carlo` | `sliding` | It selects the interval estimator. |
+| `--run-spectral-lesioning` | boolean | false | It enables reversible tranche lesions. |
+| `--lesion-tranches` | subset of `top,bulk,bottom` | `top,bulk,bottom` | It selects tranches to remove. |
+| `--lesion-fraction` | float in `(0,1]` | `0.05` | It sets the value fraction or energy target. |
+| `--lesion-mode` | `count`, `energy` | `count` | It selects count or Frobenius-energy matching. |
+| `--save-checkpoints` | boolean | false | It saves model and optimizer states. |
 
-### Scientific method selection
+### Scientific method controls
 
-| Flag | Allowed values | Default | Purpose |
+| Flag | Permitted values | Default | Function |
 |---|---|---|---|
-| `--mp-fit-method` | `analytic_mp`, `thamm_modified_singular`, `kde_bulk_fit`, `lanczos_stieltjes`, `farms_unbiased` | `lanczos_stieltjes` | Bulk support and scale method; `farms_unbiased` requires a FARMS aspect mode, while operator-only methods retain a separately labeled raw domain |
-| `--unfolding-strategy` | `polynomial_chebyshev`, `spline_monotone`, `gaussian_kernel`, `raw_rank_order` | `spline_monotone` | Smooth staircase method |
-| `--tail-solver` | `clauset_mle`, `hill_estimator`, `fixed_cutoff_mle`, `rank_ordered_mle` | `clauset_mle` | Heavy-tail estimator |
-| `--overlap-metric` | `staats_dual_end`, `subspace_principal_angles`, `frobenius_projection` | `staats_dual_end` | Subspace alignment |
-| `--overlap-mode` | same values as overlap metric | same | Compatibility alias |
-| `--aspect-ratio-mode` | `raw`, `farms_normalized`, `farms_unbiased`, `shape_normalized` | `farms_normalized` | Spectrum preprocessing |
-| `--spike-detector` | `tracy_widom_95`, `bbp_transition`, `lanczos_poles` | `lanczos_poles` | Right-spike rule |
-| `--boundary-detector` | `analytic_mp`, `tracy_widom`, `weightwatcher_kde`, `lanczos_stieltjes` | omitted | Joint compatibility selector |
+| `--mp-fit-method` | `analytic_mp`, `thamm_modified_singular`, `kde_bulk_fit`, `lanczos_stieltjes`, `farms_unbiased` | `lanczos_stieltjes` | It selects bulk support and scale. |
+| `--unfolding-strategy` | `polynomial_chebyshev`, `spline_monotone`, `gaussian_kernel`, `raw_rank_order` | `spline_monotone` | It selects the smooth staircase method. |
+| `--tail-solver` | `clauset_mle`, `hill_estimator`, `fixed_cutoff_mle`, `rank_ordered_mle` | `clauset_mle` | It selects the tail estimator. |
+| `--overlap-metric` | `staats_dual_end`, `subspace_principal_angles`, `frobenius_projection` | `staats_dual_end` | It selects subspace alignment. |
+| `--overlap-mode` | values for overlap metric | same | It is a compatibility alias. |
+| `--aspect-ratio-mode` | `raw`, `farms_normalized`, `farms_unbiased`, `shape_normalized` | `farms_normalized` | It selects spectrum preparation. |
+| `--spike-detector` | `tracy_widom_95`, `bbp_transition`, `lanczos_poles` | `lanczos_poles` | It selects the right-spike rule. |
+| `--boundary-detector` | `analytic_mp`, `tracy_widom`, `weightwatcher_kde`, `lanczos_stieltjes` | omitted | It jointly selects a compatible fit and detector. |
 
-### Unfolding, MP, and tail tuning
+`farms_unbiased` requires a FARMS aspect mode. Operator-only methods keep a separately labeled raw domain.
 
-| Flag | Type | Default | Purpose |
+### Unfolding, MP, and tail parameters
+
+| Flag | Type | Default | Function |
 |---|---|---|---|
-| `--polynomial-degree`, `--unfolding-degree` | integer | `15` | Polynomial/Chebyshev degree |
-| `--spline-smoothing` | nonnegative float or omitted | omitted | Spline smoothing penalty |
-| `--gaussian-kernel-window` | integer | `15` | Adaptive Gaussian neighbor window |
-| `--mp-trim-upper` | float in `[0,0.5)` | `0.1` | Upper fraction omitted in scale fitting |
-| `--kde-bandwidth` | positive float or omitted | omitted | Retained historical smoothing diagnostic; MP scale uses an integrated complete-sample ECDF objective including zero-mass rank offsets |
-| `--tail-minimum` | integer at least 2 | `50` | Minimum CSN tail observations |
-| `--tail-fraction` | float in `(0,1]` | `0.1` | Fixed/rank tail fraction |
+| `--polynomial-degree`, `--unfolding-degree` | integer | `15` | They set polynomial degree. |
+| `--spline-smoothing` | nonnegative float or omitted | omitted | It sets the spline penalty. |
+| `--gaussian-kernel-window` | integer | `15` | It sets the Gaussian neighbor window. |
+| `--mp-trim-upper` | float in `[0,0.5)` | `0.1` | It omits an upper fraction during scale fits. |
+| `--kde-bandwidth` | positive float or omitted | omitted | It keeps the historical parameter. The fit uses an integrated ECDF objective. |
+| `--tail-minimum` | integer at least 2 | `50` | It sets the minimum CSN observations. |
+| `--tail-fraction` | float in `(0,1]` | `0.1` | It sets the fixed or rank tail fraction. |
 
-### FARMS tuning
+The ECDF objective uses the full sample and includes zero-mass rank offsets.
 
-The released reference convention is `Q = sampled_columns / sampled_rows`.
+### FARMS parameters
 
-| Flag | Type and allowed values | Default | Purpose |
+The released ratio is `Q = sampled_columns / sampled_rows`.
+
+| Flag | Type and permitted values | Default | Function |
 |---|---|---|---|
-| `--farms-target-aspect-ratio` | positive float | `1.0` | Fixed reference `Q` |
-| `--farms-window-size` | row count or omitted | omitted | Sampled rows |
-| `--farms-row-windows` | positive integer | `5` | Fixed-operation row starts |
-| `--farms-column-windows` | positive integer | `5` | Fixed-operation column starts |
-| `--farms-sampling` | `reference_fixed`, `reference_sliding`, `grid`, `random` | `reference_fixed` | Window-start schedule |
-| `--farms-step-size` | positive integer | `10` | Reference sliding stride |
-| `--farms-normalization` | `canonical`, `raw`, `trace` | `canonical` | Per-window spectrum normalization |
-| `--farms-orient-tall` | boolean | false | Transpose wide source matrices before sampling |
+| `--farms-target-aspect-ratio` | positive float | `1.0` | It sets reference `Q`. |
+| `--farms-window-size` | row count or omitted | omitted | It sets sampled rows. |
+| `--farms-row-windows` | positive integer | `5` | It sets fixed-operation row starts. |
+| `--farms-column-windows` | positive integer | `5` | It sets fixed-operation column starts. |
+| `--farms-sampling` | `reference_fixed`, `reference_sliding`, `grid`, `random` | `reference_fixed` | It selects the start schedule. |
+| `--farms-step-size` | positive integer | `10` | It sets the reference sliding stride. |
+| `--farms-normalization` | `canonical`, `raw`, `trace` | `canonical` | It selects normalization for each window. |
+| `--farms-orient-tall` | boolean | false | It transposes wide source matrices before sampling. |
 
-`raw` reproduces the released pooling of squared singular values. `canonical` divides by the larger window dimension so MP scales are comparable. A constant scaling leaves the heavy-tail exponent unchanged.
+`raw` reproduces pooled squared singular values. `canonical` divides by the larger window dimension for comparable MP scales. Constant scale does not change the heavy-tail exponent.
 
-### Lanczos-Stieltjes tuning
+### Lanczos-Stieltjes parameters
 
-| Flag | Type and allowed values | Default | Purpose |
+| Flag | Type and permitted values | Default | Function |
 |---|---|---|---|
-| `--lanczos-steps` | integer at least 2 | `50` | Maximum recurrence length |
-| `--lanczos-probes` | positive integer | `3` | Independent spherical probes |
-| `--lanczos-tail-window` | integer at least 2 or omitted | omitted | Stable recurrence suffix |
-| `--lanczos-threshold-c` | nonnegative float | `1.0` | Constant in the scale-relative margin `λ+ + c λ+ N^-δ` |
-| `--lanczos-threshold-delta` | float in `(0,0.5)` | `0.25` | Finite-size exponent |
-| `--lanczos-residue-threshold` | nonnegative float | `0.0` | Minimum VEST residue |
-| `--lanczos-ridge` | nonnegative float | `0.0` | Positive-definiteness ridge |
-| `--lanczos-adaptive` | boolean | true | Reference recurrence-stability stopping |
-| `--lanczos-convergence-tolerance` | positive float or omitted | omitted | Absolute stability tolerance |
-| `--lanczos-sequence-length` | positive integer or omitted | omitted | Stability-window length |
-| `--lanczos-check-interval` | positive integer | `2` | Stability-check interval |
-| `--lanczos-pole-method` | `reference_ritz`, `constant_tail` | `reference_ritz` | Finite VEST or extended-tail poles |
+| `--lanczos-steps` | integer at least 2 | `50` | It sets the maximum recurrence length. |
+| `--lanczos-probes` | positive integer | `3` | It sets independent spherical probes. |
+| `--lanczos-tail-window` | integer at least 2 or omitted | omitted | It selects a stable recurrence suffix. |
+| `--lanczos-threshold-c` | nonnegative float | `1.0` | It sets `c` in `λ+ + c λ+ N^-δ`. |
+| `--lanczos-threshold-delta` | float in `(0,0.5)` | `0.25` | It sets the finite-size exponent. |
+| `--lanczos-residue-threshold` | nonnegative float | `0.0` | It sets the minimum VEST residue. |
+| `--lanczos-ridge` | nonnegative float | `0.0` | It sets the positive-definiteness ridge. |
+| `--lanczos-adaptive` | boolean | true | It enables recurrence-stability stopping. |
+| `--lanczos-convergence-tolerance` | positive float or omitted | omitted | It sets the absolute stability tolerance. |
+| `--lanczos-sequence-length` | positive integer or omitted | omitted | It sets the stability-window length. |
+| `--lanczos-check-interval` | positive integer | `2` | It sets the stability test interval. |
+| `--lanczos-pole-method` | `reference_ritz`, `constant_tail` | `reference_ritz` | It selects finite VEST or extended-tail poles. |
 
-## Algorithm-to-CLI map
+## Map from analyses to source
 
-| Analysis family | Implementation | CLI control |
+| Analysis | Source | CLI control |
 |---|---|---|
-| Analytic, Thamm empirical-singular, KDE, FARMS, and Lanczos MP fits | `rmt/mp.py` | `--mp-fit-method` plus tuning flags |
+| Analytic, Thamm, KDE, FARMS, and Lanczos MP fits | `rmt/mp.py` | `--mp-fit-method` and its parameters |
 | Fixed-ratio pooled spectra | `rmt/farms_aspect_ratio.py` | `--aspect-ratio-mode`, `--farms-*` |
 | Lanczos support, VEST density, and spikes | `rmt/lanczos_stieltjes.py` | `--spike-detector`, `--lanczos-*` |
 | CSN, Hill, fixed-cutoff, and rank tails | `rmt/tail.py` | `--tail-solver`, `--tail-*` |
-| Chebyshev, spline, Gaussian, and rank unfolding | `rmt/spacing.py` | `--unfolding-strategy` and tuning flags |
-| Brody, number variance, and `Δ₃` | `rmt/spacing.py` | diagnostic and fit-method flags |
-| Dual-end, angle, and projector overlap | `rmt/overlap.py` | `--overlap-metric`, overlap boolean |
-| Stable rank and Porter-Thomas | `rmt/scalars.py` | scalar diagnostic booleans |
-| Count/energy lesions | `pipelines/spectral_lesioning.py` | lesion and SVD flags |
-| In-device activation covariance | `pipelines/activation_extractor.py` | covariance and activation flags |
+| Chebyshev, spline, Gaussian, and rank unfolding | `rmt/spacing.py` | `--unfolding-strategy` and its parameters |
+| Brody, number variance, and `Δ₃` | `rmt/spacing.py` | Diagnostic and fit controls |
+| Dual-end, angle, and projector overlap | `rmt/overlap.py` | `--overlap-metric` and overlap control |
+| Stable rank and Porter-Thomas | `rmt/scalars.py` | Scalar diagnostic controls |
+| Count or energy lesions | `pipelines/spectral_lesioning.py` | Lesion and SVD controls |
+| Device activation covariance | `pipelines/activation_extractor.py` | Covariance and activation controls |
 
 ## Output contract
 
-Every run first creates `.run-owner.json` with exclusive-create semantics, then writes `allocation_manifest.json`, `spectral_method_config.json`, `run_config.json`, and `runtime_environment.json` through unique atomic temporary files. Manifests distinguish requested and realized tokens-per-parameter ratios, resolve executable token budgets to integer targets, reject budgets that cannot fund one target, and flag collapsed interventions by realized architecture/target rather than requested budget. Collapse rejection applies only to duplicate designs selected by `--cells`; full-manifest collapse metadata is still preserved. Scaling plots group by requested intervention identity and annotate each point's realized ratio. Training records successful-update targets, post-mask attempted targets, positions actually forwarded, skipped attempts, the learning rate applied to each recorded update, a clearly labeled `6ND` approximation, and a forwarded-position compute proxy. Spectral rows separately identify pooled ESD/tail, MP-fit, detector, and single-operator spacing domains and geometries; pooled FARMS levels are never treated as one operator's spacing sequence. The environment record captures package versions, interpreter/platform details, requested precision, CUDA build/device metadata when execution is active, available SLURM identifiers, the staged dataset SHA-256 when present in the asset manifest, and UTC/elapsed timing. Execution additionally writes spectral and lesion CSV files, training JSON Lines, optional checkpoints, ESD/tail plots, spacing plots, overlap heatmaps, lesion-impact plots, and scaling trajectories.
+Each execution first creates `.run-owner.json` with exclusive creation. It writes four JSON records through unique atomic temporary files. They are `allocation_manifest.json`, `spectral_method_config.json`, `run_config.json`, and `runtime_environment.json`.
 
-Synthetic tests calibrate formulas and software behavior; they do not guarantee a trained layer has a power law, a particular Brody parameter, or stronger bottom-than-bulk lesion damage. Those remain measured research outcomes.
+Manifests separate requested and realized token-to-parameter ratios. They convert executable token budgets to integer targets and reject a budget that cannot fund one target. They identify collapsed interventions by realized architecture and target. Collapse rejection applies only to duplicate designs selected by `--cells`. Full-manifest collapse metadata stays available.
+
+Scaling plots group data by requested intervention identity. Each point gives its realized ratio. Training records successful-update targets, attempted targets after masking, forwarded positions, skipped attempts, and the applied learning rate. It records a labeled `6ND` estimate and a forwarded-position compute proxy.
+
+Spectral rows identify separate domains and geometries for ESD, tail, MP fit, detector, and single-operator spacing. The runner does not treat pooled FARMS levels as one operator spacing sequence.
+
+The environment record contains package, interpreter, platform, and requested precision data. During active execution, it also contains CUDA build and device data. It includes available SLURM identifiers, UTC times, elapsed time, and the staged dataset SHA-256 when present.
+
+Execution also writes spectral and lesion CSV files and training JSON Lines. It can write checkpoints. Plots include ESD, tails, spacing, overlap, lesion effects, and scaling trajectories.
+
+Synthetic tests calibrate formulas and software behavior. They do not prove a power law, a selected Brody value, or a lesion order in trained layers. Those values are measured research results.

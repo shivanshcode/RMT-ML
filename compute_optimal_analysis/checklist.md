@@ -1,6 +1,6 @@
 # Verification checklist
 
-## Source-complete gates
+## Source gates
 
 - [x] Requested directory layers and public contracts are documented.
 - [x] Pure RMT modules use NumPy, SciPy, and standard Python only.
@@ -29,33 +29,33 @@
 - [x] Every runner invocation records package, platform, precision, accelerator, and scheduler provenance in `runtime_environment.json`.
 - [x] Phase III governing documents describe the implemented defaults and signatures.
 - [x] Pooled FARMS ESD/tail observations are separated from single-operator spacing, with per-domain geometry and normalization provenance.
-- [x] Tracy--Widom uses operator/window dimensions; production Lanczos margins are scale-relative and serialized.
+- [x] Tracy--Widom uses operator/window dimensions. Production Lanczos margins are scale-relative and serialized.
 - [x] Training, evaluation, lesions, activation covariance, CLI aliases, scaling grouping, and Hill support have v3/v4 regressions.
-- [x] All CO-01..CO-10 findings in `bug_report.md` are fixed: hard-edge-safe MP fitting, scaler recovery, budget-aware scheduling, small-bulk/Lanczos containment, bounded/scale-free tails, qualified overlap, selected-cell collapse checks, and atomic run ownership.
+- [x] All COA-001..COA-016 findings in `bug_report.md` are fixed. Repairs cover MP, scaling, schedules, Lanczos, tails, overlap, collapse, and atomic ownership.
 
 ## Human execution gates
 
-- [ ] Inventory and validate `/home/shivansh/.conda/envs/rmt_ml_env`; do not install standalone `requirements.txt` pins into it in place.
+- [ ] Record `/home/shivansh/.conda/envs/rmt_ml_env` and do its tests. Do not install standalone `requirements.txt` pins into it in place.
 - [ ] If the live stack is incompatible, create a separate environment and archive its reviewed `requirements-cluster.txt` and wheel inventory.
-- [ ] Confirm a case-insensitive source search finds zero occurrences of the prohibited framework name under `rmt/`, including comments and docstrings.
-- [ ] Re-run the full pytest suite with zero failures in the selected cluster environment (local CPU verification is recorded in `bug_report.md`).
+- [ ] Search `rmt/` without case sensitivity. Make sure that the prohibited framework name does not occur in source, comments, or docstrings.
+- [ ] Do the full pytest suite again in the selected cluster environment. It must have zero failures. `bug_report.md` records the local CPU test.
 - [ ] Record the exact NumPy/SciPy/platform versions used for numerical calibration.
-- [ ] Confirm the seeded three-spike detector returns three poles and the edge tolerance is met on the operator's BLAS/LAPACK stack.
-- [ ] Confirm the six-ratio FARMS edge calibration meets the declared two-percent tolerance.
-- [ ] Run the three-by-three IsoFLOP experiment matrix.
-- [ ] Confirm every output row records requested and realized compute.
+- [ ] Apply the seeded three-spike detector. Make sure that it returns three poles and satisfies edge tolerance on the operator BLAS/LAPACK stack.
+- [ ] Apply the six-ratio FARMS edge calibration. Make sure that it satisfies the two-percent tolerance.
+- [ ] Operate the three-by-three IsoFLOP experiment matrix.
+- [ ] Make sure that each output row records requested and realized compute.
 - [ ] Inspect generated plots for labels, normalization, and uncertainty metadata.
-- [ ] Validate lesion results from independently restored checkpoints.
+- [ ] Do tests of lesion results from independently restored checkpoints.
 - [ ] Record hardware, dtype, seed, dataset checksum, and wall-clock metadata.
-- [ ] If installation is needed, build and validate a transitive wheelhouse for the cluster's exact Python ABI, Torch/CUDA build, manylinux ABI, and accelerator architecture.
-- [ ] Run `scripts/download_assets.py --assets all --allow-network` on a connected staging host and verify `data/asset_manifest.json` before transfer.
-- [ ] Run `scripts/download_assets.py --verify-only` after cluster transfer and retain the successful file count in deployment records.
-- [ ] Confirm `gpulong`, account/QoS, CPU/wall-time policy, whether any CUDA/compiler module is needed, and driver compatibility before submitting `run_hpc.slurm`.
-- [ ] Create `logs/` before `sbatch`, verify LF line endings, and submit from this directory with an absolute `PROJECT_ROOT`.
-- [ ] Validate BF16, TF32, compilation, and each requested CUDA SVD driver on the target accelerator.
+- [ ] If installation is necessary, build a transitive wheelhouse. Do a test with the exact cluster Python ABI, Torch/CUDA build, manylinux ABI, and architecture.
+- [ ] On a connected host, enter `scripts/download_assets.py --assets all --allow-network`. Examine `data/asset_manifest.json` before transfer.
+- [ ] After cluster transfer, enter `scripts/download_assets.py --verify-only`. Keep the successful file count in deployment records.
+- [ ] Before submission, make sure of `gpulong`, account, QoS, CPU, time, modules, and driver compatibility.
+- [ ] Create `logs/` before `sbatch`. Make sure that line endings are LF. Submit here with an absolute `PROJECT_ROOT`.
+- [ ] Do tests of BF16, TF32, compilation, and each requested CUDA SVD driver on the target accelerator.
 
 ## Scope notes
 
 - [x] The `codebase*`, `farmscode`, and `lanczoscode` directories are read-only audit inputs. Historical placeholder tokens inside those archives are not maintained-project stubs and are not modified.
-- [x] Trained-layer exponent ranges, FARMS downstream benefit, spectral collapse, and lesion perplexity ordering remain operator-run empirical hypotheses rather than source-completion claims.
-- [x] No dependency installation, project test execution, training, or benchmark process is performed by source generation.
+- [x] Trained-layer exponent ranges, FARMS downstream benefit, spectral collapse, and lesion perplexity ordering remain empirical hypotheses for operator experiments rather than source-completion claims.
+- [x] Source generation does not install dependencies, do tests, train models, or operate benchmarks.
