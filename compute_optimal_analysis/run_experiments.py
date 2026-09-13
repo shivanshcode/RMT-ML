@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import replace
 import hashlib
 from importlib import metadata
 from datetime import datetime, timezone
@@ -97,6 +98,81 @@ def _prepare_spacing_fit(
     except (ValueError, np.linalg.LinAlgError):
         fitted = None
     return values, fitted
+
+
+def _all_mp_curve_fit_fields(
+    weight: np.ndarray,
+    svd: Any,
+    base_config: RMTMethodConfig,
+) -> dict[str, Any]:
+    """Fit every MP implementation and return flat comparison fields."""
+
+    fields: dict[str, Any] = {}
+    methods = (
+        "analytic_mp",
+        "thamm_modified_singular",
+        "kde_bulk_fit",
+        "lanczos_stieltjes",
+        "farms_unbiased",
+    )
+    for method in methods:
+        prefix = f"mp_curve_{method}"
+        aspect_mode = "farms_unbiased" if method == "farms_unbiased" else "raw"
+        config = replace(
+            base_config,
+            mp_fit_method=method,
+            aspect_ratio_mode=aspect_mode,
+        )
+        try:
+            prepared = prepare_spectrum(weight, config, svd=svd)
+            fitted = dispatch_mp_fit(weight, config, svd=svd, prepared=prepared)
+            diagnostics = dict(fitted.diagnostics)
+            available = bool(diagnostics.get("available", True))
+            fields.update(
+                {
+                    f"{prefix}_available": available,
+                    f"{prefix}_domain": (
+                        "raw" if method in {"thamm_modified_singular", "lanczos_stieltjes"}
+                        else prepared.mode
+                    ),
+                    f"{prefix}_aspect_ratio": fitted.aspect_ratio,
+                    f"{prefix}_variance": fitted.variance,
+                    f"{prefix}_sigma": fitted.sigma,
+                    f"{prefix}_lambda_minus": fitted.lambda_minus,
+                    f"{prefix}_lambda_plus": fitted.lambda_plus,
+                    f"{prefix}_ks": fitted.ks_distance,
+                    f"{prefix}_bulk_fraction": fitted.bulk_fraction,
+                    f"{prefix}_lower_outliers": fitted.n_lower_outliers,
+                    f"{prefix}_upper_outliers": fitted.n_upper_outliers,
+                    f"{prefix}_status": diagnostics.get(
+                        "status", diagnostics.get("optimizer_message", "available")
+                    ),
+                    f"{prefix}_diagnostics": json.dumps(
+                        _sanitize_json(diagnostics), sort_keys=True
+                    ),
+                }
+            )
+        except (ValueError, RuntimeError, np.linalg.LinAlgError) as error:
+            fields.update(
+                {
+                    f"{prefix}_available": False,
+                    f"{prefix}_domain": aspect_mode,
+                    f"{prefix}_aspect_ratio": float("nan"),
+                    f"{prefix}_variance": float("nan"),
+                    f"{prefix}_sigma": float("nan"),
+                    f"{prefix}_lambda_minus": float("nan"),
+                    f"{prefix}_lambda_plus": float("nan"),
+                    f"{prefix}_ks": float("nan"),
+                    f"{prefix}_bulk_fraction": float("nan"),
+                    f"{prefix}_lower_outliers": 0,
+                    f"{prefix}_upper_outliers": 0,
+                    f"{prefix}_status": f"unavailable: {error}",
+                    f"{prefix}_diagnostics": json.dumps(
+                        {"available": False, "reason": str(error)}, sort_keys=True
+                    ),
+                }
+            )
+    return fields
 
 
 def _json_value(value: Any) -> Any:
@@ -204,16 +280,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _dataset_asset_manifest(dataset_path: str | Path) -> tuple[Path, Path]:
+    """Find the manifest and its release root for a selected token array."""
+
+    target = Path(dataset_path).resolve()
+    candidates = (
+        target.parent.parent / "asset_manifest.json",
+        Path("data/asset_manifest.json").resolve(),
+    )
+    for manifest_path in candidates:
+        if manifest_path.is_file():
+            return manifest_path, manifest_path.parent.parent
+    raise FileNotFoundError(
+        f"no asset manifest covers the selected dataset location: {target}"
+    )
+
+
 def _verify_dataset_asset(dataset_path: str | Path) -> dict[str, Any]:
     target = Path(dataset_path).resolve()
-    manifest_path = Path("data/asset_manifest.json").resolve()
-    if not manifest_path.is_file():
-        raise FileNotFoundError("data/asset_manifest.json is required for execution")
+    manifest_path, asset_root = _dataset_asset_manifest(target)
     with manifest_path.open("r", encoding="utf-8") as handle:
         manifest = json.load(handle)
     for record in manifest.get("files", []):
         portable = str(record.get("path", "")).replace("\\", "/")
-        candidate = (Path.cwd() / portable).resolve()
+        candidate = (asset_root / portable).resolve()
         if candidate != target:
             continue
         actual_size = target.stat().st_size
@@ -259,8 +349,12 @@ def _runtime_environment(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
     dataset: dict[str, Any] = {"path": str(Path(args.dataset_path).resolve())}
-    asset_manifest = Path("data/asset_manifest.json")
-    if asset_manifest.is_file():
+    try:
+        asset_manifest, asset_root = _dataset_asset_manifest(args.dataset_path)
+    except FileNotFoundError:
+        asset_manifest = None
+        asset_root = None
+    if asset_manifest is not None and asset_root is not None:
         try:
             with asset_manifest.open("r", encoding="utf-8") as handle:
                 staged = json.load(handle)
@@ -269,7 +363,7 @@ def _runtime_environment(args: argparse.Namespace) -> dict[str, Any]:
             dataset_target = Path(args.dataset_path).resolve()
             for record in staged.get("files", []):
                 portable = str(record.get("path", "")).replace("\\", "/")
-                candidate = (Path.cwd() / portable).resolve()
+                candidate = (asset_root / portable).resolve()
                 if candidate == dataset_target:
                     dataset["bytes"] = record.get("bytes")
                     dataset["sha256"] = record.get("sha256")
@@ -421,6 +515,7 @@ def analyze_model(
     compute_stable_rank: bool = True,
     compute_delta3: bool = False,
     compute_porter_thomas: bool = False,
+    all_mp_curve_fits: bool = False,
     brody_fit_method: str = "mle",
     number_variance_method: str = "sliding",
     seed: int = 0,
@@ -781,7 +876,10 @@ def analyze_model(
             "activation_covariance_rank": activation_rank,
             "activation_observation_count": activation_observation_count,
             "activation_accumulation_dtype": activation_accumulation_dtype,
+            "all_mp_curve_fits": all_mp_curve_fits,
         }
+        if all_mp_curve_fits:
+            row.update(_all_mp_curve_fit_fields(weight, svd, method_config))
         rows.append(row)
         artifacts.append(
             {
@@ -1035,8 +1133,13 @@ def execute_cell(
                     "regime": cell["regime"], "kappa": cell["kappa"]}
         with training_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(_sanitize_json(enriched), allow_nan=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+            durable_boundary = (
+                int(record.get("step", 0)) % max(1, args.log_every) == 0
+                or int(record.get("train_tokens", 0)) >= int(cell["training_target_tokens"])
+            )
+            if durable_boundary:
+                handle.flush()
+                os.fsync(handle.fileno())
         if (args.save_checkpoints and int(record.get("optimizer_update", 0))
                 and int(record.get("step", 0)) % max(1, args.log_every) == 0):
             trainer.save_checkpoint(
@@ -1103,6 +1206,7 @@ def execute_cell(
         compute_stable_rank=args.compute_stable_rank,
         compute_delta3=args.compute_delta3,
         compute_porter_thomas=args.compute_porter_thomas,
+        all_mp_curve_fits=args.all_mp_curve_fits,
         brody_fit_method=args.brody_fit_method,
         number_variance_method=args.number_variance_method,
         seed=seed,

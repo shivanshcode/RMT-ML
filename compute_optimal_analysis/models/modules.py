@@ -137,10 +137,13 @@ class CausalSelfAttention(nn.Module):
             torch.zeros_like(probabilities),
         )
         probabilities = F.dropout(probabilities, p=self.dropout, training=self.training)
+        # Use the projection dtype at the output boundary.  Under autocast the
+        # residual stream can stay FP32 while the following projection is BF16;
+        # an FP32 context would make Torch 2.4 Inductor emit a mixed-dtype GEMM.
         with torch.autocast(device_type=query.device.type, enabled=False):
             context = torch.matmul(
                 probabilities, value.to(dtype=score_dtype)
-            ).to(dtype=hidden_states.dtype)
+            ).to(dtype=query.dtype)
         context = context.transpose(1, 2).contiguous().view(batch, sequence, self.d_model)
         output = self.o_proj(context)
         if valid_queries is not None:

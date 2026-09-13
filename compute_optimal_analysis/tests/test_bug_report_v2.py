@@ -95,6 +95,69 @@ def test_analyze_model_records_an_unavailable_spacing_fit(monkeypatch) -> None:
     assert rows[0]["unfolding_status"] == "unavailable: raw-domain MP fit unavailable"
 
 
+def test_all_mp_curve_fit_comparison_dispatches_every_method(monkeypatch) -> None:
+    import run_experiments
+    from rmt.factory import RMTMethodConfig
+
+    calls = []
+
+    def fake_prepare(weight, config, **kwargs):
+        del weight, kwargs
+        calls.append(("prepare", config.mp_fit_method, config.aspect_ratio_mode))
+        return SimpleNamespace(mode=config.aspect_ratio_mode, aspect_ratio=1.0, farms=None)
+
+    def fake_fit(weight, config, **kwargs):
+        del weight, kwargs
+        calls.append(("fit", config.mp_fit_method, config.aspect_ratio_mode))
+        return SimpleNamespace(
+            aspect_ratio=1.0,
+            variance=1.0,
+            sigma=1.0,
+            lambda_minus=0.0,
+            lambda_plus=4.0,
+            ks_distance=0.1,
+            bulk_fraction=0.9,
+            n_lower_outliers=0,
+            n_upper_outliers=1,
+            diagnostics={"available": True},
+        )
+
+    monkeypatch.setattr(run_experiments, "prepare_spectrum", fake_prepare)
+    monkeypatch.setattr(run_experiments, "dispatch_mp_fit", fake_fit)
+    fields = run_experiments._all_mp_curve_fit_fields(
+        np.eye(8),
+        SimpleNamespace(),
+        RMTMethodConfig(
+            mp_fit_method="analytic_mp",
+            aspect_ratio_mode="raw",
+            spike_detector="tracy_widom_95",
+        ),
+    )
+    fitted = [entry[1:] for entry in calls if entry[0] == "fit"]
+    assert fitted == [
+        ("analytic_mp", "raw"),
+        ("thamm_modified_singular", "raw"),
+        ("kde_bulk_fit", "raw"),
+        ("lanczos_stieltjes", "raw"),
+        ("farms_unbiased", "farms_unbiased"),
+    ]
+    assert all(fields[f"mp_curve_{method}_available"] for method, _ in fitted)
+
+
+def test_bfloat16_autocast_passes_projection_dtype_to_attention_output() -> None:
+    attention = CausalSelfAttention(64, 1, 1, rope_theta=None).eval()
+    observed = []
+    handle = attention.o_proj.register_forward_pre_hook(
+        lambda module, inputs: observed.append(inputs[0].dtype)
+    )
+    try:
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            attention(torch.randn(1, 3, 64))
+    finally:
+        handle.remove()
+    assert observed == [torch.bfloat16]
+
+
 def test_fp16_attention_scores_do_not_overflow_before_scaling() -> None:
     torch.manual_seed(4)
     reference = CausalSelfAttention(64, 1, 1, rope_theta=None).eval()
@@ -132,6 +195,23 @@ def test_lanczos_automatic_diagnostics_are_scale_relative() -> None:
     assert np.array_equal(base.iterations, scaled.iterations)
     assert np.array_equal(base.probe_converged, scaled.probe_converged)
     assert scaled.lambda_plus / 1e-20 == pytest.approx(base.lambda_plus, rel=1e-7)
+
+
+def test_experiment_verifies_a_dataset_staged_outside_the_project(
+    tmp_path: Path,
+) -> None:
+    import run_experiments
+
+    release = tmp_path / "scratch-assets"
+    dataset = release / "data" / "tokenized" / "tokens.npy"
+    dataset.parent.mkdir(parents=True)
+    np.save(dataset, np.arange(16, dtype=np.int32))
+    manifest = {"files": download_assets._file_manifest(release)}
+    download_assets._write_json(release / "data" / "asset_manifest.json", manifest)
+
+    verification = run_experiments._verify_dataset_asset(dataset)
+    assert verification["verified"] is True
+    assert Path(verification["manifest"]) == release / "data" / "asset_manifest.json"
 
 
 def test_manifest_verification_rejects_added_and_duplicate_files(tmp_path: Path) -> None:

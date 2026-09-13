@@ -47,10 +47,10 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
-export TORCH_HOME="${PROJECT_ROOT}/cache/torch"
-export HF_HOME="${PROJECT_ROOT}/cache/huggingface"
-export HF_DATASETS_CACHE="${PROJECT_ROOT}/cache/huggingface/datasets"
-export HUGGINGFACE_HUB_CACHE="${PROJECT_ROOT}/cache/huggingface/hub"
+export TORCH_HOME="${TORCH_HOME:-${PROJECT_ROOT}/cache/torch}"
+export HF_HOME="${HF_HOME:-${PROJECT_ROOT}/cache/huggingface}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-${HF_HOME}/datasets}"
+export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-16}"
 export MKL_NUM_THREADS="$OMP_NUM_THREADS"
@@ -62,19 +62,27 @@ export TRITON_CACHE_DIR="${RUNTIME_CACHE}/triton"
 export TMPDIR="${RUNTIME_CACHE}/tmp"
 mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$TMPDIR"
 
-DATASET_PATH="${DATASET_PATH:-${PROJECT_ROOT}/data/tokenized/wikitext-103-raw-v1_gpt2.npy}"
+ASSET_ROOT="${RMT_ASSET_ROOT:-$PROJECT_ROOT}"
+if [[ "$ASSET_ROOT" != /* ]]; then
+    ASSET_ROOT="${PROJECT_ROOT}/${ASSET_ROOT}"
+fi
+DATASET_PATH="${DATASET_PATH:-${ASSET_ROOT}/data/tokenized/wikitext-103-raw-v1_gpt2.npy}"
 if [[ "$DATASET_PATH" != /* ]]; then
     DATASET_PATH="${PROJECT_ROOT}/${DATASET_PATH}"
 fi
 TRACK="${TRACK:-all}"
 COMPILE_MODEL="${COMPILE_MODEL:-1}"
+BUDGET_TEXT="${RMT_SCALING_BUDGETS:-1e16}"
+RATIO_TEXT="${RMT_ALLOCATION_RATIOS:-0.25 1.0 4.0}"
+read -r -a SCALING_BUDGETS <<< "$BUDGET_TEXT"
+read -r -a ALLOCATION_RATIOS <<< "$RATIO_TEXT"
 
 if [[ ! -f "$DATASET_PATH" ]]; then
     echo "Offline token array is missing: $DATASET_PATH" >&2
     exit 2
 fi
-if [[ ! -f data/asset_manifest.json ]]; then
-    echo "Asset manifest is missing: data/asset_manifest.json" >&2
+if [[ ! -f "$ASSET_ROOT/data/asset_manifest.json" ]]; then
+    echo "Asset manifest is missing: $ASSET_ROOT/data/asset_manifest.json" >&2
     exit 2
 fi
 
@@ -127,31 +135,93 @@ print("torch:", torch.__version__, "torch CUDA build:", torch.version.cuda)
 print("GPU:", torch.cuda.get_device_name(0))
 PY
 
-"$PYTHON" scripts/download_assets.py --root "$PROJECT_ROOT" --verify-only
+"$PYTHON" scripts/download_assets.py --root "$ASSET_ROOT" --verify-only
 
 COMMON_ARGS=(
     --execute
     --model-type causal_transformer
     --dataset-path "$DATASET_PATH"
     --vocab-size 50257
+    --scaling-budget-flops "${SCALING_BUDGETS[@]}"
+    --allocation-ratios "${ALLOCATION_RATIOS[@]}"
+    --sequence-length "${RMT_SEQUENCE_LENGTH:-256}"
+    --batch-size "${RMT_BATCH_SIZE:-8}"
+    --dataloader-workers "${RMT_DATALOADER_WORKERS:-4}"
+    --prefetch-factor "${RMT_PREFETCH_FACTOR:-2}"
+    --activation-batches "${RMT_ACTIVATION_BATCHES:-5}"
+    --validation-batches "${RMT_VALIDATION_BATCHES:-20}"
+    --log-every "${RMT_LOG_EVERY:-50}"
     --device cuda
     --amp-dtype bfloat16
     --allow-tf32
-    --svd-backend cuda
-    --svd-driver gesvdj
-    --covariance-device cuda
-    --covariance-dtype float32
+    --svd-backend "${RMT_SVD_BACKEND:-cuda}"
+    --svd-driver "${RMT_SVD_DRIVER:-gesvdj}"
+    --analysis-dtype "${RMT_ANALYSIS_DTYPE:-float64}"
+    --covariance-device "${RMT_COVARIANCE_DEVICE:-cuda}"
+    --covariance-dtype "${RMT_COVARIANCE_DTYPE:-float32}"
     --pin-memory
 )
+case "${RMT_THOROUGH_ANALYSIS:-0}" in
+    1|true|yes)
+        COMMON_ARGS+=(
+            --compute-activation-overlap
+            --compute-spacing-distribution
+            --compute-number-variance
+            --compute-stable-rank
+            --compute-delta3
+            --compute-porter-thomas
+            --all-mp-curve-fits
+            --run-spectral-lesioning
+            --lesion-tranches top,bulk,bottom
+        )
+        ;;
+    0|false|no) ;;
+    *) echo "RMT_THOROUGH_ANALYSIS must be 1/0, true/false, or yes/no" >&2; exit 2 ;;
+esac
 case "$COMPILE_MODEL" in
     1|true|yes) COMMON_ARGS+=(--compile-model) ;;
     0|false|no) COMMON_ARGS+=(--no-compile-model) ;;
     *) echo "COMPILE_MODEL must be 1/0, true/false, or yes/no" >&2; exit 2 ;;
 esac
+MAX_TRAIN_TOKENS="${RMT_MAX_TRAIN_TOKENS:-}"
+if [[ -n "$MAX_TRAIN_TOKENS" && "$MAX_TRAIN_TOKENS" != "full" ]]; then
+    COMMON_ARGS+=(--max-train-tokens "$MAX_TRAIN_TOKENS")
+fi
+case "${RMT_SAVE_CHECKPOINTS:-1}" in
+    1|true|yes) COMMON_ARGS+=(--save-checkpoints) ;;
+    0|false|no) COMMON_ARGS+=(--no-save-checkpoints) ;;
+    *) echo "RMT_SAVE_CHECKPOINTS must be 1/0, true/false, or yes/no" >&2; exit 2 ;;
+esac
+
+ACTIVE_PID=""
+terminate_active_run() {
+    trap - TERM INT
+    if [[ -n "$ACTIVE_PID" ]] && kill -0 "$ACTIVE_PID" 2>/dev/null; then
+        kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+        wait "$ACTIVE_PID" 2>/dev/null || true
+    fi
+    exit 143
+}
+trap terminate_active_run TERM INT
+
+run_python() {
+    if [[ -n "${SLURM_JOB_ID:-}" ]] && command -v srun >/dev/null 2>&1; then
+        srun --ntasks=1 "$@" &
+    else
+        "$@" &
+    fi
+    ACTIVE_PID=$!
+    set +e
+    wait "$ACTIVE_PID"
+    local status=$?
+    set -e
+    ACTIVE_PID=""
+    return "$status"
+}
 
 run_paper1() {
     echo "[Spectral-Chinchilla] Track 1: Staats dual-end overlap and lesions"
-    srun --ntasks=1 "$PYTHON" run_experiments.py \
+    run_python "$PYTHON" run_experiments.py \
         "${COMMON_ARGS[@]}" \
         --experiment-mode reproduce_paper1 \
         --aspect-ratio-mode raw \
@@ -167,7 +237,7 @@ run_paper1() {
 
 run_paper2() {
     echo "[Spectral-Chinchilla] Track 2: Thamm level statistics"
-    srun --ntasks=1 "$PYTHON" run_experiments.py \
+    run_python "$PYTHON" run_experiments.py \
         "${COMMON_ARGS[@]}" \
         --experiment-mode reproduce_paper2 \
         --aspect-ratio-mode raw \
@@ -183,7 +253,7 @@ run_paper2() {
 
 run_paper3() {
     echo "[Spectral-Chinchilla] Track 3: Martin-Mahoney heavy-tail diagnostics"
-    srun --ntasks=1 "$PYTHON" run_experiments.py \
+    run_python "$PYTHON" run_experiments.py \
         "${COMMON_ARGS[@]}" \
         --experiment-mode reproduce_paper3 \
         --aspect-ratio-mode raw \
@@ -196,11 +266,9 @@ run_paper3() {
 
 run_golden() {
     echo "[Spectral-Chinchilla] Track 4: compute-optimal RMT synthesis"
-    srun --ntasks=1 "$PYTHON" run_experiments.py \
+    run_python "$PYTHON" run_experiments.py \
         "${COMMON_ARGS[@]}" \
         --experiment-mode compute_optimal_rmt \
-        --scaling-budget-flops 1e16 \
-        --allocation-ratios 0.25 1.00 4.00 \
         --aspect-ratio-mode farms_normalized \
         --farms-sampling reference_fixed \
         --farms-target-aspect-ratio 1.0 \

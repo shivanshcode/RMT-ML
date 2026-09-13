@@ -389,6 +389,12 @@ def add_pipeline_cli_arguments(parser: argparse.ArgumentParser) -> argparse.Argu
         action=argparse.BooleanOptionalAction,
         default=False,
     )
+    metrics.add_argument(
+        "--all-mp-curve-fits",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="fit all five MP implementations for every analyzed weight matrix",
+    )
     metrics.add_argument("--brody-fit-method", choices=("mle", "cdf_nls"), default="mle")
     metrics.add_argument(
         "--number-variance-method",

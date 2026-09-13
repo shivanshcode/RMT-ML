@@ -109,9 +109,17 @@ The launcher claims an intentionally pre-created empty directory with `.job-owne
 
 For `RMT_CUDA_MODULE`, use only a module that passed its tests. Before production, ask the site about account, QoS, 16 CPUs, 24 hours, GPU model, and longer time limits.
 
-### Local scratch grid
+### Local scratch run for all four tracks
 
-`run_compute_scratch.slurm` writes large outputs, caches, temporary files, and snapshots under `/scratch/$USER/RMT-ML`. The default grid trains nine models from three scaling budgets and three allocation ratios. Each model stops after one million training targets, so this is a capped scaling study instead of a full IsoFLOP execution.
+`run_compute_scratch.slurm` runs Paper 1, Paper 2, Paper 3, and the Golden track in that order. It writes outputs, caches, temporary files, checkpoints, and snapshots under `/scratch/$USER/RMT-ML`. It stages the full WikiText-103 corpus in scratch storage.
+
+Each track uses three design budgets, `2.07e16`, `2.07e17`, and `2.07e18` FLOPs. It combines them with the `0.25`, `1.0`, and `4.0` allocation ratios. Thus, the Golden track trains nine models and the full four-track sequence performs 36 training executions. The realized sizes range from approximately 3.3M to 525M parameters. Each model stops after 20 million training targets by default.
+
+Thorough mode enables activation overlap, spacing, Brody fits, number variance, stable rank, rigidity, Porter-Thomas calibration, and top, bulk, and bottom lesions. It also fits analytic, Thamm, KDE, Lanczos-Stieltjes, and unbiased FARMS MP curves to every analyzed weight matrix. The four tracks retain their prescribed headline methods. This executes all main diagnostic families, but it does not execute every test helper or incompatible cross-product of method settings.
+
+The scratch launcher disables `torch.compile` for Torch 2.4 because its Inductor BF16 graph can emit a mixed-dtype matrix multiplication. Eager CUDA mode still trains and analyzes on the GPU.
+
+Set `RMT_MAX_TRAIN_TOKENS=full` only if you intend to execute the uncapped allocation. That setting requests billions of tokens for some cells and is not a practical one-L4 default.
 
 On the server without Slurm, enter this command from the repository root:
 
@@ -221,6 +229,7 @@ Boolean controls have matching `--flag` and `--no-flag` forms. Each paper mode a
 | `--compute-stable-rank` | boolean | true | It computes stable rank. |
 | `--compute-delta3` | boolean | false | It computes Dyson-Mehta `Δ₃(10)`. |
 | `--compute-porter-thomas` | boolean | false | It gives pooled calibration only for an identifiable singular-vector basis. |
+| `--all-mp-curve-fits` | boolean | false | It fits all five MP implementations to every analyzed weight matrix. |
 | `--brody-fit-method` | `mle`, `cdf_nls` | `mle` | It selects the Brody optimizer. |
 | `--number-variance-method` | `sliding`, `monte_carlo` | `sliding` | It selects the interval estimator. |
 | `--run-spectral-lesioning` | boolean | false | It enables reversible tranche lesions. |

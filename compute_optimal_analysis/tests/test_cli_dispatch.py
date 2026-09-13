@@ -47,6 +47,8 @@ def test_phase_three_golden_defaults_are_resolved() -> None:
     assert parsed.device == "cuda"
     assert parsed.amp_dtype == "bfloat16"
     assert parsed.compile_model
+    assert parsed.all_mp_curve_fits is False
+    assert parse_pipeline_args(["--all-mp-curve-fits"]).all_mp_curve_fits is True
     assert methods.mp_fit_method == "lanczos_stieltjes"
     assert methods.aspect_ratio_mode == "farms_normalized"
     assert methods.spike_detector == "lanczos_poles"
