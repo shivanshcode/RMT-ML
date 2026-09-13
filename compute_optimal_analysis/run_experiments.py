@@ -553,7 +553,13 @@ def analyze_model(
             if method_config.unfolding_strategy == "gaussian_kernel"
             else 10
         )
-        unfolding_status = "not_requested_or_insufficient"
+        unfolding_status = (
+            "not_requested"
+            if not needs_spacing else
+            "unavailable: raw-domain MP fit unavailable"
+            if spacing_mp_fit is None else
+            "insufficient_bulk_levels"
+        )
         # Adjacent-gap ratios need no unfolding and remain available when a
         # polynomial/spline/kernel smoother is unavailable.
         if compute_spacing_distribution and bulk_levels.size >= 3 and float(np.ptp(bulk_levels)) > 0.0:
@@ -728,8 +734,13 @@ def analyze_model(
             "spacing_spectrum_geometry": json.dumps(tuple(map(int, weight.shape))),
             "spacing_spectrum_denominator": svd.normalization,
             "spacing_observation_count": int(spacing_eigenvalues.size),
-            "spacing_bulk_lambda_minus": spacing_mp_fit.lambda_minus,
-            "spacing_bulk_lambda_plus": spacing_mp_fit.lambda_plus,
+            "spacing_bulk_fit_available": spacing_mp_fit is not None,
+            "spacing_bulk_lambda_minus": (
+                float("nan") if spacing_mp_fit is None else spacing_mp_fit.lambda_minus
+            ),
+            "spacing_bulk_lambda_plus": (
+                float("nan") if spacing_mp_fit is None else spacing_mp_fit.lambda_plus
+            ),
             "tail_solver": method_config.tail_solver,
             "tail_alpha_lambda": tail["selected_alpha"],
             "tail_alpha_kind": tail["selected_kind"],

@@ -1,0 +1,441 @@
+=== INSTALLING PYTHON PACKAGES ===
+Requirement already satisfied: pip in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (26.2.1)
+Requirement already satisfied: setuptools in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (84.0.0)
+Requirement already satisfied: wheel in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (0.48.0)
+Requirement already satisfied: packaging>=24.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from wheel) (26.3)
+Looking in indexes: https://download.pytorch.org/whl/cu124
+Collecting torch==2.4.1
+  Downloading torch-2.4.1%2Bcu124-cp311-cp311-linux_x86_64.whl (797.2 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 797.2/797.2 MB 28.5 MB/s  0:00:23
+Collecting filelock (from torch==2.4.1)
+  Downloading filelock-3.32.3-py3-none-any.whl.metadata (2.0 kB)
+Collecting typing-extensions>=4.8.0 (from torch==2.4.1)
+  Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting sympy (from torch==2.4.1)
+  Downloading sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting networkx (from torch==2.4.1)
+  Downloading networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch==2.4.1)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting fsspec (from torch==2.4.1)
+  Downloading fsspec-2026.7.0-py3-none-any.whl.metadata (10 kB)
+Collecting nvidia-cuda-nvrtc-cu12==12.4.99 (from torch==2.4.1)
+  Downloading nvidia_cuda_nvrtc_cu12-12.4.99-py3-none-manylinux2014_x86_64.whl (24.7 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 24.7/24.7 MB 36.0 MB/s  0:00:00
+Collecting nvidia-cuda-runtime-cu12==12.4.99 (from torch==2.4.1)
+  Downloading nvidia_cuda_runtime_cu12-12.4.99-py3-none-manylinux2014_x86_64.whl (883 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 883.4/883.4 kB 58.4 MB/s  0:00:00
+Collecting nvidia-cuda-cupti-cu12==12.4.99 (from torch==2.4.1)
+  Downloading nvidia_cuda_cupti_cu12-12.4.99-py3-none-manylinux2014_x86_64.whl (13.8 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.8/13.8 MB 42.7 MB/s  0:00:00
+Collecting nvidia-cudnn-cu12==9.1.0.70 (from torch==2.4.1)
+  Downloading nvidia_cudnn_cu12-9.1.0.70-py3-none-manylinux2014_x86_64.whl (664.8 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 664.8/664.8 MB 25.5 MB/s  0:00:25
+Collecting nvidia-cublas-cu12==12.4.2.65 (from torch==2.4.1)
+  Downloading nvidia_cublas_cu12-12.4.2.65-py3-none-manylinux2014_x86_64.whl (363.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 363.0/363.0 MB 44.0 MB/s  0:00:08
+Collecting nvidia-cufft-cu12==11.2.0.44 (from torch==2.4.1)
+  Downloading nvidia_cufft_cu12-11.2.0.44-py3-none-manylinux2014_x86_64.whl (211.5 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 211.5/211.5 MB 43.7 MB/s  0:00:04
+Collecting nvidia-curand-cu12==10.3.5.119 (from torch==2.4.1)
+  Downloading nvidia_curand_cu12-10.3.5.119-py3-none-manylinux2014_x86_64.whl (56.3 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.3/56.3 MB 46.8 MB/s  0:00:01
+Collecting nvidia-cusolver-cu12==11.6.0.99 (from torch==2.4.1)
+  Downloading nvidia_cusolver_cu12-11.6.0.99-py3-none-manylinux2014_x86_64.whl (128.4 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 128.4/128.4 MB 47.6 MB/s  0:00:02
+Collecting nvidia-cusparse-cu12==12.3.0.142 (from torch==2.4.1)
+  Downloading nvidia_cusparse_cu12-12.3.0.142-py3-none-manylinux2014_x86_64.whl (207.5 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 207.5/207.5 MB 48.0 MB/s  0:00:04
+Collecting nvidia-nccl-cu12==2.20.5 (from torch==2.4.1)
+  Downloading nvidia_nccl_cu12-2.20.5-py3-none-manylinux2014_x86_64.whl (176.2 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 176.2/176.2 MB 40.6 MB/s  0:00:04
+Collecting nvidia-nvtx-cu12==12.4.99 (from torch==2.4.1)
+  Downloading nvidia_nvtx_cu12-12.4.99-py3-none-manylinux2014_x86_64.whl (99 kB)
+Collecting nvidia-nvjitlink-cu12==12.4.99 (from torch==2.4.1)
+  Downloading nvidia_nvjitlink_cu12-12.4.99-py3-none-manylinux2014_x86_64.whl (21.1 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 21.1/21.1 MB 29.5 MB/s  0:00:00
+Collecting triton==3.0.0 (from torch==2.4.1)
+  Downloading triton-3.0.0-1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (209.4 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 209.4/209.4 MB 33.5 MB/s  0:00:06
+Collecting MarkupSafe>=2.0 (from jinja2->torch==2.4.1)
+  Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy->torch==2.4.1)
+  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading filelock-3.32.3-py3-none-any.whl (98 kB)
+Downloading fsspec-2026.7.0-py3-none-any.whl (206 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Downloading networkx-3.6.1-py3-none-any.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 29.6 MB/s  0:00:00
+Downloading sympy-1.14.0-py3-none-any.whl (6.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.3/6.3 MB 49.4 MB/s  0:00:00
+Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.2/536.2 kB 39.1 MB/s  0:00:00
+Installing collected packages: mpmath, typing-extensions, sympy, nvidia-nvtx-cu12, nvidia-nvjitlink-cu12, nvidia-nccl-cu12, nvidia-curand-cu12, nvidia-cufft-cu12, nvidia-cuda-runtime-cu12, nvidia-cuda-nvrtc-cu12, nvidia-cuda-cupti-cu12, nvidia-cublas-cu12, networkx, MarkupSafe, fsspec, filelock, triton, nvidia-cusparse-cu12, nvidia-cudnn-cu12, jinja2, nvidia-cusolver-cu12, torch
+
+Successfully installed MarkupSafe-3.0.3 filelock-3.32.3 fsspec-2026.7.0 jinja2-3.1.6 mpmath-1.3.0 networkx-3.6.1 nvidia-cublas-cu12-12.4.2.65 nvidia-cuda-cupti-cu12-12.4.99 nvidia-cuda-nvrtc-cu12-12.4.99 nvidia-cuda-runtime-cu12-12.4.99 nvidia-cudnn-cu12-9.1.0.70 nvidia-cufft-cu12-11.2.0.44 nvidia-curand-cu12-10.3.5.119 nvidia-cusolver-cu12-11.6.0.99 nvidia-cusparse-cu12-12.3.0.142 nvidia-nccl-cu12-2.20.5 nvidia-nvjitlink-cu12-12.4.99 nvidia-nvtx-cu12-12.4.99 sympy-1.14.0 torch-2.4.1+cu124 triton-3.0.0 typing-extensions-4.16.0
+Collecting numpy==1.26.4 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 1))
+  Downloading numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (61 kB)
+Collecting scipy==1.13.1 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 2))
+  Downloading scipy-1.13.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (60 kB)
+Requirement already satisfied: torch==2.4.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (2.4.1+cu124)
+Collecting matplotlib==3.9.2 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading matplotlib-3.9.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (11 kB)
+Collecting pytest==8.3.3 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 5))
+  Downloading pytest-8.3.3-py3-none-any.whl.metadata (7.5 kB)
+Collecting datasets==3.0.1 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading datasets-3.0.1-py3-none-any.whl.metadata (20 kB)
+Collecting transformers==4.45.2 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 7))
+  Downloading transformers-4.45.2-py3-none-any.whl.metadata (44 kB)
+Collecting tokenizers==0.20.1 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 8))
+  Downloading tokenizers-0.20.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.7 kB)
+Collecting huggingface-hub==0.25.2 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 9))
+  Downloading huggingface_hub-0.25.2-py3-none-any.whl.metadata (13 kB)
+Collecting safetensors==0.4.5 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 10))
+  Downloading safetensors-0.4.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.8 kB)
+Collecting pyarrow==17.0.0 (from -r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 11))
+  Downloading pyarrow-17.0.0-cp311-cp311-manylinux_2_28_x86_64.whl.metadata (3.3 kB)
+Requirement already satisfied: filelock in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (3.32.3)
+Requirement already satisfied: typing-extensions>=4.8.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (4.16.0)
+Requirement already satisfied: sympy in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (1.14.0)
+Requirement already satisfied: networkx in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (3.6.1)
+Requirement already satisfied: jinja2 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (3.1.6)
+Requirement already satisfied: fsspec in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (2026.7.0)
+Requirement already satisfied: nvidia-cuda-nvrtc-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.4.99)
+Requirement already satisfied: nvidia-cuda-runtime-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.4.99)
+Requirement already satisfied: nvidia-cuda-cupti-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.4.99)
+Requirement already satisfied: nvidia-cudnn-cu12==9.1.0.70 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (9.1.0.70)
+Requirement already satisfied: nvidia-cublas-cu12==12.4.2.65 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.4.2.65)
+Requirement already satisfied: nvidia-cufft-cu12==11.2.0.44 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (11.2.0.44)
+Requirement already satisfied: nvidia-curand-cu12==10.3.5.119 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (10.3.5.119)
+Requirement already satisfied: nvidia-cusolver-cu12==11.6.0.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (11.6.0.99)
+Requirement already satisfied: nvidia-cusparse-cu12==12.3.0.142 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.3.0.142)
+Requirement already satisfied: nvidia-nccl-cu12==2.20.5 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (2.20.5)
+Requirement already satisfied: nvidia-nvtx-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.4.99)
+Requirement already satisfied: nvidia-nvjitlink-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (12.4.99)
+Requirement already satisfied: triton==3.0.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (3.0.0)
+Collecting contourpy>=1.0.1 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading contourpy-1.3.3-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.5 kB)
+Collecting cycler>=0.10 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading cycler-0.12.1-py3-none-any.whl.metadata (3.8 kB)
+Collecting fonttools>=4.22.0 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading fonttools-4.65.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (125 kB)
+Collecting kiwisolver>=1.3.1 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading kiwisolver-1.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (5.2 kB)
+Requirement already satisfied: packaging>=20.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4)) (26.3)
+Collecting pillow>=8 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading pillow-12.3.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+Collecting pyparsing>=2.3.1 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading pyparsing-3.3.2-py3-none-any.whl.metadata (5.8 kB)
+Collecting python-dateutil>=2.7 (from matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting iniconfig (from pytest==8.3.3->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 5))
+  Downloading iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting pluggy<2,>=1.5 (from pytest==8.3.3->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 5))
+  Downloading pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+Collecting dill<0.3.9,>=0.3.0 (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading dill-0.3.8-py3-none-any.whl.metadata (10 kB)
+Collecting pandas (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading pandas-3.0.5-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (79 kB)
+Collecting requests>=2.32.2 (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting tqdm>=4.66.3 (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading tqdm-4.70.1-py3-none-any.whl.metadata (57 kB)
+Collecting xxhash (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading xxhash-4.0.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (17 kB)
+Collecting multiprocess (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading multiprocess-0.70.19-py311-none-any.whl.metadata (7.5 kB)
+Collecting fsspec (from torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3))
+  Downloading fsspec-2024.6.1-py3-none-any.whl.metadata (11 kB)
+Collecting aiohttp (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading aiohttp-3.14.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+Collecting pyyaml>=5.1 (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting regex!=2019.12.17 (from transformers==4.45.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 7))
+  Downloading regex-2026.9.10-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting attrs>=17.3.0 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading multidict-6.8.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+Collecting propcache>=0.2.0 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading propcache-0.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (16 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading yarl-1.24.5-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (103 kB)
+Collecting idna>=2.0 (from yarl<2.0,>=1.17.0->aiohttp->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading idna-3.19-py3-none-any.whl.metadata (9.2 kB)
+Collecting six>=1.5 (from python-dateutil>=2.7->matplotlib==3.9.2->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 4))
+  Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting charset_normalizer<4,>=2 (from requests>=2.32.2->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading charset_normalizer-3.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (45 kB)
+Collecting urllib3<3,>=1.26 (from requests>=2.32.2->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+Collecting certifi>=2023.5.7 (from requests>=2.32.2->datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+Requirement already satisfied: MarkupSafe>=2.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from jinja2->torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (3.0.3)
+INFO: pip is looking at multiple versions of multiprocess to determine which version is compatible with other requirements. This could take a while.
+Collecting multiprocess (from datasets==3.0.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 6))
+  Downloading multiprocess-0.70.18-py311-none-any.whl.metadata (7.5 kB)
+  Downloading multiprocess-0.70.17-py311-none-any.whl.metadata (7.2 kB)
+  Downloading multiprocess-0.70.16-py311-none-any.whl.metadata (7.2 kB)
+Requirement already satisfied: mpmath<1.4,>=1.1.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from sympy->torch==2.4.1->-r /home/sdtt/project/RMT-ML/compute_optimal_analysis/requirements.txt (line 3)) (1.3.0)
+Downloading numpy-1.26.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (18.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 18.3/18.3 MB 45.0 MB/s  0:00:00
+Downloading scipy-1.13.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (38.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 38.6/38.6 MB 50.4 MB/s  0:00:00
+Downloading matplotlib-3.9.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (8.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 8.3/8.3 MB 6.4 MB/s  0:00:01
+Downloading pytest-8.3.3-py3-none-any.whl (342 kB)
+Downloading datasets-3.0.1-py3-none-any.whl (471 kB)
+Downloading transformers-4.45.2-py3-none-any.whl (9.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.9/9.9 MB 50.7 MB/s  0:00:00
+Downloading tokenizers-0.20.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.0/3.0 MB 1.9 MB/s  0:00:01
+Downloading huggingface_hub-0.25.2-py3-none-any.whl (436 kB)
+Downloading safetensors-0.4.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (435 kB)
+Downloading pyarrow-17.0.0-cp311-cp311-manylinux_2_28_x86_64.whl (39.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 39.9/39.9 MB 48.5 MB/s  0:00:00
+Downloading dill-0.3.8-py3-none-any.whl (116 kB)
+Downloading fsspec-2024.6.1-py3-none-any.whl (177 kB)
+Downloading pluggy-1.6.0-py3-none-any.whl (20 kB)
+Downloading aiohttp-3.14.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 39.7 MB/s  0:00:00
+Downloading multidict-6.8.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (272 kB)
+Downloading yarl-1.24.5-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (111 kB)
+Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+Downloading contourpy-1.3.3-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (355 kB)
+Downloading cycler-0.12.1-py3-none-any.whl (8.3 kB)
+Downloading fonttools-4.65.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (5.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.5/5.5 MB 44.6 MB/s  0:00:00
+Downloading frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (231 kB)
+Downloading idna-3.19-py3-none-any.whl (68 kB)
+Downloading kiwisolver-1.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.4/1.4 MB 37.2 MB/s  0:00:00
+Downloading pillow-12.3.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.9/6.9 MB 46.6 MB/s  0:00:00
+Downloading propcache-0.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (58 kB)
+Downloading pyparsing-3.3.2-py3-none-any.whl (122 kB)
+Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (806 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 806.6/806.6 kB 26.7 MB/s  0:00:00
+Downloading regex-2026.9.10-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (802 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 803.0/803.0 kB 28.1 MB/s  0:00:00
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading charset_normalizer-3.5.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (262 kB)
+Downloading urllib3-2.7.0-py3-none-any.whl (131 kB)
+Downloading certifi-2026.7.22-py3-none-any.whl (136 kB)
+Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+Downloading tqdm-4.70.1-py3-none-any.whl (80 kB)
+Downloading iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+Downloading multiprocess-0.70.16-py311-none-any.whl (143 kB)
+Downloading pandas-3.0.5-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (11.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.3/11.3 MB 47.9 MB/s  0:00:00
+Downloading xxhash-4.0.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (261 kB)
+Installing collected packages: xxhash, urllib3, tqdm, six, safetensors, regex, pyyaml, pyparsing, propcache, pluggy, pillow, numpy, multidict, kiwisolver, iniconfig, idna, fsspec, frozenlist, fonttools, dill, cycler, charset_normalizer, certifi, attrs, aiohappyeyeballs, yarl, scipy, requests, python-dateutil, pytest, pyarrow, multiprocess, contourpy, aiosignal, pandas, matplotlib, huggingface-hub, aiohttp, tokenizers, transformers, datasets
+  Attempting uninstall: fsspec
+    Found existing installation: fsspec 2026.7.0
+    Uninstalling fsspec-2026.7.0:
+      Successfully uninstalled fsspec-2026.7.0
+
+Successfully installed aiohappyeyeballs-2.7.1 aiohttp-3.14.3 aiosignal-1.4.0 attrs-26.1.0 certifi-2026.7.22 charset_normalizer-3.5.1 contourpy-1.3.3 cycler-0.12.1 datasets-3.0.1 dill-0.3.8 fonttools-4.65.0 frozenlist-1.8.0 fsspec-2024.6.1 huggingface-hub-0.25.2 idna-3.19 iniconfig-2.3.0 kiwisolver-1.5.1 matplotlib-3.9.2 multidict-6.8.0 multiprocess-0.70.16 numpy-1.26.4 pandas-3.0.5 pillow-12.3.0 pluggy-1.6.0 propcache-0.5.2 pyarrow-17.0.0 pyparsing-3.3.2 pytest-8.3.3 python-dateutil-2.9.0.post0 pyyaml-6.0.3 regex-2026.9.10 requests-2.34.2 safetensors-0.4.5 scipy-1.13.1 six-1.17.0 tokenizers-0.20.1 tqdm-4.70.1 transformers-4.45.2 urllib3-2.7.0 xxhash-4.0.1 yarl-1.24.5
+Requirement already satisfied: torch in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (2.4.1+cu124)
+Requirement already satisfied: transformers in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (4.45.2)
+Collecting accelerate (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 3))
+  Downloading accelerate-1.15.0-py3-none-any.whl.metadata (19 kB)
+Requirement already satisfied: datasets in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (3.0.1)
+Collecting weightwatcher (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading weightwatcher-0.7.7-py3-none-any.whl.metadata (26 kB)
+Collecting powerlaw (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 6))
+  Downloading powerlaw-2.0.0-py3-none-any.whl.metadata (9.9 kB)
+Requirement already satisfied: numpy in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 7)) (1.26.4)
+Requirement already satisfied: pandas in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 8)) (3.0.5)
+Requirement already satisfied: scipy in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 9)) (1.13.1)
+Requirement already satisfied: matplotlib in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (3.9.2)
+Collecting seaborn (from -r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 11))
+  Downloading seaborn-0.13.2-py3-none-any.whl.metadata (5.4 kB)
+Requirement already satisfied: filelock in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (3.32.3)
+Requirement already satisfied: typing-extensions>=4.8.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (4.16.0)
+Requirement already satisfied: sympy in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (1.14.0)
+Requirement already satisfied: networkx in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (3.6.1)
+Requirement already satisfied: jinja2 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (3.1.6)
+Requirement already satisfied: fsspec in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (2024.6.1)
+Requirement already satisfied: nvidia-cuda-nvrtc-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.4.99)
+Requirement already satisfied: nvidia-cuda-runtime-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.4.99)
+Requirement already satisfied: nvidia-cuda-cupti-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.4.99)
+Requirement already satisfied: nvidia-cudnn-cu12==9.1.0.70 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (9.1.0.70)
+Requirement already satisfied: nvidia-cublas-cu12==12.4.2.65 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.4.2.65)
+Requirement already satisfied: nvidia-cufft-cu12==11.2.0.44 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (11.2.0.44)
+Requirement already satisfied: nvidia-curand-cu12==10.3.5.119 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (10.3.5.119)
+Requirement already satisfied: nvidia-cusolver-cu12==11.6.0.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (11.6.0.99)
+Requirement already satisfied: nvidia-cusparse-cu12==12.3.0.142 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.3.0.142)
+Requirement already satisfied: nvidia-nccl-cu12==2.20.5 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (2.20.5)
+Requirement already satisfied: nvidia-nvtx-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.4.99)
+Requirement already satisfied: nvidia-nvjitlink-cu12==12.4.99 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (12.4.99)
+Requirement already satisfied: triton==3.0.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (3.0.0)
+Requirement already satisfied: huggingface-hub<1.0,>=0.23.2 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (0.25.2)
+Requirement already satisfied: packaging>=20.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (26.3)
+Requirement already satisfied: pyyaml>=5.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (6.0.3)
+Requirement already satisfied: regex!=2019.12.17 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (2026.9.10)
+Requirement already satisfied: requests in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (2.34.2)
+Requirement already satisfied: safetensors>=0.4.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (0.4.5)
+Requirement already satisfied: tokenizers<0.21,>=0.20 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (0.20.1)
+Requirement already satisfied: tqdm>=4.27 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (4.70.1)
+Collecting psutil (from accelerate->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 3))
+  Downloading psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+Requirement already satisfied: pyarrow>=15.0.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (17.0.0)
+Requirement already satisfied: dill<0.3.9,>=0.3.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (0.3.8)
+Requirement already satisfied: xxhash in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (4.0.1)
+Requirement already satisfied: multiprocess in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (0.70.16)
+Requirement already satisfied: aiohttp in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (3.14.3)
+Collecting matplotlib-inline (from weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading matplotlib_inline-0.2.2-py3-none-any.whl.metadata (2.4 kB)
+Collecting scikit-learn (from weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading scikit_learn-1.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.3 kB)
+Requirement already satisfied: mpmath in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from powerlaw->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 6)) (1.3.0)
+Requirement already satisfied: python-dateutil>=2.8.2 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from pandas->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 8)) (2.9.0.post0)
+Requirement already satisfied: contourpy>=1.0.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (1.3.3)
+Requirement already satisfied: cycler>=0.10 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (0.12.1)
+Requirement already satisfied: fonttools>=4.22.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (4.65.0)
+Requirement already satisfied: kiwisolver>=1.3.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (1.5.1)
+Requirement already satisfied: pillow>=8 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (12.3.0)
+Requirement already satisfied: pyparsing>=2.3.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from matplotlib->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 10)) (3.3.2)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (2.7.1)
+Requirement already satisfied: aiosignal>=1.4.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (6.8.0)
+Requirement already satisfied: propcache>=0.2.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (1.24.5)
+Requirement already satisfied: idna>=2.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from yarl<2.0,>=1.17.0->aiohttp->datasets->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 4)) (3.19)
+Requirement already satisfied: six>=1.5 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from python-dateutil>=2.8.2->pandas->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 8)) (1.17.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from requests->transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (3.5.1)
+Requirement already satisfied: urllib3<3,>=1.26 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from requests->transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (2.7.0)
+Requirement already satisfied: certifi>=2023.5.7 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from requests->transformers->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 2)) (2026.7.22)
+Requirement already satisfied: MarkupSafe>=2.0 in /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages (from jinja2->torch->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 1)) (3.0.3)
+Collecting traitlets (from matplotlib-inline->weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading traitlets-5.16.1-py3-none-any.whl.metadata (10 kB)
+Collecting joblib>=1.4.0 (from scikit-learn->weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading joblib-1.6.0-py3-none-any.whl.metadata (6.5 kB)
+Collecting narwhals>=2.0.1 (from scikit-learn->weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading narwhals-2.26.0-py3-none-any.whl.metadata (15 kB)
+Collecting threadpoolctl>=3.5.0 (from scikit-learn->weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading threadpoolctl-3.6.0-py3-none-any.whl.metadata (13 kB)
+Collecting cloudpickle>=3.0 (from joblib>=1.4.0->scikit-learn->weightwatcher->-r /home/sdtt/project/RMT-ML/remote-sk-random-matrix-ml-esd-fixed/requirements.txt (line 5))
+  Downloading cloudpickle-3.1.2-py3-none-any.whl.metadata (7.1 kB)
+Downloading accelerate-1.15.0-py3-none-any.whl (394 kB)
+Downloading weightwatcher-0.7.7-py3-none-any.whl (83 kB)
+Downloading powerlaw-2.0.0-py3-none-any.whl (191 kB)
+Downloading seaborn-0.13.2-py3-none-any.whl (294 kB)
+Downloading matplotlib_inline-0.2.2-py3-none-any.whl (9.5 kB)
+Downloading psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+Downloading scikit_learn-1.9.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (9.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.3/9.3 MB 45.5 MB/s  0:00:00
+Downloading joblib-1.6.0-py3-none-any.whl (306 kB)
+Downloading cloudpickle-3.1.2-py3-none-any.whl (22 kB)
+Downloading narwhals-2.26.0-py3-none-any.whl (474 kB)
+Downloading threadpoolctl-3.6.0-py3-none-any.whl (18 kB)
+Downloading traitlets-5.16.1-py3-none-any.whl (86 kB)
+Installing collected packages: traitlets, threadpoolctl, psutil, narwhals, cloudpickle, matplotlib-inline, joblib, seaborn, scikit-learn, powerlaw, weightwatcher, accelerate
+
+Successfully installed accelerate-1.15.0 cloudpickle-3.1.2 joblib-1.6.0 matplotlib-inline-0.2.2 narwhals-2.26.0 powerlaw-2.0.0 psutil-7.2.2 scikit-learn-1.9.1 seaborn-0.13.2 threadpoolctl-3.6.0 traitlets-5.16.1 weightwatcher-0.7.7
+=== PACKAGE CHECK ===
+No broken requirements found.
+=== GPU ===
+Sun Sep 13 13:43:19 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.163.01             Driver Version: 550.163.01     CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA L4                      Off |   00000000:12:00.0 Off |                    0 |
+| N/A   73C    P0             43W /   72W |     342MiB /  23034MiB |     66%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA L4                      Off |   00000000:26:00.0 Off |                    0 |
+| N/A   42C    P8             16W /   72W |      17MiB /  23034MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   2  NVIDIA L4                      Off |   00000000:9F:00.0 Off |                    0 |
+| N/A   43C    P8             16W /   72W |      17MiB /  23034MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A      3030      G   /usr/libexec/Xorg                               4MiB |
+|    0   N/A  N/A   1847933      C   python                                        320MiB |
+|    1   N/A  N/A      3030      G   /usr/libexec/Xorg                               4MiB |
+|    2   N/A  N/A      3030      G   /usr/libexec/Xorg                               4MiB |
++-----------------------------------------------------------------------------------------+
+SLURM_JOB_ID=not-set
+CUDA_VISIBLE_DEVICES=not-set
+=== PYTORCH GPU TEST ===
+torch: 2.4.1+cu124
+torch CUDA build: 12.4
+CUDA available: True
+GPU: NVIDIA L4
+capability: (8, 9)
+BF16 supported: True
+CUDA SVD, BF16 backward, and torch.compile passed
+=== COMPUTE OPTIMAL ANALYSIS TESTS ===
+........................................................................ [ 78%]
+....................                                                     [100%]
+=============================== warnings summary ===============================
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+  /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages/matplotlib/_fontconfig_pattern.py:64: PyparsingDeprecationWarning: 'oneOf' deprecated - use 'one_of'
+    prop = Group((name + Suppress("=") + comma_separated(value)) | oneOf(_CONSTANTS))
+
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+  /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages/matplotlib/_fontconfig_pattern.py:85: PyparsingDeprecationWarning: 'parseString' deprecated - use 'parse_string'
+    parse = parser.parseString(pattern)
+
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+  /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages/matplotlib/_fontconfig_pattern.py:89: PyparsingDeprecationWarning: 'resetCache' deprecated - use 'reset_cache'
+    parser.resetCache()
+
+tests/test_bug_report_v2.py::test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient
+  /home/sdtt/micromamba/envs/rmt-ml/lib/python3.11/site-packages/matplotlib/_mathtext.py:45: PyparsingDeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+92 passed, 14 warnings in 48.20s
+=== RMT TESTS ===
+........................................................................ [ 55%]
+.........................................................                [100%]
+129 passed in 623.98s (0:10:23)
+[13:55:29] rmt.selftest INFO: selftest mp_pdf_norm                  PASS
+[13:55:29] rmt.selftest INFO: selftest sigma_recovery               PASS
+[13:55:29] rmt.selftest INFO: selftest csn_pareto                   PASS
+[13:55:29] rmt.selftest INFO: selftest hill_windowed_discriminates  PASS
+[13:55:29] rmt.selftest INFO: selftest r_goe                        PASS
+[13:55:29] rmt.selftest INFO: selftest r_poisson                    PASS
+[13:55:29] rmt.selftest INFO: selftest nn_spacing_goe               PASS
+[13:55:29] rmt.selftest INFO: selftest fm_key                       PASS
+[13:55:29] rmt.selftest INFO: selftest overall: PASS
+=== STORAGE ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sdb3       500G  472G   29G  95% /home
+=== ALL TESTS PASSED ===

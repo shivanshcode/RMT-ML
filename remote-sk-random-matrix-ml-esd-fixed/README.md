@@ -49,6 +49,61 @@ Real-text analysis stops if it cannot load the matching tokenizer. For synthetic
 python -m rmt --models ./models/tiny-test --allow_fallback_text --allow_fallback_tokenizer
 ```
 
+## Frontier model sweep
+
+`frontier_models.json` contains the reviewed model list. The default list contains public causal language models with compatible projection layouts. Qwen3.5 and Qwen3.8 are not in the executable list because their hybrid DeltaNet matrices need a new scientific mapping.
+
+The analysis does not generate text or apply a chat template. Thus, Qwen thinking mode is not active. Perplexity measures the next-token logits for raw WikiText-2.
+
+Keep the pinned compute environment unchanged. Make a small overlay environment for the newer model loaders:
+
+```bash
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate rmt-ml
+if [[ ! -x "$HOME/venvs/rmt-frontier/bin/python" ]]; then
+    python -m venv --system-site-packages "$HOME/venvs/rmt-frontier"
+fi
+"$HOME/venvs/rmt-frontier/bin/python" -m pip install \
+    -r requirements-frontier.txt
+"$HOME/venvs/rmt-frontier/bin/python" -m pip check
+```
+
+The sweep downloads one pinned model snapshot at a time. It deletes that model after all selected tasks finish or after a task fails. A restart skips each task that has a matching `complete.json` record.
+
+By default, weight analysis covers all layers in two-layer tasks. Decile perplexity covers the first, middle, and final layers in separate one-layer tasks. Use `--decile-layer-strategy all` only when the extra run time is acceptable.
+
+First, display the plan:
+
+```bash
+$HOME/venvs/rmt-frontier/bin/python -m rmt.frontier_sweep --dry-run
+```
+
+Set the results and snapshot roots before the full run. Put the snapshot root on a separate filesystem when one is available:
+
+```bash
+export RMT_RESULTS_ROOT=/path/to/scratch/rmt-results
+export RMT_MODELS_ROOT=/path/to/scratch/rmt-models
+export RMT_TMPDIR=/path/to/scratch/rmt-tmp
+export RMT_SNAPSHOT_ROOT=/path/to/backup/rmt-snapshots
+nohup "$HOME/venvs/rmt-frontier/bin/python" -m rmt.frontier_sweep \
+    --gpu-index 1 \
+    --layers-per-task 2 \
+    --decile-layer-strategy representative \
+    --snapshot-interval 3600 \
+    > frontier-sweep.log 2>&1 &
+echo $!
+```
+
+The sweep makes an incremental snapshot each hour and after each task. Unchanged files share storage between snapshots. A snapshot on `/home` protects against a stopped process, but it does not protect against loss of the `/home` filesystem.
+
+The optional 8B entries require BF16 to fit one 23 GiB L4. BF16 reduces the fidelity of the smallest singular values. Enter `--include-optional` only after a calibration run and a storage increase.
+
+For models up to 4B, request at least 100 GiB of scratch storage. For a future Qwen3.8-27B implementation, request 250 GiB because its checkpoint alone is approximately 55.6 GB. That model also needs a multi-GPU loader and a DeltaNet analysis before this tool can evaluate it.
+
+If `/scratch/$USER` is writable, `run_frontier_scratch.slurm` puts models, temporary files, results, caches, and snapshots there. It runs Qwen3-4B-Instruct by default. From the repository root, enter `GPU_INDEX=1 bash launch_batch.sh frontier-scratch`.
+
+The optional Qwen3-8B run uses the same file. Set `RMT_FRONTIER_MODELS=qwen3-8b-exploratory` before the launch command. This run uses BF16 and can still exceed one L4 during a large FP64 factorization.
+
 ## Output for each model
 
 For each model `<tag>`, the tool writes these artifacts:

@@ -109,6 +109,18 @@ The launcher claims an intentionally pre-created empty directory with `.job-owne
 
 For `RMT_CUDA_MODULE`, use only a module that passed its tests. Before production, ask the site about account, QoS, 16 CPUs, 24 hours, GPU model, and longer time limits.
 
+### Local scratch grid
+
+`run_compute_scratch.slurm` writes large outputs, caches, temporary files, and snapshots under `/scratch/$USER/RMT-ML`. The default grid trains nine models from three scaling budgets and three allocation ratios. Each model stops after one million training targets, so this is a capped scaling study instead of a full IsoFLOP execution.
+
+On the server without Slurm, enter this command from the repository root:
+
+```bash
+GPU_INDEX=1 bash launch_batch.sh compute-scratch
+```
+
+The launcher returns the terminal prompt and writes its log under `local-job-logs/`. Enter `bash launch_batch.sh status` to see whether it still runs. The launcher refuses to start while another local RMT job runs.
+
 ### 4. Write manifests without training
 
 Do not give `--execute` if you only want allocation and method manifests. Manifest and execution modes both require a new or empty output directory.

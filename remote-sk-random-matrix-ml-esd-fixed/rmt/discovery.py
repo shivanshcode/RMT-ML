@@ -2,8 +2,9 @@
 
 Walks ``model.named_modules()``, classifies Linear / Conv1D weights into short
 roles (Q/K/V/O/G/U/D…), skips embeddings and the LM head, and splits fused QKV
-projections.  Registry covers llama, gpt_neox/pythia, qwen2/qwen3, bert, gpt2,
-plus a never-None generic fallback.
+projections. The registry covers Llama-like, GPT-NeoX/Pythia, Qwen2/Qwen3,
+BERT, and GPT-2 models. Unknown models use a generic fallback. Known hybrid
+architectures with incompatible projection semantics stop with an error.
 
 QKV LAYOUT (important).  Two conventions exist for a fused QKV weight of shape
 (3·d, d_in):
@@ -154,6 +155,9 @@ _GENERIC = ModelSpec(
 _REGISTRY = {
     "mixtral": _MIXTRAL,
     "llama": _LLAMA, "mistral": _LLAMA,
+    "granite": _LLAMA, "olmo2": _LLAMA, "olmo": _LLAMA,
+    "smollm3": _LLAMA, "gemma3_text": _LLAMA, "gemma2": _LLAMA,
+    "gemma": _LLAMA,
     "gpt_neox": _PYTHIA, "pythia": _PYTHIA, "gptneox": _PYTHIA,
     "qwen2": _QWEN, "qwen3": _QWEN, "qwen": _QWEN,
     "bert": _BERT, "roberta": _BERT,
@@ -161,8 +165,16 @@ _REGISTRY = {
 }
 
 
+_INCOMPATIBLE_MODEL_TYPE_PREFIXES = {
+    "qwen3_5": (
+        "Qwen3.5 and Qwen3.8 use hybrid DeltaNet projections. Their in_proj_qkv "
+        "matrices do not satisfy this tool's equal Q/K/V projection contract."
+    ),
+}
+
+
 def get_model_spec(model_or_config_or_name) -> ModelSpec:
-    """Resolve a ModelSpec from a model, a config, or a name string. Never None."""
+    """Resolve a model specification or reject a known incompatible model."""
     mt = None
     obj = model_or_config_or_name
     if isinstance(obj, str):
@@ -175,6 +187,9 @@ def get_model_spec(model_or_config_or_name) -> ModelSpec:
             if archs:
                 mt = str(archs[0]).lower()
     mt = mt or ""
+    for prefix, reason in _INCOMPATIBLE_MODEL_TYPE_PREFIXES.items():
+        if mt.startswith(prefix):
+            raise ValueError(reason)
     for key, spec in _REGISTRY.items():
         if key in mt:
             return spec

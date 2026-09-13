@@ -48,6 +48,53 @@ def test_spacing_fit_is_skipped_when_disabled_or_rank_is_insufficient(monkeypatc
     assert called is False
 
 
+def test_analyze_model_records_an_unavailable_spacing_fit(monkeypatch) -> None:
+    import run_experiments
+    from rmt.factory import RMTMethodConfig
+
+    class OneMatrixModel:
+        def __init__(self):
+            self.parameter = nn.Parameter(torch.randn(32, 32, dtype=torch.float64))
+
+        def iter_spectral_weights(self):
+            yield "layers.0.q_proj.weight", self.parameter
+
+    def unavailable_spacing(weight, raw_eigenvalues, *args, **kwargs):
+        del weight, args, kwargs
+        return raw_eigenvalues, None
+
+    monkeypatch.setattr(run_experiments, "_prepare_spacing_fit", unavailable_spacing)
+    cell = {
+        "cell_index": 0,
+        "compute_budget": 1.0,
+        "regime": "calibration",
+        "kappa": 1.0,
+        "requested_parameters": 1024.0,
+        "realized_parameters": 1024.0,
+        "requested_tokens": 100.0,
+        "realized_tokens": 100.0,
+        "realized_training_compute": 1.0,
+    }
+    rows, _ = run_experiments.analyze_model(
+        OneMatrixModel(),
+        {},
+        cell,
+        RMTMethodConfig(
+            mp_fit_method="analytic_mp",
+            aspect_ratio_mode="raw",
+            spike_detector="tracy_widom_95",
+            tail_minimum=10,
+        ),
+        svd_backend="cpu",
+        compute_activation_overlap=False,
+    )
+    assert len(rows) == 1
+    assert rows[0]["spacing_bulk_fit_available"] is False
+    assert np.isnan(rows[0]["spacing_bulk_lambda_minus"])
+    assert np.isnan(rows[0]["spacing_bulk_lambda_plus"])
+    assert rows[0]["unfolding_status"] == "unavailable: raw-domain MP fit unavailable"
+
+
 def test_fp16_attention_scores_do_not_overflow_before_scaling() -> None:
     torch.manual_seed(4)
     reference = CausalSelfAttention(64, 1, 1, rope_theta=None).eval()

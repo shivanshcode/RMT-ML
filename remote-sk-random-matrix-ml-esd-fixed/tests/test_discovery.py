@@ -24,6 +24,21 @@ def test_get_model_spec_generic_fallback():
     assert spec.patterns is D.MATRIX_PATTERNS
 
 
+def test_frontier_llama_like_registrations():
+    for model_type in ("granite", "olmo2", "smollm3", "gemma3_text"):
+        spec = D.get_model_spec(model_type)
+        assert spec.name == "llama"
+        assert D.classify("model.layers.2.self_attn.q_proj", spec) == "Q"
+        assert D.classify("model.layers.2.mlp.down_proj", spec) == "D"
+
+
+def test_qwen35_hybrid_is_rejected_instead_of_partially_analyzed():
+    with pytest.raises(ValueError, match="hybrid DeltaNet"):
+        D.get_model_spec("qwen3_5")
+    with pytest.raises(ValueError, match="hybrid DeltaNet"):
+        D.get_model_spec("qwen3_5_text")
+
+
 def test_classify_llama():
     spec = D.get_model_spec("llama")
     assert D.classify("model.layers.0.self_attn.q_proj", spec) == "Q"
