@@ -161,7 +161,9 @@ python scripts/download_assets.py --assets all --allow-network
     scripts/download_assets.py --root "$PROJECT_ROOT" --verify-only
 ```
 
-The default stream is `data/tokenized/wikitext-103-raw-v1_gpt2.npy`. Its vocabulary size is 50257. Copy `data/asset_manifest.json` and each listed file. The local examination covers the full manifest.
+The default stream is `data/tokenized/wikitext-103-raw-v1_gpt2.npy`. Its vocabulary size is 50257. Copy `data/asset_manifest.json` and each listed file. The local examination compares all `data/` files with the manifest.
+
+Staging builds a separate release and examines it before publication. A staging lock permits one publisher. If publication fails, the utility restores the previous `data/` tree.
 
 Do not mix tokenizer identities. For a custom corpus, record identity, vocabulary, split rules, sizes, and SHA-256 checksums. Synthetic data supports software calibration only. Do not use it for language-model claims.
 

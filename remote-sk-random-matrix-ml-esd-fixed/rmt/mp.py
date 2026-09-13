@@ -50,16 +50,19 @@ def mp_pdf(x, n, m, sigma) -> np.ndarray:
     """
     x = np.asarray(x, dtype=np.float64)
     mx, mn = max(n, m), min(n, m)
+    scale = float(sigma) * np.sqrt(mx)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("sigma must give a finite positive spectral scale")
     q = mx / mn
-    sig_t = sigma * np.sqrt(mx)
-    nu_minus, nu_plus = _edges(n, m, sigma)
-
+    ratio = np.sqrt(mn / mx)
+    lower, upper = 1.0 - ratio, 1.0 + ratio
+    normalized = x / scale
     out = np.zeros_like(x)
-    inside = (x > nu_minus) & (x < nu_plus) & (x > 0)
-    xi = x[inside]
-    rad = (nu_plus**2 - xi**2) * (xi**2 - nu_minus**2)
+    inside = (normalized > lower) & (normalized < upper) & (normalized > 0.0)
+    xi = normalized[inside]
+    rad = (upper**2 - xi**2) * (xi**2 - lower**2)
     rad = np.clip(rad, 0.0, None)
-    out[inside] = q / (np.pi * sig_t**2 * xi) * np.sqrt(rad)
+    out[inside] = (q / (np.pi * xi) * np.sqrt(rad)) / scale
     return out if out.shape else float(out)
 
 
@@ -70,21 +73,26 @@ def mp_bounds(n, m, sigma) -> Tuple[float, float]:
 
 def mp_cdf(x, n, m, sigma):
     """CDF of mp_pdf; 0 below ν₋, 1 above ν₊ (Gauss–Legendre quadrature)."""
-    nu_minus, nu_plus = _edges(n, m, sigma)
+    mx, mn = max(n, m), min(n, m)
+    scale = float(sigma) * np.sqrt(mx)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("sigma must give a finite positive spectral scale")
+    ratio = np.sqrt(mn / mx)
+    lower, upper = 1.0 - ratio, 1.0 + ratio
     scalar = np.isscalar(x)
-    xa = np.atleast_1d(np.asarray(x, dtype=np.float64))
+    xa = np.atleast_1d(np.asarray(x, dtype=np.float64)) / scale
     out = np.empty_like(xa)
-    # 200-node Gauss-Legendre on [nu_minus, t] per query (vectorised mapping).
     nodes, wts = np.polynomial.legendre.leggauss(200)
     for i, t in enumerate(xa):
-        if t <= nu_minus:
+        if t <= lower:
             out[i] = 0.0
-        elif t >= nu_plus:
+        elif t >= upper:
             out[i] = 1.0
         else:
-            a, b = nu_minus, t
+            a, b = lower, t
             xm = 0.5 * (b - a) * nodes + 0.5 * (b + a)
-            out[i] = 0.5 * (b - a) * np.sum(wts * mp_pdf(xm, n, m, sigma))
+            unit_density = np.asarray(mp_pdf(xm, n, m, 1.0 / np.sqrt(mx)))
+            out[i] = 0.5 * (b - a) * np.sum(wts * unit_density)
     out = np.clip(out, 0.0, 1.0)
     return float(out[0]) if scalar else out
 
@@ -255,9 +263,13 @@ def small_sv_deviation(s, n, m, sigma) -> dict:
     nu_minus, nu_plus = _edges(n, m, sigma)
 
     n_below_minus = int(np.sum(s < nu_minus))
-    total_energy = float(np.sum(s**2))
-    frac_mass_below_minus = (float(np.sum(s[s < nu_minus] ** 2)) / total_energy
-                             if total_energy > 0 else 0.0)
+    energy_scale = float(np.max(s)) if s.size else 0.0
+    normalized_energy = np.square(s / energy_scale) if energy_scale > 0.0 else np.zeros_like(s)
+    total_energy = float(np.sum(normalized_energy))
+    frac_mass_below_minus = (
+        float(np.sum(normalized_energy[s < nu_minus])) / total_energy
+        if total_energy > 0 else 0.0
+    )
 
     # Solve in normalized units; a linear-support fallback is not an MP
     # quantile and silently changes the scientific diagnostic.

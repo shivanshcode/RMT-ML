@@ -295,8 +295,8 @@ def prepare_spectrum(
     )
 
 
-def _qualified_raw_eigenvalues(matrix: np.ndarray, values: np.ndarray,
-                               svd: Any | None) -> np.ndarray:
+def qualified_raw_eigenvalues(matrix: np.ndarray, values: np.ndarray,
+                              svd: Any | None) -> np.ndarray:
     """Zero modes below the factorization's relative resolution."""
 
     result = np.asarray(values, dtype=np.float64).copy()
@@ -347,7 +347,7 @@ def dispatch_mp_fit(
         )
     cached_values = (mp_eigenvalues(matrix) if svd is None
                      else np.asarray(svd.covariance_eigenvalues, dtype=np.float64))
-    cached_values = _qualified_raw_eigenvalues(matrix, cached_values, svd)
+    cached_values = qualified_raw_eigenvalues(matrix, cached_values, svd)
     if method == "thamm_modified_singular":
         singular = np.asarray(svd.s if svd is not None else np.linalg.svd(matrix, compute_uv=False))
         if singular.size < 2 * config.gaussian_kernel_window + 4:
@@ -432,7 +432,7 @@ def dispatch_mp_fit(
     # qualification from the actual factorization precision.
     fit_values = np.asarray(prepared.eigenvalues, dtype=np.float64)
     if prepared.mode == "raw":
-        fit_values = _qualified_raw_eigenvalues(matrix, fit_values, svd)
+        fit_values = qualified_raw_eigenvalues(matrix, fit_values, svd)
         prepared = PreparedSpectrum(
             fit_values, prepared.aspect_ratio, prepared.mode,
             farms=prepared.farms, diagnostics=prepared.diagnostics,
@@ -610,4 +610,5 @@ __all__ = [
     "dispatch_tail_solver",
     "dispatch_unfolding",
     "prepare_spectrum",
+    "qualified_raw_eigenvalues",
 ]

@@ -28,10 +28,21 @@ from .per_matrix import per_matrix_analysis, CSV_COLUMNS
 _log = get_logger("rmt.pipeline")
 
 
+def _validated_model_tag(model_tag):
+    """Return one safe filename component for public library entry points."""
+
+    value = str(model_tag)
+    safe = "".join(ch if (ch.isalnum() or ch in "-_") else "_" for ch in value).strip("_")
+    if not value or value in {".", ".."} or safe != value or os.path.isabs(value):
+        raise ValueError("model_tag must be one safe filename component")
+    return value
+
+
 def analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
                       **cfg_flags) -> Tuple[str, List[dict]]:
     """Run in a fresh owned directory and finalize status after every stage."""
     # Validate library callers before claiming a directory or writing artifacts.
+    model_tag = _validated_model_tag(model_tag)
     resolved_cfg = RunConfig(**{**cfg_flags, "output_dir": str(output_dir)})
     _acquire_output_directory(output_dir)
     status_path = os.path.join(output_dir, f"{model_tag}_run_status.json")
@@ -95,6 +106,18 @@ def _analyze_one_model(model, model_tag, output_dir, *, tokenizer=None,
         raise ValueError("no analyzable matrices matched the model/layer selection")
 
     failures = []
+    if layer_filter is not None:
+        discovered_layers = {record.layer_idx for record in records}
+        missing_layers = sorted(set(layer_filter) - discovered_layers)
+        if missing_layers:
+            failure = {
+                "stage": "layer_selection",
+                "status": "partial",
+                "missing_layers": missing_layers,
+            }
+            failures.append(failure)
+            if cfg.strict:
+                raise ValueError(f"requested layers were not found: {missing_layers}")
     # Activation covariances and overlap heatmaps are projection-at-a-time.
     # A shared plan makes OOM-shortened windows a run-wide contract.  If a later
     # projection tightens it, discard/replay earlier rows rather than comparing
@@ -227,6 +250,7 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
 
     # Do not filter keys: misspellings are caller errors, just as they are for
     # analyze_one_model.
+    model_tag = _validated_model_tag(model_tag)
     cfg = RunConfig(**cfg_flags)
     checkpoint_fracs = list(checkpoint_fracs)
     probe_layers = list(probe_layers)
@@ -234,6 +258,8 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
         raise ValueError("checkpoint_fracs must not be empty")
     if not probe_layers:
         raise ValueError("probe_layers must not be empty")
+    if len(set(probe_layers)) != len(probe_layers):
+        raise ValueError("probe_layers must not contain duplicates")
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, f"{model_tag}_stable_rank_per_epoch.csv")
     claim = path + ".claim"
@@ -251,6 +277,8 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
     dtype_by_layer: Dict[int, List[str]] = {layer: [] for layer in probe_layers}
     missing = []
     degraded = []
+    coverage_changes = []
+    expected_membership = None
     temporary = None
     try:
         for frac in checkpoint_fracs:
@@ -259,6 +287,25 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
             recs = discover_weight_metadata(
                 model, layer_indices=list(probe_layers), spec=spec
             )
+            membership = sorted(
+                (record.name, record.short, int(record.layer_idx), int(record.n), int(record.m))
+                for record in recs
+            )
+            if expected_membership is None:
+                expected_membership = membership
+            elif membership != expected_membership:
+                expected_set = set(expected_membership)
+                actual_set = set(membership)
+                change = {
+                    "training_fraction": frac,
+                    "missing": [list(item) for item in sorted(expected_set - actual_set)],
+                    "added": [list(item) for item in sorted(actual_set - expected_set)],
+                }
+                coverage_changes.append(change)
+                if cfg.strict:
+                    raise ValueError(
+                        f"checkpoint {frac!r} matrix coverage differs from the first checkpoint"
+                    )
             from .scalars import stable_rank
             from .linalg import cached_svd
             per_layer: Dict[int, List[float]] = {layer: [] for layer in probe_layers}
@@ -325,17 +372,20 @@ def analyze_checkpoints(checkpoint_loader, checkpoint_fracs, probe_layers,
         os.replace(temporary, path)
         temporary = None
         _write_json(status_path, {
-            "status": "partial" if missing or degraded else "complete",
+            "status": "partial" if missing or degraded or coverage_changes else "complete",
             "artifact": path,
             "missing_selections": missing,
             "precision_degradations": degraded,
+            "matrix_selection_contract": [list(item) for item in (expected_membership or [])],
+            "coverage_changes": coverage_changes,
             "resolved_config": cfg.to_dict(),
         })
         return path
     except BaseException as error:
         _write_json(status_path, {"status": "failed", "error": repr(error),
                                   "missing_selections": missing,
-                                  "precision_degradations": degraded})
+                                  "precision_degradations": degraded,
+                                  "coverage_changes": coverage_changes})
         raise
     finally:
         if temporary and os.path.exists(temporary):

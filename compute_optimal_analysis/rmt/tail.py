@@ -346,9 +346,13 @@ def rank_ordered_mle(
     total = float(np.sum(np.square(log_survival - np.mean(log_survival))))
     r_squared = 1.0 - residual / total if total > 0.0 else float("nan")
     alpha = float(1.0 - slope)
-    empirical = ranks / tail.size
+    empirical_hi = ranks / tail.size
+    empirical_lo = (ranks - 1.0) / tail.size
     model = np.power(tail / cutoff, 1.0 - alpha)
-    ks_distance = float(np.max(np.abs(empirical - model)))
+    ks_distance = float(max(
+        np.max(np.abs(empirical_hi - model)),
+        np.max(np.abs(model - empirical_lo)),
+    ))
     return {
         "alpha": alpha,
         "xmin": cutoff,

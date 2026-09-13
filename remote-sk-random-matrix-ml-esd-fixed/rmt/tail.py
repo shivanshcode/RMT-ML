@@ -203,21 +203,18 @@ def hill_plateau(svals, *, window=20, flat_tol=0.20) -> dict:
     a = a_loc.copy()
     a[~(np.isfinite(a) & (a > 0) & (a < 2.5 * extreme_alpha + 1.0))] = np.nan
     best_lo, best_hi = -1, -1
-    i = 0
-    while i < a.size:
+    for i in range(a.size):
         if not np.isfinite(a[i]):
-            i += 1
             continue
-        j = i
-        while j + 1 < a.size and np.isfinite(a[j + 1]):
-            seg = a[i:j + 2]
+        for j in range(i, a.size):
+            if not np.isfinite(a[j]):
+                break
+            seg = a[i:j + 1]
             med = np.median(seg)
             if med <= 0 or np.max(np.abs(seg - med) / med) > flat_tol:
-                break
-            j += 1
-        if (j - i) > (best_hi - best_lo):
-            best_lo, best_hi = i, j
-        i = j + 1
+                continue
+            if (j - i) > (best_hi - best_lo):
+                best_lo, best_hi = i, j
     if best_lo < 0:
         res["hill_plateau_alpha"] = extreme_alpha
         return res

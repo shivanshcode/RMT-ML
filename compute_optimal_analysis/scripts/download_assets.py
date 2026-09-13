@@ -20,9 +20,21 @@ TOKENIZER_ID = "openai-community/gpt2"
 
 
 def _write_json(path: Path, payload: Any) -> None:
+    """Write JSON without exposing a truncated destination file."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}-", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _sha256(path: Path) -> str:
@@ -246,7 +258,7 @@ def _download_wikitext(
         "raw_records": raw_counts,
         "tokenizer_id": TOKENIZER_ID,
         "tokenizer_revision": tokenizer_revision,
-        "tokenized_path": str(output),
+        "tokenized_path": output.relative_to(paths["tokenized"].parents[1]).as_posix(),
         "token_count": token_count,
     }
 
@@ -279,7 +291,7 @@ def _generate_synthetic_assets(
         },
     )
     return {
-        "tokenized_path": str(output),
+        "tokenized_path": output.relative_to(paths["tokenized"].parents[1]).as_posix(),
         "token_count": token_count,
         "vocab_size": vocab_size,
         "seed": seed,
@@ -316,22 +328,40 @@ def _verify_manifest(root: Path) -> int:
     records = manifest.get("files")
     if not isinstance(records, list) or not records:
         raise ValueError("asset manifest contains no file records")
-    verified = 0
+    normalized_records: dict[str, dict[str, Any]] = {}
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("asset manifest contains a malformed file record")
-        relative = Path(str(record.get("path", "")).replace("\\", "/"))
+        portable = str(record.get("path", "")).replace("\\", "/")
+        relative = Path(portable)
         target = (root / relative).resolve()
         if root != target and root not in target.parents:
             raise ValueError("asset manifest contains a path outside the project root")
+        canonical = target.relative_to(root).as_posix()
+        if canonical != portable:
+            raise ValueError(f"asset manifest path is not canonical: {portable}")
+        if canonical in normalized_records:
+            raise ValueError(f"asset manifest contains a duplicate path: {portable}")
+        normalized_records[canonical] = record
+    current_records = {str(record["path"]): record for record in _file_manifest(root)}
+    recorded_paths = set(normalized_records)
+    current_paths = set(current_records)
+    if recorded_paths != current_paths:
+        added = sorted(current_paths - recorded_paths)
+        removed = sorted(recorded_paths - current_paths)
+        raise ValueError(
+            f"staged asset membership mismatch; added={added}, removed={removed}"
+        )
+    for portable, record in normalized_records.items():
+        relative = Path(portable)
+        target = (root / relative).resolve()
         if not target.is_file():
             raise FileNotFoundError(f"staged asset is missing: {relative}")
         if target.stat().st_size != int(record.get("bytes", -1)):
             raise ValueError(f"staged asset size mismatch: {relative}")
         if _sha256(target) != str(record.get("sha256", "")):
             raise ValueError(f"staged asset checksum mismatch: {relative}")
-        verified += 1
-    return verified
+    return len(normalized_records)
 
 
 def _verify_untouched_records(root: Path, manifest: dict[str, Any],
@@ -398,61 +428,123 @@ def main() -> int:
         return 0
     if args.assets in {"all", "wikitext103"}:
         _require_connected_mode(args.allow_network)
-    paths = _configure_cache(root)
-    existing_path = root / "data" / "asset_manifest.json"
-    existing: dict[str, Any] = {}
-    if existing_path.is_file():
-        with existing_path.open("r", encoding="utf-8") as handle:
-            existing = json.load(handle)
-    assets: dict[str, Any] = dict(existing.get("assets", {}))
-    revisions: dict[str, str] = dict(existing.get("source_revisions", {}))
-    replaced: list[str] = []
-    if args.assets in {"all", "synthetic"}:
-        replaced.extend(("data/tokenized/synthetic_zipf.npy", "data/tokenizers/synthetic/"))
-    if args.assets in {"all", "wikitext103"}:
-        replaced.extend(("data/tokenized/wikitext", "data/tokenizers/gpt2/",
-                         "data/raw/wikitext"))
-    if existing:
-        _verify_untouched_records(root, existing, tuple(replaced))
-    if args.assets in {"all", "synthetic"}:
-        assets["synthetic"] = _generate_synthetic_assets(
-            paths,
-            token_count=args.synthetic_tokens,
-            vocab_size=args.synthetic_vocab_size,
-            seed=args.seed,
-        )
-    if args.assets in {"all", "wikitext103"}:
-        revisions.update(_resolve_hub_revisions(args.allow_network))
-        tokenizer_path = _download_tokenizer(
-            paths,
-            args.allow_network,
-            revision=revisions["tokenizer_revision"],
-        )
-        assets["wikitext103"] = _download_wikitext(
-            paths,
-            tokenizer_path,
-            allow_network=args.allow_network,
-            dataset_revision=revisions["dataset_revision"],
-            tokenizer_revision=revisions["tokenizer_revision"],
-            max_tokens=(
-                None if args.max_wikitext_tokens == 0 else args.max_wikitext_tokens
-            ),
-        )
-    manifest = {
-        "schema_version": 2,
-        "assets": assets,
-        "source_revisions": revisions,
-        "files": _file_manifest(root),
-        "offline_environment": {
-            "HF_HUB_OFFLINE": "1",
-            "TRANSFORMERS_OFFLINE": "1",
-            "HF_DATASETS_OFFLINE": "1",
-            "HF_HOME": "./cache/huggingface",
-            "TORCH_HOME": "./cache/torch",
-        },
-    }
-    _write_json(root / "data" / "asset_manifest.json", manifest)
-    return 0
+
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / ".asset-stage.lock"
+    try:
+        lock_descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise RuntimeError("another asset staging process owns this project") from error
+    os.close(lock_descriptor)
+    staging_root: Path | None = None
+    backup: Path | None = None
+    published = False
+    try:
+        staging_root = Path(tempfile.mkdtemp(prefix=".asset-release-", dir=root.parent))
+        backup = Path(tempfile.mkdtemp(prefix=".asset-data-backup-", dir=root))
+        backup.rmdir()
+        existing_path = root / "data" / "asset_manifest.json"
+        existing: dict[str, Any] = {}
+        if existing_path.is_file():
+            with existing_path.open("r", encoding="utf-8") as handle:
+                existing = json.load(handle)
+        if (root / "data").is_dir():
+            shutil.copytree(root / "data", staging_root / "data")
+        else:
+            (staging_root / "data").mkdir(parents=True)
+
+        paths = _configure_cache(staging_root)
+        assets: dict[str, Any] = dict(existing.get("assets", {}))
+        revisions: dict[str, str] = dict(existing.get("source_revisions", {}))
+        replaced: list[str] = []
+        if args.assets in {"all", "synthetic"}:
+            replaced.extend(("data/tokenized/synthetic_zipf.npy", "data/tokenizers/synthetic/"))
+        if args.assets in {"all", "wikitext103"}:
+            replaced.extend(("data/tokenized/wikitext", "data/tokenizers/gpt2/",
+                             "data/raw/wikitext"))
+        if existing:
+            _verify_untouched_records(staging_root, existing, tuple(replaced))
+        if args.assets in {"all", "synthetic"}:
+            (staging_root / "data" / "tokenized" / "synthetic_zipf.npy").unlink(
+                missing_ok=True
+            )
+            shutil.rmtree(
+                staging_root / "data" / "tokenizers" / "synthetic", ignore_errors=True
+            )
+        if args.assets in {"all", "wikitext103"}:
+            for path in (staging_root / "data" / "tokenized").glob("wikitext*"):
+                path.unlink(missing_ok=True)
+            shutil.rmtree(staging_root / "data" / "tokenizers" / "gpt2", ignore_errors=True)
+            for path in (staging_root / "data" / "raw").glob("wikitext*"):
+                shutil.rmtree(path, ignore_errors=True)
+        if args.assets in {"all", "synthetic"}:
+            assets["synthetic"] = _generate_synthetic_assets(
+                paths,
+                token_count=args.synthetic_tokens,
+                vocab_size=args.synthetic_vocab_size,
+                seed=args.seed,
+            )
+        if args.assets in {"all", "wikitext103"}:
+            revisions.update(_resolve_hub_revisions(args.allow_network))
+            tokenizer_path = _download_tokenizer(
+                paths,
+                args.allow_network,
+                revision=revisions["tokenizer_revision"],
+            )
+            assets["wikitext103"] = _download_wikitext(
+                paths,
+                tokenizer_path,
+                allow_network=args.allow_network,
+                dataset_revision=revisions["dataset_revision"],
+                tokenizer_revision=revisions["tokenizer_revision"],
+                max_tokens=(
+                    None if args.max_wikitext_tokens == 0 else args.max_wikitext_tokens
+                ),
+            )
+        if "synthetic" in assets:
+            assets["synthetic"]["tokenized_path"] = "data/tokenized/synthetic_zipf.npy"
+        if "wikitext103" in assets:
+            assets["wikitext103"]["tokenized_path"] = (
+                "data/tokenized/wikitext-103-raw-v1_gpt2.npy"
+            )
+        manifest = {
+            "schema_version": 3,
+            "assets": assets,
+            "source_revisions": revisions,
+            "files": _file_manifest(staging_root),
+            "offline_environment": {
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+                "HF_HOME": "./cache/huggingface",
+                "TORCH_HOME": "./cache/torch",
+            },
+        }
+        _write_json(staging_root / "data" / "asset_manifest.json", manifest)
+        _verify_manifest(staging_root)
+
+        live_data = root / "data"
+        if live_data.exists():
+            os.replace(live_data, backup)
+        try:
+            os.replace(staging_root / "data", live_data)
+            published = True
+        except BaseException:
+            if backup.exists() and not live_data.exists():
+                os.replace(backup, live_data)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        return 0
+    finally:
+        if (not published and backup is not None and backup.exists()
+                and not (root / "data").exists()):
+            os.replace(backup, root / "data")
+        elif not published and backup is not None and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        if staging_root is not None:
+            shutil.rmtree(staging_root, ignore_errors=True)
+        lock_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

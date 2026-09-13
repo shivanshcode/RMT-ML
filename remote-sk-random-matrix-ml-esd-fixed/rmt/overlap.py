@@ -10,6 +10,8 @@ from scipy import special, stats
 
 
 def _svd_of(weight, svd):
+    if weight is not None and np.iscomplexobj(np.asarray(weight)):
+        raise TypeError("complex weights are not supported by real overlap analysis")
     if svd is not None:
         return np.asarray(svd.Vh, dtype=np.float64), np.asarray(svd.s, dtype=np.float64)
     W = np.asarray(weight, dtype=np.float64)
@@ -17,11 +19,17 @@ def _svd_of(weight, svd):
     return Vh.astype(np.float64), s.astype(np.float64)
 
 
-def _weight_singular_vectors_identifiable(s, dimension):
+def _weight_singular_vectors_identifiable(s, weight, svd):
     """Return an unavailable reason when individual weight vectors can rotate."""
     values = np.asarray(s, dtype=np.float64)
     scale = float(np.max(np.abs(values))) if values.size else 0.0
-    tolerance = np.finfo(float).eps * max(int(dimension), 1) * scale
+    if svd is not None:
+        dtype = np.dtype(getattr(svd, "factorization_dtype", "float64"))
+        dimension = max(int(svd.n), int(svd.m))
+    else:
+        dtype = np.dtype("float64")
+        dimension = max(np.asarray(weight).shape)
+    tolerance = np.finfo(dtype).eps * max(int(dimension), 1) * scale
     if scale == 0.0 or np.any(values <= tolerance):
         return "weight has a nonidentifiable null singular subspace"
     ordered = np.sort(values)[::-1]
@@ -71,7 +79,7 @@ def overlap_analysis(weight, feature_matrix, *, svd=None, eig=None) -> dict:
     evals, evecs, unavailable = _qualified_activation_eigensystem(
         feature_matrix, eig=eig
     )
-    weight_unavailable = _weight_singular_vectors_identifiable(s, Vh.shape[1])
+    weight_unavailable = _weight_singular_vectors_identifiable(s, weight, svd)
     if unavailable is not None or weight_unavailable is not None:
         reason = unavailable or weight_unavailable
         return {
@@ -125,7 +133,7 @@ def eigenvector_eigenvalue_coincidence(weight, feature_matrix, *, svd=None,
     evals_desc, evecs, unavailable = _qualified_activation_eigensystem(
         feature_matrix, eig=eig
     )
-    weight_unavailable = _weight_singular_vectors_identifiable(s, Vh.shape[1])
+    weight_unavailable = _weight_singular_vectors_identifiable(s, weight, svd)
     if unavailable is not None or weight_unavailable is not None:
         reason = unavailable or weight_unavailable
         return {"available": False, "status": f"unavailable: {reason}"}

@@ -125,34 +125,37 @@ def marchenko_pastur_density(
     q = _validate_aspect_ratio(aspect_ratio)
     variance = _validate_variance(variance)
     values = np.asarray(x, dtype=np.float64)
-    lower, upper = marchenko_pastur_bounds(q, variance)
+    normalized = values / variance
+    lower, upper = marchenko_pastur_bounds(q, 1.0)
     density = np.zeros_like(values, dtype=np.float64)
-    mask = (values > lower) & (values < upper) & (values > 0.0)
+    mask = (normalized > lower) & (normalized < upper) & (normalized > 0.0)
     if np.any(mask):
-        inside = values[mask]
+        inside = normalized[mask]
         radicand = np.maximum((upper - inside) * (inside - lower), 0.0)
-        density[mask] = np.sqrt(radicand) / (2.0 * np.pi * q * variance * inside)
+        unit_density = np.sqrt(radicand) / (2.0 * np.pi * q * inside)
+        density[mask] = unit_density / variance
     return density
 
 
 def _mp_cdf_scalar(value: float, q: float, variance: float) -> float:
-    lower, upper = marchenko_pastur_bounds(q, variance)
-    if value <= lower:
+    lower, upper = marchenko_pastur_bounds(q, 1.0)
+    normalized_value = value / variance
+    if normalized_value <= lower:
         return 0.0
-    if value >= upper:
+    if normalized_value >= upper:
         return 1.0
 
     def integrand(point: float) -> float:
-        return float(marchenko_pastur_density(np.asarray([point]), q, variance)[0])
+        return float(marchenko_pastur_density(np.asarray([point]), q, 1.0)[0])
 
     result, _ = quad(
         integrand,
         lower,
-        value,
+        normalized_value,
         epsabs=2e-10,
         epsrel=2e-9,
         limit=200,
-        points=[lower, value],
+        points=[lower, normalized_value],
     )
     return float(np.clip(result, 0.0, 1.0))
 
@@ -919,10 +922,15 @@ def mp_pdf(x: np.ndarray | float, n: int, m: int, sigma: float) -> np.ndarray:
     values = np.asarray(x, dtype=np.float64)
     large = max(n, m)
     q = min(n, m) / large
-    squared = np.square(values) / large
-    density = marchenko_pastur_density(squared, q, sigma**2) * (2.0 * np.maximum(values, 0.0) / large)
-    lower, upper = mp_bounds(n, m, sigma)
-    density = np.where((values >= lower) & (values <= upper), density, 0.0)
+    singular_scale = sigma * np.sqrt(large)
+    normalized = values / singular_scale
+    squared = np.square(normalized)
+    density = marchenko_pastur_density(squared, q, 1.0)
+    density *= 2.0 * np.maximum(normalized, 0.0) / singular_scale
+    normalized_lower, normalized_upper = 1.0 - np.sqrt(q), 1.0 + np.sqrt(q)
+    density = np.where(
+        (normalized >= normalized_lower) & (normalized <= normalized_upper), density, 0.0
+    )
     if np.isclose(q, 1.0):
         limit = 2.0 / (np.pi * sigma * np.sqrt(large))
         density = np.where(values == 0.0, limit, density)
@@ -939,9 +947,9 @@ def mp_cdf(x: np.ndarray | float, n: int, m: int, sigma: float) -> np.ndarray | 
     values = np.asarray(x, dtype=np.float64)
     large = max(n, m)
     result = marchenko_pastur_cdf(
-        np.square(np.maximum(values, 0.0)) / large,
+        np.square(np.maximum(values, 0.0) / (sigma * np.sqrt(large))),
         min(n, m) / large,
-        sigma**2,
+        1.0,
     )
     result_array = np.asarray(result)
     result_array = np.where(values < 0.0, 0.0, result_array)
@@ -956,8 +964,8 @@ def mp_median(n: int, m: int, sigma: float = 1.0) -> float:
     if not np.isfinite(sigma) or sigma <= 0.0:
         raise ValueError("sigma must be finite and positive")
     large = max(n, m)
-    median_eigenvalue = _mp_quantile(0.5, min(n, m) / large, sigma**2)
-    return float(np.sqrt(large * median_eigenvalue))
+    unit_median = _mp_quantile(0.5, min(n, m) / large, 1.0)
+    return float(sigma * np.sqrt(large * unit_median))
 
 
 def eigenvalues_of_cov(
@@ -1155,11 +1163,15 @@ def small_sv_deviation(s: np.ndarray, n: int, m: int, sigma: float) -> dict[str,
     else:
         ks_lower = float("nan")
     below = spectrum < lower
-    total_energy = float(np.sum(np.square(spectrum)))
-    below_energy = float(np.sum(np.square(spectrum[below])))
+    energy_scale = float(np.max(spectrum))
+    normalized_energy = (
+        np.square(spectrum / energy_scale) if energy_scale > 0.0 else np.zeros_like(spectrum)
+    )
+    total_energy = float(np.sum(normalized_energy))
+    below_energy = float(np.sum(normalized_energy[below]))
     q = min(n, m) / max(n, m)
-    q10_eigen = _mp_quantile(0.1, q, sigma**2)
-    q10_singular = np.sqrt(max(n, m) * q10_eigen)
+    unit_q10 = _mp_quantile(0.1, q, 1.0)
+    q10_singular = sigma * np.sqrt(max(n, m) * unit_q10)
     expected = int(round(0.1 * spectrum.size))
     return {
         "ks_lower": ks_lower,

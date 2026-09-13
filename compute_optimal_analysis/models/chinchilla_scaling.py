@@ -263,7 +263,10 @@ def suggest_architecture(
         if cap is not None:
             upper = min(upper, int(cap // vocab_size // width_multiple) * width_multiple)
         for width in range(width_multiple, upper + 1, width_multiple):
-            head_options = [value for value in (4, 8, 12, 16, 24, 32) if value <= width and width % value == 0]
+            head_options = [
+                value for value in (4, 8, 12, 16, 24, 32)
+                if value <= width and width % value == 0 and (width // value) % 2 == 0
+            ]
             if not head_options:
                 continue
             heads = min(head_options, key=lambda value: abs(width // value - 64))

@@ -41,7 +41,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m rmt \
   --backend auto --do_overlap --do_spacing --do_powerlaw
 ```
 
-Each model claims a new or empty identity-hashed directory with `.run-owner.json`. Concurrent or later reuse stops before output files can mix.
+Each model claims a new or empty identity-hashed directory with `.run-owner.json`. Concurrent or later reuse stops before output files can mix. Library callers must supply one safe filename component as `model_tag`.
 
 Real-text analysis stops if it cannot load the matching tokenizer. For synthetic tests, enable text and tokenizer substitutes separately:
 
@@ -63,7 +63,9 @@ For each model `<tag>`, the tool writes these artifacts:
 - `<tag>_weightwatcher_status.json` records `complete`, `unavailable`, or `failed` when the user requests WeightWatcher.
 - The `<tag>/` directory contains ESD, Hill, nearest-neighbor spacing, heatmap, and summary plots.
 
-A precision decrease makes a permissive execution partial. In strict mode, a partial requested stage causes a nonzero exit. Strict mode rejects a missing checkpoint probe. Requested WeightWatcher failures are applied after all stages in strict mode.
+A precision decrease makes a permissive execution partial. In strict mode, a partial requested stage causes a nonzero exit. Strict model analysis rejects any missing requested layer.
+
+Checkpoint analysis rejects duplicate probe layers. The first checkpoint defines exact matrix names, roles, shapes, and counts. Later coverage changes stop strict analysis or produce explicit partial status.
 
 ## Tests
 
@@ -98,6 +100,10 @@ Exact projection names such as `multihead_attention`, `pre_norm_attention`, and 
 
 Number variance and rigidity use and record `RunConfig.seed`. Only the required analytic gate uses fixed `rmt.config.SEED` calibration.
 
-MP quantiles, modified-MP fits, and dimensionless scalar summaries do not change with spectral units. Random controls use the selected SVD backend and record separate precision data. IPR and Porter-Thomas output requires an identifiable singular basis. Real-only APIs reject complex input.
+MP density, cumulative probability, modified-MP fits, and dimensionless scalar summaries do not change with spectral units. MP fitting uses only singular values that the actual SVD precision resolves. A row states when too few values remain.
+
+Random controls use the selected SVD backend and record separate precision data. All vector diagnostics use the actual factorization dtype and both matrix dimensions. Real-only APIs reject complex input before mutation.
+
+The Hill plateau search examines overlapping bands. Number variance and rigidity reject nonpositive or nonfinite interval lengths.
 
 The histogram code applies its bin limit before integer conversion. Each requested optional failure adds a status and reason to the execution status. `rmt_pipeline_glm.py` is a non-executable archive. Use `python -m rmt` as the supported entry point.

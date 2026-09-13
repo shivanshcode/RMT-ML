@@ -176,6 +176,7 @@ This document gives the fixed signatures for this repository. All symbols under 
 - `RMTMethodConfig(mp_fit_method="lanczos_stieltjes", unfolding_strategy="spline_monotone", tail_solver="clauset_mle", overlap_metric="staats_dual_end", aspect_ratio_mode="farms_normalized", spike_detector="lanczos_poles", polynomial_degree=15, spline_smoothing=None, gaussian_kernel_window=15, mp_trim_upper=0.1, kde_bandwidth=None, tail_minimum=50, tail_fraction=0.1, farms_target_aspect_ratio=1.0, farms_window_size=None, farms_row_windows=5, farms_column_windows=5, farms_sampling="reference_fixed", farms_step_size=10, farms_normalization="canonical", farms_orient_tall=False, lanczos_steps=50, lanczos_probes=3, lanczos_tail_window=None, lanczos_threshold_c=1.0, lanczos_threshold_delta=0.25, lanczos_residue_threshold=0.0, lanczos_ridge=0.0, lanczos_adaptive=True, lanczos_convergence_tolerance=None, lanczos_sequence_length=None, lanczos_check_interval=2, lanczos_pole_method="reference_ritz", seed=0)` is the frozen contract for methods and their parameters.
 - `PreparedSpectrum` is a frozen spectrum, canonical aspect ratio, mode, optional FARMS result, and diagnostics container.
 - `prepare_spectrum(weight, config=RMTMethodConfig(), *, variance=1.0) -> PreparedSpectrum`
+- `qualified_raw_eigenvalues(matrix, values, svd) -> np.ndarray` applies the relative resolution of the factorization.
 - `dispatch_mp_fit(weight, config=RMTMethodConfig(), *, variance=None) -> MPFitResult`
 - `dispatch_tail_solver(eigenvalues, config=RMTMethodConfig(), **overrides) -> dict`
 - `dispatch_unfolding(levels, config=RMTMethodConfig()) -> np.ndarray`
@@ -185,20 +186,20 @@ This document gives the fixed signatures for this repository. All symbols under 
 ## Model and pipeline contracts
 
 - `TransformerConfig` is a frozen dataclass containing model dimensions and architecture choices.
-- `CausalTransformer.forward(input_ids, attention_mask=None, labels=None, *, return_dict=True)` returns `CausalLMOutput` or a tuple.
+- `CausalTransformer.forward(input_ids, attention_mask=None, labels=None, *, return_dict=True)` returns `CausalLMOutput` or a tuple. Reduced-precision attention computes score products and softmax in FP32.
 - `ScalingLaw` and `Allocation` are frozen dataclasses.
 - `compute_optimal_allocation(compute_budget, law=ScalingLaw(), *, target_tokens_per_parameter=None) -> Allocation`
 - `allocation_for_regime(optimal, kappa, *, name=None, law=ScalingLaw()) -> Allocation`
 - `isoflop_grid(compute_budgets, kappas=(0.25, 1.0, 4.0), law=ScalingLaw(), *, target_tokens_per_parameter=20.0) -> list[Allocation]`
 - `estimate_transformer_parameters(config) -> int`
-- `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64, max_parameters=None) -> dict`. Embedding cost and all feasible lower widths are included, and one-layer searches are supported.
+- `suggest_architecture(target_parameters, *, vocab_size=512, max_layers=24, width_multiple=64, max_parameters=None) -> dict`. Every returned RoPE head dimension is even.
 - `CovarianceEstimate(array, *, observation_count, accumulation_dtype, centered)` is an `np.ndarray` subclass carrying rank/precision provenance into overlap qualification.
 - `CovarianceAccumulator(dimension, count=0, sum_vector=None, gram_matrix=None, device=None, dtype=float64)` maintains a stable cumulative mean and centered M2 matrix on one device (historical buffer attribute names are retained).
 - `CovarianceAccumulator.update(activations, *, valid_mask=None, max_samples=None) -> None`. Moment arithmetic explicitly disables an enclosing autocast context.
 - `CovarianceAccumulator.second_moment() -> Tensor`
 - `CovarianceAccumulator.covariance(*, centered=True, unbiased=False) -> Tensor`
 - `ActivationExtractor(model, module_filter=None, *, capture=("pre", "post"), max_samples_per_hook=None, accumulation_device="auto", accumulation_dtype="auto")`
-- `ActivationExtractor.__enter__() -> ActivationExtractor`
+- `ActivationExtractor.__enter__() -> ActivationExtractor`. Failed entry removes every hook that entry already registered.
 - `ActivationExtractor.__exit__(exc_type, exc_value, traceback) -> bool`
 - `ActivationExtractor.covariances(*, centered=True, unbiased=False) -> dict[str, np.ndarray]`
 - `compute_tensor_svd(matrix, *, backend="auto", driver="gesvdj", normalization=None) -> SVDResult` is the compatibility call form. It uses the default analysis dtype.

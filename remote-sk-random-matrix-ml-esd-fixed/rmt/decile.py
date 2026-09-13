@@ -63,6 +63,8 @@ def _weight_fingerprint(W):
 
 def _qualified_factors(W, *, backend="numpy", gpu_min_dim=1024):
     """Return factors only when the decile precision contract is satisfied."""
+    if np.iscomplexobj(np.asarray(W)):
+        raise TypeError("complex weights are not supported by real decile lesions")
     from .linalg import cached_svd
     result = cached_svd(W, full_matrices=False, backend=backend,
                         gpu_min_dim=gpu_min_dim)
@@ -77,6 +79,8 @@ def _qualified_factors(W, *, backend="numpy", gpu_min_dim=1024):
 
 def _reconstruct_zeroed(W, lo, hi, *, factors=None, backend="numpy", gpu_min_dim=1024):
     """Zero an ascending singular range, optionally reusing qualified factors."""
+    if np.iscomplexobj(np.asarray(W)):
+        raise TypeError("complex weights are not supported by real decile lesions")
     if factors is None:
         factors = _qualified_factors(
             W, backend=backend, gpu_min_dim=gpu_min_dim)
@@ -119,6 +123,8 @@ def set_layer_svd_decile(model, records, decile, *, n_deciles=10, spec=None,
         modname = base[: -len(".weight")] if base.endswith(".weight") else base
         module = model.get_submodule(modname)
         w = module.weight
+        if bool(w.is_complex()):
+            raise TypeError("complex weights are not supported by real decile lesions")
         cls = type(module).__name__
         logical_shape = tuple(reversed(tuple(w.shape))) if cls == "Conv1D" else tuple(w.shape)
         tag = name[name.index("[") + 1: -1] if is_fused else None

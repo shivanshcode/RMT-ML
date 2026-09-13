@@ -49,6 +49,8 @@ def _svd_components(
     driver: str,
     analysis_dtype: str = "float64",
 ) -> tuple[Tensor, Tensor, Tensor]:
+    if bool(weight.is_complex()):
+        raise TypeError("complex weights are not supported by real spectral lesions")
     if backend not in {"auto", "cpu", "cuda"}:
         raise ValueError("svd backend must be auto, cpu, or cuda")
     if driver not in {"default", "gesvdj", "gesvd", "gesvda"}:
@@ -173,6 +175,10 @@ def lesion_matrix(
 
     if weight.ndim != 2 or min(weight.shape) < 1:
         raise ValueError("weight must be a nonempty matrix")
+    if bool(weight.is_complex()):
+        raise TypeError("complex weights are not supported by real spectral lesions")
+    if svd_factors is not None and any(bool(value.is_complex()) for value in svd_factors):
+        raise TypeError("complex SVD factors are not supported by real spectral lesions")
     fraction = float(fraction)
     if not 0.0 < fraction <= 1.0:
         raise ValueError("fraction must lie in (0, 1]")
@@ -221,8 +227,7 @@ def lesion_matrix(
     modified[device_indices] = 0.0
     reconstructed = (U * modified.unsqueeze(0)) @ Vh
     relative_error = (None if target_energy is None else
-                      abs(removed_energy - target_energy) /
-                      max(target_energy, np.finfo(float).eps))
+                      abs(removed_energy - target_energy) / target_energy)
     if target_energy is None:
         match_status = "not_applicable"
     elif energy_infeasible:

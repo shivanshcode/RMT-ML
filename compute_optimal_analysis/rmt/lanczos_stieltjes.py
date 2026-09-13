@@ -38,7 +38,10 @@ def _symmetric_operator(
     dimension: int | None,
 ) -> tuple[LinearOperator, int]:
     if isinstance(matrix, np.ndarray):
-        array = np.asarray(matrix, dtype=np.float64)
+        raw = np.asarray(matrix)
+        if np.iscomplexobj(raw):
+            raise TypeError("complex matrices are not supported by the real Lanczos API")
+        array = np.asarray(raw, dtype=np.float64)
         if array.ndim != 2 or array.shape[0] != array.shape[1] or array.shape[0] < 2:
             raise ValueError("matrix must be square with dimension at least two")
         if not np.all(np.isfinite(array)):
@@ -48,6 +51,8 @@ def _symmetric_operator(
             raise ValueError("matrix must be symmetric")
         return aslinearoperator(0.5 * (array + array.T)), int(array.shape[0])
     if isinstance(matrix, LinearOperator):
+        if np.issubdtype(np.dtype(matrix.dtype), np.complexfloating):
+            raise TypeError("complex operators are not supported by the real Lanczos API")
         if matrix.shape[0] != matrix.shape[1]:
             raise ValueError("operator must be square")
         return matrix, int(matrix.shape[0])
@@ -56,7 +61,10 @@ def _symmetric_operator(
     size = int(dimension)
 
     def matvec(vector: np.ndarray) -> np.ndarray:
-        result = np.asarray(matrix(vector), dtype=np.float64).reshape(-1)
+        raw_result = np.asarray(matrix(vector))
+        if np.iscomplexobj(raw_result):
+            raise TypeError("complex operators are not supported by the real Lanczos API")
+        result = np.asarray(raw_result, dtype=np.float64).reshape(-1)
         if result.size != size or not np.all(np.isfinite(result)):
             raise ValueError("operator returned an incompatible or non-finite vector")
         return result
@@ -71,7 +79,10 @@ def covariance_linear_operator(
 ) -> LinearOperator:
     """Return the reduced covariance operator of a rectangular factor."""
 
-    matrix = np.asarray(factor, dtype=np.float64)
+    raw = np.asarray(factor)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex factors are not supported by the real Lanczos API")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("factor must be a finite matrix with both dimensions at least two")
     oriented = matrix if matrix.shape[0] <= matrix.shape[1] else matrix.T
@@ -541,8 +552,8 @@ def estimate_constant_tail(
     sub_tail = cholesky.sub_diagonal[-width:]
     alpha = float(np.mean(diagonal_tail))
     beta = float(np.mean(sub_tail))
-    alpha_scatter = float(np.std(diagonal_tail, ddof=1) / max(alpha, np.finfo(float).eps))
-    beta_scatter = float(np.std(sub_tail, ddof=1) / max(beta, np.finfo(float).eps))
+    alpha_scatter = float(np.std(diagonal_tail, ddof=1) / max(abs(alpha), np.finfo(float).tiny))
+    beta_scatter = float(np.std(sub_tail, ddof=1) / max(abs(beta), np.finfo(float).tiny))
     return alpha, beta, alpha_scatter, beta_scatter
 
 
@@ -569,7 +580,7 @@ def reference_modified_cholesky(
         tolerance = 3.0 * float(np.sum(np.abs(lanczos.diagonal))) / (
             used * np.sqrt(max(lanczos.probe.size, 1))
         )
-    tolerance = max(float(tolerance), np.finfo(float).eps)
+    tolerance = max(float(tolerance), np.finfo(float).tiny)
     if tail_window is not None:
         width = min(int(tail_window), available)
         if width < 2:
@@ -675,7 +686,8 @@ def _constant_tail_transform(
     if beta == 0.0:
         return 1.0 / (alpha**2 - z)
     root = np.lib.scimath.sqrt(z - upper) * np.lib.scimath.sqrt(z - lower)
-    return (alpha**2 - z - beta**2 + root) / (2.0 * z * beta**2)
+    # This rationalized form removes the zero-over-zero cancellation at z=0.
+    return 2.0 / (alpha**2 - beta**2 - z - root)
 
 
 def extended_stieltjes_transform(
@@ -860,7 +872,7 @@ def detect_spikes_lanczos(
         dense = np.asarray(matrix, dtype=np.float64)
         active_convergence_tolerance = max(
             3.0 * float(np.sum(np.abs(np.diag(dense)))) / (size * np.sqrt(size)),
-            np.finfo(float).eps,
+            np.finfo(float).tiny,
         )
     probes = int(n_probes)
     if probes < 1:
@@ -905,7 +917,8 @@ def detect_spikes_lanczos(
         tail = (
             float(np.mean(alpha_values)),
             beta_value,
-            float(np.std(alpha_values, ddof=1) / max(np.mean(alpha_values), np.finfo(float).eps)),
+            float(np.std(alpha_values, ddof=1) /
+                  max(abs(float(np.mean(alpha_values))), np.finfo(float).tiny)),
             0.0,
         )
         lanczos_results.append(lanczos)
@@ -1009,7 +1022,9 @@ def detect_spikes_lanczos(
     stieltjes_sub = probe_stieltjes_sub_diagonals[representative]
     relative_scatter = float(np.max(tail_array[:, 2:]))
     edge_array = np.asarray(probe_edges, dtype=np.float64)
-    edge_spread = float(np.ptp(edge_array[:, 1]) / max(upper, np.finfo(float).eps)) if probes > 1 else 0.0
+    edge_spread = float(
+        np.ptp(edge_array[:, 1]) / max(abs(upper), np.finfo(float).tiny)
+    ) if probes > 1 else 0.0
     adaptive_flags = np.asarray([result.converged for result in lanczos_results], dtype=bool)
     recurrence_converged = bool(np.all(adaptive_flags)) if adaptive else True
     converged = bool(recurrence_converged and relative_scatter <= 0.2 and edge_spread <= 0.1)
@@ -1046,7 +1061,10 @@ def detect_spikes_from_factor(
 ) -> LanczosSpikeResult:
     """Build a reduced covariance operator and run the Lanczos detector."""
 
-    matrix = np.asarray(factor, dtype=np.float64)
+    raw = np.asarray(factor)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex factors are not supported by the real Lanczos API")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 2 or not np.all(np.isfinite(matrix)):
         raise ValueError("factor must be a finite matrix with both dimensions at least two")
     # The factor adapter is the production path and opts into a scale-relative
@@ -1058,7 +1076,7 @@ def detect_spikes_from_factor(
         trace = float(np.sum(np.square(matrix)) / normalization)
         kwargs["convergence_tolerance"] = max(
             3.0 * trace / (dimension * np.sqrt(dimension)),
-            np.finfo(float).eps,
+            np.finfo(float).tiny,
         )
     operator = covariance_linear_operator(matrix, normalization=normalization)
     # The factor adapter is exactly the reduced covariance operator adapter.

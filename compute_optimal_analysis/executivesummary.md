@@ -18,6 +18,8 @@ The SLURM launcher contains four tracks. Three tracks reproduce historical analy
 
 Synthetic Wishart, GOE, Poisson, and Pareto data provide calibrations with known answers. Trained-model results are empirical hypotheses, not unit-test facts. These hypotheses include heavy-tailed deep layers, spectral collapse, and information in the smallest singular values.
 
-The current repairs use conditional bounded-tail likelihoods when `xmax` is finite. They qualify overlap for rank-deficient activations and contain detector-only Lanczos errors. They restore normal FP16 scaler overflow behavior and examine collapse only in selected cells. Atomic operations claim each output root.
+The current repairs compute reduced-precision attention scores in FP32 and qualify the raw spacing spectrum. MP density, energy matching, and Lanczos diagnostics keep their results under finite unit changes. Hook setup cleans up after registration failures.
+
+Asset staging builds and examines a separate release. It publishes the release under one staging lock and restores the old `data/` tree after a publication failure.
 
 The `rmt/` package imports only the standard library, NumPy, and SciPy. The `models/` and `pipelines/` directories contain the training framework. Each random operation accepts a seed. Output records requested and realized allocations and the full configuration of spectral methods.

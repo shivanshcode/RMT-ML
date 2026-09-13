@@ -14,7 +14,9 @@ Level statistics include the Atas `r` statistic and nearest-neighbor KS values f
 
 If activation capture is active, the tool computes `O_k = maxⱼ|v_k·f_j|`. It also computes summaries for coincidence between eigenvectors and eigenvalues. The tool reports unavailable results for zero-rank or unresolved activation eigenspaces. It does the same for repeated or null weight singular subspaces. Thus, output does not depend on an arbitrary basis.
 
-Decile ablation sets each singular-value decile to zero and measures perplexity. Scope can include all matrices of one type or only analyzed matrices. Epoch tracking uses the selected backend and records actual backend and dtype information. By default, probes occur at intervals of approximately ten percent of training. Tied parameter aliases receive one lesion. An excessive partition count stops before mutation.
+Decile ablation sets each singular-value decile to zero and measures perplexity. It rejects complex parameters before it changes any parameter. Tied parameter aliases receive one lesion.
+
+Checkpoint tracking uses the selected backend and records its actual dtype. The first checkpoint defines the matrix-selection contract. Duplicate probes stop before loading, and later coverage changes receive explicit status.
 
 ## Architecture and tests
 
@@ -45,13 +47,15 @@ ESD bins have a fixed upper limit for a very small IQR. Text windows include lea
 
 ## Output files
 
-For each `<tag>`, output includes `<tag>_matrix_metrics.csv`, `<tag>_summary.json`, and `<tag>_run_status.json`. It also includes `<tag>_run_manifest.json` and optional `<tag>_perplexity.json`. Epoch output uses `<tag>_stable_rank_per_epoch.csv` and checkpoint status. WeightWatcher output and status are optional. The `<tag>/` directory contains plots.
+For each `<tag>`, output includes `<tag>_matrix_metrics.csv`, `<tag>_summary.json`, and `<tag>_run_status.json`. It also includes `<tag>_run_manifest.json` and optional `<tag>_perplexity.json`. Library tags must contain one safe filename component.
+
+Epoch output uses `<tag>_stable_rank_per_epoch.csv` and checkpoint status. WeightWatcher output and status are optional. The `<tag>/` directory contains plots.
 
 ## CSV column groups
 
 Identity and provenance columns are `name, short, layer_idx, n, m, is_square, N_cov, source_dtype, svd_factorization_dtype`.
 
-MP columns are `sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig], n_*_outliers, frac_*_outliers`. Small-value columns are `ks_lower, n_below_minus, frac_mass_below_minus, excess_small_sv`.
+MP qualification columns are `mp_available, mp_status, mp_resolvable_count`. Fit columns include `sigma_med, sigma_med_refined, n_iter_sigma, mp_minus/plus[/_eig]`, and outlier counts. Small-value columns are `ks_lower, n_below_minus, frac_mass_below_minus, excess_small_sv`.
 
 Tail columns include `alpha, xmin, ks_D, n_tail, alpha_on_nu, alpha_hill_nu, alpha_hill_lambda`. They include all `hill_plateau_*` and support fields. They also include `hill_is_powerlaw, LR_trunc, LR_p, powerlaw_pkg_status/reason`. Random-control columns include `alpha_rand` and its estimator, kind, cutoff, support, KS, and plateau metadata. `max_ev_rand` contains the maximum random eigenvalue.
 

@@ -82,7 +82,7 @@ Production stops if the matching tokenizer is unavailable. Small in-process test
 - `spacing.delta3` no longer contains unused `edges` and `Nvals` variables.
 - `per_matrix` no longer calls `np.sort(s)` before `small_sv_deviation`, because that function sorts its input.
 - If `weight=None`, `overlap.overlap_analysis` gets `n_rows` from `svd.U.shape[0]`, not `min(n,m)`.
-- User instructions do not give old test counts. `bug_report.md` gives current finding status.
+- User instructions do not give fixed test counts. `bug_report.md` and `bug_reportv2.md` give current finding status.
 
 ## 10. v3 and v4 contracts
 
@@ -112,4 +112,14 @@ The static audit added more controls. Decile preflight uses metadata and bounded
 
 The pipeline qualifies singular subspaces and aligns discovery by component. Activation replay artifacts and failures are transactional. Disabled overlap stays disabled. An analyzed lesion scope must match exactly.
 
-Spacing receives and records the seed. Random Hill output records support. Degenerate modified-MP fits and unsupported library configuration cause explicit errors. Checkpoint iterables become materialized lists. Optional power-law adapters return structured status. Tests use one synthetic fixture set. Read `bug_report.md` for each status.
+Spacing receives and records the seed. Random Hill output records support. Degenerate modified-MP fits and unsupported library configuration cause explicit errors. Checkpoint iterables become materialized lists. Optional power-law adapters return structured status. Read `bug_report.md` for these repairs.
+
+## 12. Second audit repairs
+
+Strict model analysis requires every requested layer. Checkpoint runs reject duplicate probes and compare exact matrix coverage with the first checkpoint.
+
+Library tags cannot contain paths. Real-only analysis rejects complex values before conversion or mutation. Overlap uses the actual SVD precision.
+
+MP output records numerical-spectrum availability. Density, cumulative probability, and energy fractions use normalized units. Hill search examines overlapping bands, and interval statistics require a finite positive length.
+
+Read `bug_reportv2.md` for the second audit status and local test evidence.

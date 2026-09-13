@@ -23,7 +23,10 @@ def _generator(rng: RandomState) -> np.random.Generator:
 
 
 def _finite_matrix(weight: np.ndarray) -> np.ndarray:
-    matrix = np.asarray(weight, dtype=np.float64)
+    raw = np.asarray(weight)
+    if np.iscomplexobj(raw):
+        raise TypeError("complex weights are not supported by real FARMS analysis")
+    matrix = np.asarray(raw, dtype=np.float64)
     if matrix.ndim != 2 or min(matrix.shape) < 1:
         raise ValueError("weight must be a nonempty two-dimensional matrix")
     if not np.all(np.isfinite(matrix)):

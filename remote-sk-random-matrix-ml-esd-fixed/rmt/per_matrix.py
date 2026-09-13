@@ -40,7 +40,10 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     SVD and without keeping the weight alive (REPORT §2 plot wiring).
     """
     cfg = cfg or RunConfig()
-    W = np.asarray(record.weight, dtype=np.float64)
+    raw_weight = np.asarray(record.weight)
+    if np.iscomplexobj(raw_weight):
+        raise TypeError("complex weights are not supported by real matrix analysis")
+    W = np.asarray(raw_weight, dtype=np.float64)
     n, m = int(record.n), int(record.m)
 
     # --- THE single SVD ---------------------------------------------------- #
@@ -101,23 +104,40 @@ def per_matrix_analysis(record, fm_dict=None, *, cfg: Optional[RunConfig] = None
     }
 
     # --- MP bulk + sigma --------------------------------------------------- #
-    sigma_med = MP.estimate_sigma_gd_median(s=s, n=n, m=m)
-    sig0, sig_ref, n_iter = MP.estimate_sigma_med_refined(s=s, n=n, m=m)
-    mp_minus, mp_plus = MP.mp_bounds(n, m, sigma_med)
-    mp_minus_eig, mp_plus_eig = MP.mp_bounds_eig(n, m, sigma_med, N_cov)
-    n_right = int(np.sum(s > mp_plus))
-    n_left = int(np.sum(s < mp_minus))
+    factor_dtype = np.dtype(svd.factorization_dtype)
+    resolution = np.finfo(factor_dtype).eps * max(n, m) * float(np.max(s))
+    qualified_s = np.asarray(s, dtype=np.float64).copy()
+    qualified_s[qualified_s <= resolution] = 0.0
+    fit_s = qualified_s[qualified_s > 0.0]
+    mp_available = fit_s.size >= 4
+    if mp_available:
+        sigma_med = MP.estimate_sigma_gd_median(s=fit_s, n=n, m=m)
+        sig0, sig_ref, n_iter = MP.estimate_sigma_med_refined(s=fit_s, n=n, m=m)
+        mp_minus, mp_plus = MP.mp_bounds(n, m, sigma_med)
+        mp_minus_eig, mp_plus_eig = MP.mp_bounds_eig(n, m, sigma_med, N_cov)
+        n_right = int(np.sum(s > mp_plus))
+        n_left = int(np.sum(s < mp_minus))
+        dev = MP.small_sv_deviation(s, n, m, sigma_med)
+        mp_status = "available"
+    else:
+        sigma_med = sig0 = sig_ref = mp_minus = mp_plus = _nan()
+        mp_minus_eig = mp_plus_eig = _nan()
+        n_iter = 0
+        n_right = n_left = 0
+        dev = {
+            "ks_lower": _nan(), "n_below_minus": 0,
+            "frac_mass_below_minus": _nan(), "excess_small_sv": _nan(),
+        }
+        mp_status = "unavailable: fewer than four numerically resolvable singular values"
     row.update({
+        "mp_available": int(mp_available), "mp_status": mp_status,
+        "mp_resolvable_count": int(fit_s.size),
         "sigma_med": sigma_med, "sigma_med_refined": sig_ref, "n_iter_sigma": n_iter,
         "mp_minus": mp_minus, "mp_plus": mp_plus,
         "mp_minus_eig": mp_minus_eig, "mp_plus_eig": mp_plus_eig,
         "n_right_outliers": n_right, "n_left_outliers": n_left,
         "frac_right_outliers": n_right / len(s), "frac_left_outliers": n_left / len(s),
     })
-
-    # --- small-SV deviation ------------------------------------------------ #
-    # small_sv_deviation re-sorts internally; pass s directly (no extra sort).
-    dev = MP.small_sv_deviation(s, n, m, sigma_med)
     row.update(dev)
 
     # --- tail exponents (labelled) — gated on cfg.do_powerlaw (REPORT §2) --- #
@@ -388,6 +408,7 @@ def _set_overlap_nans(row):
 CSV_COLUMNS = (
     ["name", "short", "layer_idx", "n", "m", "is_square", "N_cov", "source_dtype",
      "svd_backend", "svd_factorization_dtype", "svd_degraded", "precision_status",
+     "mp_available", "mp_status", "mp_resolvable_count",
      "sigma_med", "sigma_med_refined", "n_iter_sigma", "mp_minus", "mp_plus",
      "mp_minus_eig", "mp_plus_eig", "n_right_outliers", "n_left_outliers",
      "frac_right_outliers", "frac_left_outliers",

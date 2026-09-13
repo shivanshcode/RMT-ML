@@ -231,11 +231,15 @@ class ActivationExtractor:
     def __enter__(self) -> "ActivationExtractor":
         if self.handles:
             raise RuntimeError("ActivationExtractor is already active")
-        for name, module in self.model.named_modules():
-            if name and self._selected(name, module):
-                self.handles.append(module.register_forward_hook(self._make_hook(name)))
-        if not self.handles:
-            raise ValueError("module_filter selected no modules")
+        try:
+            for name, module in self.model.named_modules():
+                if name and self._selected(name, module):
+                    self.handles.append(module.register_forward_hook(self._make_hook(name)))
+            if not self.handles:
+                raise ValueError("module_filter selected no modules")
+        except BaseException:
+            self.remove()
+            raise
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:

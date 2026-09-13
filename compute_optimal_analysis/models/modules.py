@@ -107,7 +107,15 @@ class CausalSelfAttention(nn.Module):
         if repeat > 1:
             key = key.repeat_interleave(repeat, dim=1)
             value = value.repeat_interleave(repeat, dim=1)
-        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        # Promote reduced-precision inputs before the dot product can overflow.
+        score_dtype = (
+            torch.float32 if query.dtype in {torch.float16, torch.bfloat16} else query.dtype
+        )
+        with torch.autocast(device_type=query.device.type, enabled=False):
+            scores = torch.matmul(
+                query.to(dtype=score_dtype), key.to(dtype=score_dtype).transpose(-2, -1)
+            )
+            scores = scores * (1.0 / math.sqrt(self.head_dim))
         allowed = ~torch.ones(sequence, sequence, dtype=torch.bool,
                               device=hidden_states.device).triu(1)
         allowed = allowed[None, None, :, :].expand(batch, 1, sequence, sequence)
@@ -119,7 +127,7 @@ class CausalSelfAttention(nn.Module):
             valid_queries = valid_keys
             allowed = allowed & valid_keys[:, None, None, :]
         scores = scores.masked_fill(~allowed, torch.finfo(scores.dtype).min)
-        probabilities = F.softmax(scores.float(), dim=-1)
+        probabilities = F.softmax(scores, dim=-1)
         # A fully masked row must be exactly zero, not softmax(uniform min).
         probabilities = probabilities * allowed.to(probabilities.dtype)
         denominator = probabilities.sum(dim=-1, keepdim=True)
@@ -127,9 +135,12 @@ class CausalSelfAttention(nn.Module):
             denominator > 0.0,
             probabilities / denominator.clamp_min(torch.finfo(probabilities.dtype).tiny),
             torch.zeros_like(probabilities),
-        ).to(dtype=query.dtype)
+        )
         probabilities = F.dropout(probabilities, p=self.dropout, training=self.training)
-        context = torch.matmul(probabilities, value)
+        with torch.autocast(device_type=query.device.type, enabled=False):
+            context = torch.matmul(
+                probabilities, value.to(dtype=score_dtype)
+            ).to(dtype=hidden_states.dtype)
         context = context.transpose(1, 2).contiguous().view(batch, sequence, self.d_model)
         output = self.o_proj(context)
         if valid_queries is not None:

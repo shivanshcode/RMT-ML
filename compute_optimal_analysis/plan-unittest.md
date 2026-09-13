@@ -2,7 +2,7 @@
 
 All stochastic tests use fixed seeds. Pure tests import only NumPy, SciPy, pytest, and `rmt`. Torch tests use tiny in-process models and no network or package installation.
 
-Phase III assigns each test group to one file. `test_bug_report_regressions.py` contains static-audit regressions. They cover autocast moments, collapse, finite configuration, unavailable results, and steep bounded tails.
+Phase III assigns each test group to one file. `test_bug_report_v2.py` contains the second-audit regressions. It covers numerical scaling, FP16 attention, asset transactions, cleanup, and real-only entry points.
 
 `test_lanczos_stieltjes.py` covers VEST, support, and reference-Ritz calibration. `test_farms_aspect_ratio.py` covers reference geometry, sampling, and fixed-ratio invariance. `test_activation_hooks.py` covers device reduction and the bridge to pure SVD. `test_cli_dispatch.py` covers source isolation, four-track parsing, SLURM, and offline contracts.
 

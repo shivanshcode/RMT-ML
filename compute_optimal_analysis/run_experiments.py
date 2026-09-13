@@ -46,6 +46,7 @@ from rmt.factory import (
     dispatch_tail_solver,
     dispatch_unfolding,
     prepare_spectrum,
+    qualified_raw_eigenvalues,
 )
 from rmt.mp import SpikeDetectionResult, fit_marchenko_pastur, mp_soft_rank
 from rmt.overlap import dual_end_alignment, weight_basis_status
@@ -67,6 +68,35 @@ from rmt.tail import hill_alpha_at, hill_plateau
 
 COMPUTE_BUDGETS = (1e15, 1e16, 1e17)
 REGIME_MULTIPLIERS = (0.25, 1.0, 4.0)
+
+
+def _prepare_spacing_fit(
+    weight: np.ndarray,
+    raw_eigenvalues: np.ndarray,
+    svd: Any,
+    method_config: RMTMethodConfig,
+    headline_fit: Any,
+    *,
+    headline_is_raw: bool,
+    requested: bool,
+) -> tuple[np.ndarray, Any | None]:
+    """Return the qualified raw spectrum and its optional spacing fit."""
+
+    values = qualified_raw_eigenvalues(weight, raw_eigenvalues, svd)
+    if not requested:
+        return values, None
+    if headline_is_raw:
+        available = bool(headline_fit.diagnostics.get("available", True))
+        return values, headline_fit if available else None
+    if np.count_nonzero(values > 0.0) < 4:
+        return values, None
+    try:
+        fitted = fit_marchenko_pastur(
+            values, svd.aspect_ratio, trim_upper=method_config.mp_trim_upper
+        )
+    except (ValueError, np.linalg.LinAlgError):
+        fitted = None
+    return values, fitted
 
 
 def _json_value(value: Any) -> Any:
@@ -489,17 +519,26 @@ def analyze_model(
         # operator.  Pooled FARMS observations are valid for an ESD, not for
         # nearest-neighbour correlations.  Fit a separate raw-domain bulk when
         # the selected headline MP fit lives in another domain.
-        spacing_eigenvalues = raw_eigenvalues
-        spacing_mp_fit = (mp_fit if mp_is_raw else fit_marchenko_pastur(
-            spacing_eigenvalues, svd.aspect_ratio,
-            trim_upper=method_config.mp_trim_upper,
-        ))
+        needs_spacing = bool(
+            compute_spacing_distribution or compute_number_variance or compute_delta3
+        )
+        spacing_eigenvalues, spacing_mp_fit = _prepare_spacing_fit(
+            weight,
+            raw_eigenvalues,
+            svd,
+            method_config,
+            mp_fit,
+            headline_is_raw=mp_is_raw,
+            requested=needs_spacing,
+        )
         if (method_config.mp_fit_method == "farms_unbiased"
                 and "spectral_max" in mp_fit.diagnostics):
             mp_soft_spectrum = np.asarray([float(mp_fit.diagnostics["spectral_max"])])
         else:
             mp_soft_spectrum = mp_eigenvalues
         bulk_mask = (
+            np.zeros(spacing_eigenvalues.shape, dtype=bool)
+            if spacing_mp_fit is None else
             (spacing_eigenvalues >= spacing_mp_fit.lambda_minus)
             & (spacing_eigenvalues <= spacing_mp_fit.lambda_plus)
         )
@@ -513,9 +552,6 @@ def analyze_model(
             max(10, 2 * method_config.gaussian_kernel_window + 1)
             if method_config.unfolding_strategy == "gaussian_kernel"
             else 10
-        )
-        needs_spacing = bool(
-            compute_spacing_distribution or compute_number_variance or compute_delta3
         )
         unfolding_status = "not_requested_or_insufficient"
         # Adjacent-gap ratios need no unfolding and remain available when a

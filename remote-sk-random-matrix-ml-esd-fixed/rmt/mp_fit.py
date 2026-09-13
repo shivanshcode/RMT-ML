@@ -51,11 +51,16 @@ def gaussian_broaden(x, svals, win: int = 15) -> np.ndarray:
 def modified_mp(x, a: float, nu_max: float, nu_min: float) -> np.ndarray:
     """y = (a/nu) * sqrt((nu_max^2 - nu^2)(nu^2 - nu_min^2)), 0 outside support."""
     x = np.asarray(x, dtype=np.float64)
+    scale = float(nu_max)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("nu_max must be finite and positive")
+    lower = float(nu_min) / scale
+    normalized = x / scale
     out = np.zeros_like(x)
-    inside = (x > nu_min) & (x < nu_max)
-    xi = x[inside]
-    rad = (nu_max ** 2 - xi ** 2) * (xi ** 2 - nu_min ** 2)
-    out[inside] = a / xi * np.sqrt(np.clip(rad, 0.0, None))
+    inside = (normalized > lower) & (normalized < 1.0)
+    xi = normalized[inside]
+    rad = (1.0 - xi ** 2) * (xi ** 2 - lower ** 2)
+    out[inside] = float(a) * scale / xi * np.sqrt(np.clip(rad, 0.0, None))
     return out
 
 

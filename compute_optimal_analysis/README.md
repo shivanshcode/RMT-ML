@@ -15,13 +15,13 @@ Spectral-Chinchilla trains causal Transformers with controlled compute allocatio
 
 ## Numerical and safety contracts
 
-Gradient clipping gets its coefficient from an FP64 norm. Token-progress warmup cannot exceed the selected peak learning rate.
+Gradient clipping gets its coefficient from an FP64 norm. Token-progress warmup cannot exceed the selected peak learning rate. Reduced-precision attention computes score products and normalization in FP32 before it returns to the active model dtype.
 
-SVD results keep the actual factorization precision. Numerical rank, overlap, and Porter-Thomas output is unavailable for an unresolved null or repeated basis. Real-only APIs reject complex matrices.
+SVD results keep the actual factorization precision. Numerical rank, overlap, and Porter-Thomas output is unavailable for an unresolved null or repeated basis. Spacing uses the qualified raw spectrum only when the user requests spacing analysis. Real-only APIs reject complex matrices.
 
-Finite changes of spectral units do not change MP quantiles, modified-MP fits, or dimensionless scalar summaries. FARMS availability uses the prepared pooled spectrum. Constant-tail poles and the Stieltjes transform use the same recurrence.
+Finite changes of spectral units do not change MP density, MP cumulative probability, energy-match status, or Lanczos convergence diagnostics. Constant-tail transforms use a stable zero-argument expression.
 
-Reusable lesion factors bind to matrix content and the analysis contract. Presets apply before dependent input tests.
+Reusable lesion factors bind to matrix content and the analysis contract. Hook setup removes earlier hooks if later registration fails. Presets apply before dependent input tests.
 
 ## Cluster procedure
 
@@ -47,9 +47,11 @@ python scripts/download_assets.py --assets all --allow-network
 
 Before partial staging, the utility examines unchanged asset families against the manifest. It examines both membership and content. It rejects added, removed, or changed files instead of certifying them again.
 
-The utility downloads a tokenizer snapshot into a new tree before replacement. Thus, a file that upstream removed cannot stay after a revision change. Manifest paths use relative POSIX syntax and work for Windows staging and Linux use.
+The utility builds the full replacement under a separate release root. It writes and examines the new manifest before publication. A staging lock prevents two staging processes from publishing a mixed release. If staging or publication fails, the utility restores the previous `data/` tree.
 
-The utility resolves the dataset and tokenizer repositories to fixed commit SHAs. It stages `Salesforce/wikitext` configuration `wikitext-103-raw-v1` and the `openai-community/gpt2` tokenizer. It also stages raw JSONL splits, one integer token array, cache directories, and a deterministic synthetic corpus. `data/asset_manifest.json` records source revisions and SHA-256 checksums.
+Manifest examination compares the complete `data/` file set with the recorded set. It rejects extra, missing, changed, duplicate, and out-of-root records. The manifest file itself is the only excluded file. Manifest paths use relative POSIX syntax and work for Windows staging and Linux use.
+
+The utility resolves the dataset and tokenizer repositories to fixed commit SHAs. It stages `Salesforce/wikitext` configuration `wikitext-103-raw-v1` and the `openai-community/gpt2` tokenizer. It also stages raw JSONL splits, one integer token array, and a deterministic synthetic corpus. `data/asset_manifest.json` records source revisions and SHA-256 checksums.
 
 To examine a copied asset tree without network access, enter:
 

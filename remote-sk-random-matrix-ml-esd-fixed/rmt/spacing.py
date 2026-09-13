@@ -123,6 +123,9 @@ def sigma2(levels, L, deg=7, *, seed=None, rng=None) -> float:
     ``seed``/``rng`` makes the sampling part of run-level reproducibility.
     GOE: Σ²(L) ≈ (2/π²)[ln(2πL)+γ+1−π²/8].
     """
+    L = float(L)
+    if not np.isfinite(L) or L <= 0.0:
+        raise ValueError("L must be finite and positive")
     xi = np.sort(unfold(levels, deg=deg))
     lo, hi = xi[0], xi[-1]
     span = hi - lo
@@ -143,6 +146,9 @@ def delta3(levels, L, deg=7, *, seed=None, rng=None) -> float:
     Δ₃(L) = ⟨ min_{a,b} (1/L)∫_x^{x+L}(N(ξ)−a−bξ)² dξ ⟩.
     GOE: Δ₃(L) ≈ (1/π²)[ln(2πL)+γ−5/4−π²/8].
     """
+    L = float(L)
+    if not np.isfinite(L) or L <= 0.0:
+        raise ValueError("L must be finite and positive")
     xi = np.sort(unfold(levels, deg=deg))
     lo, hi = xi[0], xi[-1]
     span = hi - lo

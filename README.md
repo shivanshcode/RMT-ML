@@ -9,4 +9,4 @@ Both projects have a top-level Python package named `rmt`, but their APIs are in
 
 Operate commands and tests in separate processes from the applicable project root. Do not put both roots on one `PYTHONPATH`. Do not import both packages in one interpreter. These actions can load the incorrect `rmt` package.
 
-Each production entry point isolates and makes sure of its project. Read the applicable `README.md` for the CLI, output, precision, and asset contracts. Read the applicable `bug_report.md` for the status of each finding.
+Each production entry point isolates its project. Read the applicable `README.md` for the CLI, output, precision, and asset contracts. Read `bug_report.md` and `bug_reportv2.md` for the repair status of each audit finding.

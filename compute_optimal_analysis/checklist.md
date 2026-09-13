@@ -31,14 +31,15 @@
 - [x] Pooled FARMS ESD/tail observations are separated from single-operator spacing, with per-domain geometry and normalization provenance.
 - [x] Tracy--Widom uses operator/window dimensions. Production Lanczos margins are scale-relative and serialized.
 - [x] Training, evaluation, lesions, activation covariance, CLI aliases, scaling grouping, and Hill support have v3/v4 regressions.
-- [x] All COA-001..COA-016 findings in `bug_report.md` are fixed. Repairs cover MP, scaling, schedules, Lanczos, tails, overlap, collapse, and atomic ownership.
+- [x] All COA-001 through COA-016 findings in `bug_report.md` are fixed.
+- [x] All COA-V2-001 through COA-V2-012 findings in `bug_reportv2.md` are fixed.
 
 ## Human execution gates
 
 - [ ] Record `/home/shivansh/.conda/envs/rmt_ml_env` and do its tests. Do not install standalone `requirements.txt` pins into it in place.
 - [ ] If the live stack is incompatible, create a separate environment and archive its reviewed `requirements-cluster.txt` and wheel inventory.
 - [ ] Search `rmt/` without case sensitivity. Make sure that the prohibited framework name does not occur in source, comments, or docstrings.
-- [ ] Do the full pytest suite again in the selected cluster environment. It must have zero failures. `bug_report.md` records the local CPU test.
+- [ ] Do the full pytest suite again in the selected cluster environment. It must have zero failures. Both bug reports record local CPU tests.
 - [ ] Record the exact NumPy/SciPy/platform versions used for numerical calibration.
 - [ ] Apply the seeded three-spike detector. Make sure that it returns three poles and satisfies edge tolerance on the operator BLAS/LAPACK stack.
 - [ ] Apply the six-ratio FARMS edge calibration. Make sure that it satisfies the two-percent tolerance.

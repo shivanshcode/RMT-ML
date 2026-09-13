@@ -41,7 +41,9 @@ A production output directory includes a digest of the resolved model snapshot. 
 
 An execution manifest records the resolved configuration and precision before analysis. The status file starts with `running`. The pipeline writes its final value after all requested stages.
 
-Checkpoint CSV files use a separate exclusive claim and atomic replacement. In permissive mode, missing probe coverage gives partial status. A requested best-effort baseline gets a status artifact. If it is unavailable, the full execution gets partial status.
+Checkpoint CSV files use a separate exclusive claim and atomic replacement. Duplicate probes stop before loading. The first checkpoint defines exact matrix membership and geometry. In permissive mode, missing or changed coverage gives partial status.
+
+A library `model_tag` must contain one safe filename component. It cannot select a path outside the owned output directory.
 
 Discovery reads only metadata until it processes one matrix. Activation capture processes one projection and preserves all train and evaluation modes. Decile sweeps change and restore one model. They require non-degraded float64 SVD results.
 
