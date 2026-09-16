@@ -1,0 +1,18 @@
+--- work/test_crosscheck_calibration.py	2026-08-13 05:31:54.000000000 +0000
++++ tree_fixed/tests/test_crosscheck_calibration.py	2026-08-14 09:47:54.369047904 +0000
+@@ -71,7 +71,14 @@
+                               compute_uv=False))
+     assert SP.unfold_auto(SP.bulk_levels(s, mode="center",
+                                          center_frac=0.7))[1] == "cheb"
+-    assert SP.unfold_auto(s ** 2 / 500.0)[1] == "gauss"
++    # WAS: == "gauss".  Flipped deliberately.  Falling to the local kernel on a
++    # square-lambda spectrum is the pathology, not the cure -- it is what cost
++    # ~11 % on Sigma^2(10) through the window-reach bias.  The transform search
++    # now removes the lambda^(-1/2) hard-edge singularity exactly (x -> sqrt x),
++    # so the global fit is recovered and the crosscheck drops 4.45 -> ~1.0.
++    assert SP.unfold_auto(s ** 2 / 500.0)[1] == "cheb"
++    assert SP.unfold_transform_auto(s ** 2 / 500.0)[2] == "sqrt"
++    assert SP.unfold_transform_auto(s ** 2 / 500.0)[3] < SP.AUTO_CROSSCHECK_TOL
+ 
+ 
+ def test_crosscheck_docstring_records_the_justification():

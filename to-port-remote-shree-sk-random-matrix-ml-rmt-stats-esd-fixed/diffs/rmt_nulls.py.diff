@@ -1,0 +1,52 @@
+--- work/nulls.py	2026-08-13 05:31:54.000000000 +0000
++++ tree_fixed/rmt/nulls.py	2026-08-14 09:47:54.365865694 +0000
+@@ -36,6 +36,7 @@
+ import warnings
+ 
+ import numpy as np
++import scipy.stats
+ 
+ from . import spacing as SP
+ 
+@@ -343,6 +344,11 @@
+     """Standardised deviation of a measured value against its own null band.
+ 
+     This is what belongs in the paper, not ``value / delta3_goe_theory(L) - 1``.
++
++    NOTE the reference distribution: because the band mean and sd are estimated
++    from ``n`` replicas, this ratio is **t-distributed with n-1 degrees of
++    freedom, scaled by sqrt(1 + 1/n)** -- not standard normal.  Use
++    :func:`critical_value` to threshold it, never ``norm.ppf``.
+     """
+     sd = band_entry.get("sd", 0.0)
+     if not np.isfinite(value) or sd <= 0:
+@@ -350,6 +356,29 @@
+     return float((value - band_entry["mean"]) / sd)
+ 
+ 
++def critical_value(n_reps: int, n_tests: int = 1, alpha: float = 0.05) -> float:
++    """Two-sided Bonferroni critical value for :func:`zscore`, done correctly.
++
++    A band built from ``n_reps`` replicas gives an estimated mean and sd, so
++    scoring an out-of-sample matrix against it yields
++    ``t_{n-1} * sqrt(1 + 1/n)``, not a standard normal.  Using ``norm.ppf`` is
++    anti-conservative by 20 % at n = 20 and 39 % at n = 12 -- which is exactly
++    why a 12-replica null run appeared to produce |z| = 4.1 "false positives"
++    against a nominal 3.23 threshold.  Under the correct threshold (4.48) it was
++    never a false positive at all.
++
++    >>> round(critical_value(20, 40), 2)
++    3.88
++    >>> round(critical_value(12, 40), 2)
++    4.48
++    """
++    n = int(n_reps)
++    if n < 3:
++        return float("inf")
++    a = float(alpha) / max(1, int(n_tests))
++    return float(scipy.stats.t.ppf(1.0 - a / 2.0, n - 1) * np.sqrt(1.0 + 1.0 / n))
++
++
+ # --------------------------------------------------------------------------- #
+ # (2)+(3) Calibrated KS p-value -- replaces scipy.stats.kstest                  #
+ # --------------------------------------------------------------------------- #

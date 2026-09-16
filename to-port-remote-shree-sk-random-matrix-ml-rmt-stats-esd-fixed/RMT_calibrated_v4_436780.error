@@ -1,0 +1,524 @@
+[14:55:24] rmt.selftest INFO: selftest mp_pdf_norm                  PASS
+[14:55:24] rmt.selftest INFO: selftest sigma_recovery               PASS
+[14:55:24] rmt.selftest INFO: selftest csn_pareto                   PASS
+[14:55:24] rmt.selftest INFO: selftest hill_windowed_discriminates  PASS
+[14:55:24] rmt.selftest INFO: selftest r_goe                        PASS
+[14:55:24] rmt.selftest INFO: selftest r_poisson                    PASS
+[14:55:24] rmt.selftest INFO: selftest nn_spacing_goe               PASS
+[14:55:24] rmt.selftest INFO: selftest unfolding_valid              PASS
+[14:55:24] rmt.selftest INFO: selftest delta3_goe_log_law           PASS
+[14:55:24] rmt.selftest INFO: selftest porter_thomas_calibrated     PASS
+[14:55:24] rmt.selftest INFO: selftest fm_key                       PASS
+[14:55:24] rmt.selftest INFO: selftest overall: PASS
+[17:13:10] rmt.selftest INFO: selftest mp_pdf_norm                  PASS
+[17:13:10] rmt.selftest INFO: selftest sigma_recovery               PASS
+[17:13:10] rmt.selftest INFO: selftest csn_pareto                   PASS
+[17:13:10] rmt.selftest INFO: selftest hill_windowed_discriminates  PASS
+[17:13:10] rmt.selftest INFO: selftest r_goe                        PASS
+[17:13:10] rmt.selftest INFO: selftest r_poisson                    PASS
+[17:13:10] rmt.selftest INFO: selftest nn_spacing_goe               PASS
+[17:13:10] rmt.selftest INFO: selftest unfolding_valid              PASS
+[17:13:10] rmt.selftest INFO: selftest delta3_goe_log_law           PASS
+[17:13:10] rmt.selftest INFO: selftest porter_thomas_calibrated     PASS
+[17:13:10] rmt.selftest INFO: selftest fm_key                       PASS
+[17:13:10] rmt.selftest INFO: selftest overall: PASS
+[17:16:04] rmt.model_io INFO: loading local model from ./models/Llama-3.1-8B (dtype=fp32, device=cuda)
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights:   0%|          | 1/291 [00:08<39:16,  8.12s/it]Loading weights:   1%|          | 2/291 [00:12<28:01,  5.82s/it]Loading weights:  21%|██        | 60/291 [00:12<00:28,  8.20it/s]Loading weights:  24%|██▎       | 69/291 [00:15<00:33,  6.64it/s]Loading weights:  26%|██▌       | 75/291 [00:15<00:29,  7.43it/s]Loading weights:  27%|██▋       | 80/291 [00:17<00:38,  5.46it/s]Loading weights:  29%|██▉       | 85/291 [00:20<00:51,  4.03it/s]Loading weights:  32%|███▏      | 94/291 [00:21<00:42,  4.68it/s]Loading weights:  33%|███▎      | 96/291 [00:22<00:47,  4.11it/s]Loading weights:  35%|███▌      | 103/291 [00:24<00:42,  4.43it/s]Loading weights:  36%|███▌      | 105/291 [00:24<00:45,  4.09it/s]Loading weights:  38%|███▊      | 112/291 [00:26<00:38,  4.61it/s]Loading weights:  41%|████      | 118/291 [00:26<00:27,  6.29it/s]Loading weights:  42%|████▏     | 121/291 [00:28<00:44,  3.86it/s]Loading weights:  42%|████▏     | 123/291 [00:28<00:40,  4.12it/s]Loading weights:  45%|████▍     | 130/291 [00:30<00:35,  4.58it/s]Loading weights:  45%|████▌     | 131/291 [00:30<00:36,  4.40it/s]Loading weights:  48%|████▊     | 139/291 [00:31<00:27,  5.47it/s]Loading weights:  48%|████▊     | 140/291 [00:31<00:26,  5.62it/s]Loading weights:  48%|████▊     | 141/291 [00:31<00:28,  5.33it/s]Loading weights:  51%|█████     | 148/291 [00:32<00:22,  6.33it/s]Loading weights:  51%|█████     | 149/291 [00:32<00:21,  6.46it/s]Loading weights:  52%|█████▏    | 150/291 [00:32<00:21,  6.49it/s]Loading weights:  54%|█████▍    | 157/291 [00:33<00:19,  6.84it/s]Loading weights:  55%|█████▍    | 159/291 [00:34<00:17,  7.58it/s]Loading weights:  57%|█████▋    | 166/291 [00:34<00:16,  7.63it/s]Loading weights:  57%|█████▋    | 167/291 [00:35<00:16,  7.48it/s]Loading weights:  58%|█████▊    | 168/291 [00:35<00:15,  7.69it/s]Loading weights:  60%|██████    | 175/291 [00:36<00:15,  7.51it/s]Loading weights:  63%|██████▎   | 184/291 [00:38<00:19,  5.39it/s]Loading weights:  66%|██████▋   | 193/291 [00:40<00:18,  5.23it/s]Loading weights:  67%|██████▋   | 195/291 [00:40<00:17,  5.64it/s]Loading weights:  69%|██████▉   | 202/291 [00:41<00:17,  5.02it/s]Loading weights:  70%|██████▉   | 203/291 [00:42<00:17,  4.90it/s]Loading weights:  73%|███████▎  | 211/291 [00:43<00:16,  4.89it/s]Loading weights:  73%|███████▎  | 213/291 [00:44<00:15,  4.98it/s]Loading weights:  76%|███████▌  | 220/291 [00:45<00:14,  4.78it/s]Loading weights:  76%|███████▋  | 222/291 [00:45<00:13,  5.15it/s]Loading weights:  79%|███████▊  | 229/291 [00:47<00:13,  4.69it/s]Loading weights:  79%|███████▉  | 230/291 [00:47<00:12,  4.77it/s]Loading weights:  79%|███████▉  | 231/291 [00:47<00:12,  4.90it/s]Loading weights:  82%|████████▏ | 238/291 [00:49<00:09,  5.34it/s]Loading weights:  82%|████████▏ | 239/291 [00:49<00:09,  5.35it/s]Loading weights:  82%|████████▏ | 240/291 [00:49<00:09,  5.17it/s]Loading weights:  85%|████████▍ | 247/291 [00:50<00:08,  5.28it/s]Loading weights:  85%|████████▌ | 248/291 [00:51<00:08,  5.34it/s]Loading weights:  88%|████████▊ | 256/291 [00:52<00:06,  5.06it/s]Loading weights:  89%|████████▊ | 258/291 [00:52<00:05,  5.65it/s]Loading weights:  91%|█████████ | 265/291 [00:54<00:05,  4.60it/s]Loading weights:  91%|█████████▏| 266/291 [00:54<00:05,  4.55it/s]Loading weights:  94%|█████████▍| 274/291 [00:56<00:03,  5.30it/s]Loading weights:  95%|█████████▍| 276/291 [00:56<00:02,  5.51it/s]Loading weights:  97%|█████████▋| 283/291 [00:57<00:01,  5.35it/s]Loading weights: 100%|██████████| 291/291 [00:57<00:00,  5.03it/s]
+[17:17:42] rmt.pipeline INFO: [meta-llama_Llama-3.1-8B] discovered 35 matrices
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+/home/shivansh/.conda/envs/rmt_ml_env/lib/python3.10/site-packages/numpy/polynomial/chebyshev.py:1675: RankWarning: The fit may be poorly conditioned
+  return pu._fit(chebvander, x, y, deg, rcond, full, w)
+[17:30:54] rmt.cli INFO: wrote rmt_results/meta-llama_Llama-3.1-8B/meta-llama_Llama-3.1-8B_matrix_metrics.csv (35 rows)
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights:   0%|          | 1/291 [00:06<31:41,  6.56s/it]Loading weights:   1%|          | 2/291 [00:11<27:41,  5.75s/it]Loading weights:  17%|█▋        | 49/291 [00:12<00:35,  6.73it/s]Loading weights:  19%|█▉        | 56/291 [00:12<00:31,  7.41it/s]Loading weights:  21%|██        | 61/291 [00:13<00:32,  7.12it/s]Loading weights:  23%|██▎       | 67/291 [00:14<00:31,  7.18it/s]Loading weights:  24%|██▍       | 70/291 [00:14<00:28,  7.86it/s]Loading weights:  26%|██▌       | 76/291 [00:15<00:28,  7.50it/s]Loading weights:  29%|██▉       | 85/291 [00:16<00:28,  7.31it/s]Loading weights:  30%|██▉       | 87/291 [00:16<00:27,  7.50it/s]Loading weights:  32%|███▏      | 94/291 [00:17<00:26,  7.32it/s]Loading weights:  33%|███▎      | 96/291 [00:17<00:25,  7.64it/s]Loading weights:  35%|███▌      | 103/291 [00:18<00:25,  7.31it/s]Loading weights:  36%|███▌      | 105/291 [00:19<00:26,  7.10it/s]Loading weights:  38%|███▊      | 112/291 [00:20<00:23,  7.56it/s]Loading weights:  39%|███▉      | 114/291 [00:20<00:23,  7.60it/s]Loading weights:  42%|████▏     | 121/291 [00:21<00:22,  7.50it/s]Loading weights:  42%|████▏     | 123/291 [00:21<00:21,  7.68it/s]Loading weights:  45%|████▍     | 130/291 [00:22<00:20,  7.81it/s]Loading weights:  45%|████▌     | 131/291 [00:22<00:21,  7.46it/s]Loading weights:  48%|████▊     | 139/291 [00:23<00:19,  7.98it/s]Loading weights:  48%|████▊     | 140/291 [00:23<00:18,  8.00it/s]Loading weights:  48%|████▊     | 141/291 [00:23<00:20,  7.37it/s]Loading weights:  51%|█████     | 148/291 [00:24<00:16,  8.43it/s]Loading weights:  51%|█████     | 149/291 [00:24<00:17,  8.33it/s]Loading weights:  52%|█████▏    | 150/291 [00:24<00:18,  7.74it/s]Loading weights:  54%|█████▍    | 157/291 [00:25<00:16,  7.92it/s]Loading weights:  54%|█████▍    | 158/291 [00:25<00:16,  7.85it/s]Loading weights:  55%|█████▍    | 159/291 [00:26<00:16,  7.84it/s]Loading weights:  57%|█████▋    | 166/291 [00:26<00:15,  8.08it/s]Loading weights:  57%|█████▋    | 167/291 [00:27<00:15,  7.89it/s]Loading weights:  58%|█████▊    | 168/291 [00:27<00:16,  7.28it/s]Loading weights:  60%|██████    | 175/291 [00:28<00:18,  6.30it/s]Loading weights:  61%|██████    | 177/291 [00:28<00:17,  6.43it/s]Loading weights:  63%|██████▎   | 184/291 [00:30<00:22,  4.86it/s]Loading weights:  64%|██████▍   | 186/291 [00:30<00:19,  5.35it/s]Loading weights:  66%|██████▋   | 193/291 [00:32<00:19,  5.09it/s]Loading weights:  67%|██████▋   | 194/291 [00:32<00:18,  5.31it/s]Loading weights:  69%|██████▉   | 202/291 [00:33<00:16,  5.34it/s]Loading weights:  70%|██████▉   | 203/291 [00:34<00:16,  5.26it/s]Loading weights:  70%|███████   | 204/291 [00:34<00:16,  5.28it/s]Loading weights:  73%|███████▎  | 211/291 [00:35<00:14,  5.67it/s]Loading weights:  73%|███████▎  | 212/291 [00:35<00:14,  5.53it/s]Loading weights:  73%|███████▎  | 213/291 [00:35<00:14,  5.44it/s]Loading weights:  76%|███████▌  | 220/291 [00:37<00:13,  5.42it/s]Loading weights:  76%|███████▌  | 221/291 [00:37<00:12,  5.52it/s]Loading weights:  76%|███████▋  | 222/291 [00:37<00:12,  5.38it/s]Loading weights:  79%|███████▊  | 229/291 [00:38<00:10,  5.64it/s]Loading weights:  79%|███████▉  | 230/291 [00:38<00:11,  5.46it/s]Loading weights:  79%|███████▉  | 231/291 [00:39<00:11,  5.43it/s]Loading weights:  82%|████████▏ | 238/291 [00:40<00:09,  5.59it/s]Loading weights:  82%|████████▏ | 239/291 [00:40<00:09,  5.56it/s]Loading weights:  82%|████████▏ | 240/291 [00:40<00:09,  5.16it/s]Loading weights:  85%|████████▍ | 247/291 [00:42<00:08,  5.21it/s]Loading weights:  85%|████████▌ | 248/291 [00:42<00:07,  5.47it/s]Loading weights:  88%|████████▊ | 256/291 [00:44<00:07,  4.89it/s]Loading weights:  91%|█████████ | 265/291 [00:45<00:04,  5.90it/s]Loading weights:  91%|█████████▏| 266/291 [00:45<00:04,  5.31it/s]Loading weights:  94%|█████████▍| 274/291 [00:46<00:02,  6.13it/s]Loading weights:  95%|█████████▍| 276/291 [00:47<00:02,  5.39it/s]Loading weights:  97%|█████████▋| 283/291 [00:48<00:01,  6.38it/s]Loading weights:  98%|█████████▊| 284/291 [00:48<00:01,  6.47it/s]Loading weights: 100%|██████████| 291/291 [00:48<00:00,  6.02it/s]

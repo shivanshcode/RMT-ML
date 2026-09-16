@@ -1,0 +1,39 @@
+--- work/test_bulk_selection.py	2026-08-13 05:31:54.000000000 +0000
++++ tree_fixed/tests/test_bulk_selection.py	2026-08-14 09:53:57.532541383 +0000
+@@ -68,7 +68,7 @@
+     """
+     N = 500
+     def probe(frac):
+-        ratios, branches = [], []
++        ratios, branches, txs = [], [], []
+         for _ in range(3):
+             s = np.sort(np.linalg.svd(E.wishart_factor(N, N, rng=rng),
+                                       compute_uv=False))
+@@ -77,15 +77,23 @@
+             local = SP.GaussBroadening(15).unfold_spectrum(lv)
+             ratios.append(SP.unfolding_crosscheck(SP._unfold_cheb(lv), local))
+             branches.append(SP.unfold_auto(lv)[1])
+-        return float(np.mean(ratios)), branches
++            txs.append(SP.unfold_transform_auto(lv)[2])
++        return float(np.mean(ratios)), branches, txs
+ 
+-    r_full, b_full = probe(1.0)
+-    r_cut, b_cut = probe(0.7)
++    r_full, b_full, t_full = probe(1.0)
++    r_cut, b_cut, t_cut = probe(0.7)
+ 
+     # untrimmed: the global fit fails the cross-check and every matrix falls
+     # back to the local kernel
+     assert r_full > SP.AUTO_CROSSCHECK_TOL, r_full
+-    assert set(b_full) == {"gauss"}, b_full
++    # UPDATED.  Was: falls back to "gauss".  That fallback was the defect, not
++    # the cure -- it put the matrix on the local kernel, whose window-reach bias
++    # costs ~11 % on Sigma^2(10).  unfold_transform_auto now removes the
++    # lambda^(-1/2) hard-edge singularity exactly via x -> sqrt(x), so the global
++    # fit is recovered.  What the test still pins is the ORIGINAL diagnosis: in
++    # the identity coordinate the global fit really does leave a huge modulation.
++    assert set(b_full) == {"cheb"}, b_full
++    assert set(t_full) == {"sqrt"}, t_full
+     # trimmed: the fit is representable again and the global branch is used
+     assert r_cut < SP.AUTO_CROSSCHECK_TOL, r_cut
+     assert set(b_cut) == {"cheb"}, b_cut

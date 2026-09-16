@@ -1,0 +1,36 @@
+diff --git a/remote-sk-random-matrix-ml-rmt-stats-esd-fixed/rmt/spacing.py b/remote-sk-random-matrix-ml-rmt-stats-esd-fixed/rmt/spacing.py
+index 04cc7a0..ce5e206 100644
+--- a/remote-sk-random-matrix-ml-rmt-stats-esd-fixed/rmt/spacing.py
++++ b/remote-sk-random-matrix-ml-rmt-stats-esd-fixed/rmt/spacing.py
+@@ -185,12 +185,28 @@ def _window_counts(xi: np.ndarray, centres: np.ndarray, L: float) -> np.ndarray:
+     return (hi - lo).astype(np.float64)
+ 
+ 
+-def unfolding_is_valid(xi: np.ndarray, mean_tol: float = 0.02) -> bool:
+-    """Necessary conditions: strictly increasing, <s> = 1 without rescaling."""
++#: Fraction of non-positive spacings tolerated before a global fit is rejected.
++#: A strict ``all(d > 0)`` is a knife-edge on ~10^3 spacings: a single dip in an
++#: otherwise excellent Chebyshev staircase flips the whole matrix to the local
++#: kernel.  Measured flip rate on statistically identical rectangular Wishart
++#: spectra in the lambda domain was 4/8, and because per_matrix writes
++#: ``sigma2_L20 = NaN`` whenever the branch is 'gauss', that produced missing
++#: data correlated with a spectral property.  A fit with <=0.1% dips is still a
++#: usable unfolding; one with a real density modulation fails the crosscheck.
++UNFOLD_NONMONO_TOL = 1e-3
++
++
++def unfolding_is_valid(xi: np.ndarray, mean_tol: float = 0.02,
++                       nonmono_tol: float = UNFOLD_NONMONO_TOL) -> bool:
++    """Necessary conditions: (essentially) increasing, <s> = 1 without rescaling.
++
++    ``nonmono_tol=0`` restores the old strict behaviour.
++    """
+     d = np.diff(np.asarray(xi, dtype=np.float64))
+     if d.size == 0 or not np.all(np.isfinite(d)):
+         return False
+-    return bool(np.all(d > 0) and abs(np.mean(d) - 1.0) < mean_tol)
++    frac_bad = float(np.mean(d <= 0))
++    return bool(frac_bad <= nonmono_tol and abs(np.mean(d) - 1.0) < mean_tol)
+ 
+ 
+ AUTO_CROSSCHECK_L = 3.0     # scale at which a local kernel is provably unbiased

@@ -1,0 +1,58 @@
+--- work/controls.py	2026-08-13 05:31:54.000000000 +0000
++++ tree_fixed/rmt/controls.py	2026-08-14 09:47:54.366255216 +0000
+@@ -178,6 +178,55 @@
+ # --------------------------------------------------------------------------- #
+ # Variance-profile diagnostics                                                 #
+ # --------------------------------------------------------------------------- #
++def variance_profile_gaussian(W, rng: _RngLike = 0, n_sinkhorn: int = 0) -> np.ndarray:
++    """Gaussian null matched to W's *variance profile* -- review item 8.2, done right.
++
++    Draws ``G_ij ~ N(0, 1)`` and scales it by a rank-one profile
++    ``sigma_ij = a_i b_j`` fitted from W's row and column standard deviations,
++    then rescales to W's total Frobenius norm.
++
++    WHY THIS AND NOT A SHUFFLE.  §8.2 asked for a null that preserves the
++    heteroscedasticity of a trained weight matrix.  Neither marginal shuffle
++    does: ``row_shuffle`` preserves the row profile exactly but flattens the
++    column profile, and ``col_shuffle`` the reverse.  Measured on a matrix with
++    row-sd CV 0.785 / col-sd CV 0.413:
++
++    ======================  ===========  ===========
++    control                 CV(row sd)   CV(col sd)
++    ======================  ===========  ===========
++    original                0.785        0.413
++    row_shuffle             0.785        0.116
++    col_shuffle             0.125        0.413
++    row_col_shuffle         0.127        0.116
++    entry_shuffle           0.133        0.132
++    **this function**       **0.776**    **0.415**
++    ======================  ===========  ===========
++
++    Only this one holds both margins, so it is the null that separates "the
++    weights are heteroscedastic" from "the weights carry learned spectral
++    structure".  Theory: random matrices with a variance profile are the
++    Wigner-type / deformed-Marchenko-Pastur ensembles of Ajanki, Erdos & Kruger,
++    *Probab. Theory Relat. Fields* **169**, 667 (2017).
++
++    ``n_sinkhorn`` > 0 runs that many Sinkhorn iterations to match both margins
++    simultaneously when the profile is not well approximated by rank one.
++    """
++    g = _as_rng(rng)
++    W = np.asarray(W, dtype=np.float64)
++    a = W.std(axis=1, keepdims=True)
++    b = W.std(axis=0, keepdims=True)
++    b = b / np.sqrt(np.mean(b ** 2)) if np.mean(b ** 2) > 0 else np.ones_like(b)
++    S = a * b
++    for _ in range(int(n_sinkhorn)):
++        ra = W.std(axis=1, keepdims=True) / np.maximum(S.std(axis=1, keepdims=True), 1e-300)
++        S = S * ra
++        rb = W.std(axis=0, keepdims=True) / np.maximum(S.std(axis=0, keepdims=True), 1e-300)
++        S = S * rb
++    out = S * g.standard_normal(W.shape)
++    nrm = np.linalg.norm(out)
++    return out * (np.linalg.norm(W) / nrm) if nrm > 0 else out
++
++
+ def variance_profile(W) -> dict:
+     """How heteroscedastic is this matrix, and how heavy are its entries?
+ 

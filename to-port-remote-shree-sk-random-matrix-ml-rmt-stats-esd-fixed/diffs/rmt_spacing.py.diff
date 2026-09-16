@@ -1,0 +1,362 @@
+--- work/spacing.py	2026-08-13 05:31:54.000000000 +0000
++++ tree_fixed/rmt/spacing.py	2026-08-14 10:02:09.297597309 +0000
+@@ -27,7 +27,7 @@
+ from __future__ import annotations
+ 
+ import warnings
+-from typing import Optional, Tuple, Union
++from typing import Optional, Sequence, Tuple, Union
+ import numpy as np
+ from scipy.special import erf, gamma as _gamma
+ from scipy.optimize import curve_fit
+@@ -58,6 +58,12 @@
+ #: Beyond this window the local-kernel calibration does not hold at all.
+ GAUSS_WIN_CALIBRATED_MAX = 30
+ 
++#: Below this window the local kernel has NO reliable reach: measured Sigma^2
++#: error at win_size = 5 is -15.3 % already at L = 3.  The previous rule,
++#: ``max(3.0, win/3)``, certified L = 3 there.  Now the gauss branch reports no
++#: usable L at all below this window.
++GAUSS_WIN_MIN_USABLE = 12
++
+ 
+ def sigma2_reliable_lmax(method: str, win_size: int = 15) -> float:
+     """Largest trustworthy L for ``method`` at this unfolding window.
+@@ -67,8 +73,13 @@
+     the largest window the calibration covers.
+     """
+     if method == "gauss":
+-        w = min(int(win_size), GAUSS_WIN_CALIBRATED_MAX)
+-        return float(max(3.0, w / 3.0))
++        w = int(win_size)
++        if w < GAUSS_WIN_MIN_USABLE:
++            # Measured: at w = 5 the kernel is already -15 % at L = 3, so the
++            # old max(3.0, w/3) floor certified a value that is badly biased.
++            # Below this window the local kernel has no trustworthy reach at all.
++            return 0.0
++        return float(min(w, GAUSS_WIN_CALIBRATED_MAX) / 3.0)
+     return float(SIGMA2_RELIABLE_LMAX.get(method, 5.0))
+ # Delta_3 removes the local linear trend, so it is accurate to L=50 either way.
+ DELTA3_RELIABLE_LMAX = 50.0
+@@ -238,6 +249,83 @@
+ BULK_CENTER_FRAC_SWEEP = (0.6, 0.7, 0.8)
+ 
+ 
++#: A level is an edge outlier if its spacing to the body exceeds this many
++#: median spacings.  Rank-one spikes sit far outside the Marchenko-Pastur edge;
++#: they are not bulk levels and they destroy any global fit to the staircase.
++BULK_OUTLIER_TOL = 25.0
++
++#: Peel-inward threshold for a GRADED outlier tail (spikes of decaying
++#: amplitude, which never detach as a cluster).  Lower than BULK_OUTLIER_TOL
++#: because each individual step is small; the cap on total removal is what keeps
++#: it safe on a heavy-tailed but outlier-free spectrum.
++BULK_PEEL_TOL = 6.0
++
++
++def strip_edge_outliers(levels, tol: float = BULK_OUTLIER_TOL,
++                        peel_tol: float = BULK_PEEL_TOL,
++                        max_strip_frac: float = 0.03):
++    """Drop levels detached from the body of the spectrum, from either end.
++
++    Why adaptive rather than a fixed centred fraction.  A fixed
++    ``center_frac=0.7`` throws away 30 % of the levels whether or not there is
++    anything to throw away -- and fewer levels measurably *degrades* Sigma^2 at
++    large L (Sigma^2(20) on a clean 512x512 null drifts 1.020 -> 0.880 as the
++    cut tightens from 1.0 to 0.6, away from the exact 1.049).  This keeps every
++    level unless it is genuinely detached, so clean spectra pay nothing and
++    spiked spectra are still cleaned.
++
++    Returns ``(kept_levels, n_stripped_low, n_stripped_high)``.
++    """
++    x = np.sort(np.asarray(levels, dtype=np.float64))
++    n = x.size
++    if n < 64:
++        return x, 0, 0
++    win = max(32, int(n * 0.05))
++    cap = max(1, int(n * float(max_strip_frac)))
++    core = x[win:n - win]
++    med = float(np.median(np.diff(core))) if core.size > 2 else float("nan")
++    if not np.isfinite(med) or med <= 0:
++        return x, 0, 0
++
++    lo, hi = 0, n
++
++    # (a) DETACHED CLUSTER.  Equal-amplitude spikes arrive as one tight group
++    # separated from the bulk by a single enormous gap (~1400x the median).  Two
++    # conditions are required: gap size AND a small detached count.  Gap size
++    # alone would strip ~20 % of a Poisson spectrum, whose worst edge gap is ~7x
++    # the median but sits above ~8 % of the levels.
++    g = np.diff(x[n - win - 1:n])
++    if g.size:
++        j = int(np.argmax(g))
++        if g[j] > tol * med and (win - j) <= cap:
++            hi = (n - win - 1) + j + 1
++    g = np.diff(x[0:win + 1])
++    if g.size:
++        j = int(np.argmax(g))
++        if g[j] > tol * med and (j + 1) <= cap:
++            lo = j + 1
++
++    # (b) GRADED TAIL.  Spikes with decaying amplitudes -- amp*(i+1)^-0.7, the
++    # realistic trained-weight caricature -- do NOT detach as a cluster: they
++    # thin out continuously into the bulk, so (a) finds only the topmost one.
++    # Peel inward while the outermost spacing is still far above the interior
++    # median.  On a Poisson spectrum the first spacing clears peel_tol only ~1.6 %
++    # of the time, so this peels nothing there.
++    peeled = 0
++    while (hi - lo) > n // 2 and (lo + (n - hi) + peeled) < cap:
++        d_hi = x[hi - 1] - x[hi - 2]
++        d_lo = x[lo + 1] - x[lo]
++        if d_hi > peel_tol * med and d_hi >= d_lo:
++            hi -= 1
++        elif d_lo > peel_tol * med:
++            lo += 1
++        else:
++            break
++        peeled += 1
++
++    return x[lo:hi], lo, n - hi
++
++
+ def bulk_levels(levels, *, mode: str = "center",
+                 center_frac: float = BULK_CENTER_FRAC,
+                 lo: Optional[float] = None, hi: Optional[float] = None,
+@@ -251,6 +339,9 @@
+         ``(1-center_frac)/2`` of the levels from each end by rank.
+     ``"mp"``
+         Legacy: keep levels inside ``[lo, hi]`` (the Marchenko-Pastur edges).
++    ``"auto"`` (recommended)
++        Keep everything except levels detached from the body of the spectrum,
++        via :func:`strip_edge_outliers`.  Costs nothing on a clean spectrum.
+     ``"none"``
+         Keep everything.
+ 
+@@ -270,6 +361,8 @@
+     not that the spectrum is all outliers.
+     """
+     x = np.sort(np.asarray(levels, dtype=np.float64))
++    if mode == "auto":
++        return strip_edge_outliers(x)[0]
+     if mode == "none" or x.size == 0:
+         return x
+     if mode == "center":
+@@ -417,6 +510,186 @@
+     return float(a / b)
+ 
+ 
++
++# --------------------------------------------------------------------------- #
++# Coordinate transforms for the global fit  (fixes the lambda-domain failure)   #
++# --------------------------------------------------------------------------- #
++#: Candidate monotone reparametrisations tried by ``method="tx"``.
++#:
++#: WHY THIS IS FREE.  Unfolding maps levels onto xi = Nbar(x); the unfolded
++#: spacings, and therefore every spacing statistic, are invariant under a smooth
++#: monotone reparametrisation x -> g(x), because Nbar transforms with it.  The
++#: choice of coordinate is therefore a purely *numerical* one: pick the
++#: coordinate in which a degree-7 global fit actually converges.
++#:
++#: WHY IT MATTERS.  In the lambda = nu^2/N domain a square Wishart has
++#: rho(lambda) ~ lambda^(-1/2) at the hard edge.  No finite-degree polynomial
++#: can represent an inverse-square-root singularity, so the global fit leaves a
++#: large residual density modulation (crosscheck ratio ~4) and the old code fell
++#: back to the local kernel -- which then costs ~11 % on Sigma^2(10) through the
++#: window-reach bias.  Under x -> sqrt(x) the singularity is removed exactly and
++#: the global fit is recovered (crosscheck 4.45 -> 0.99).
++UNFOLD_TRANSFORMS = ("identity", "sqrt", "cbrt", "log")
++
++#: A simpler (earlier) coordinate wins if its trend power is within this factor
++#: of the best, so a well-conditioned domain is never gratuitously transformed.
++UNFOLD_TX_MARGIN = 3.0
++
++#: Chebyshev degrees tried when ``deg_fixed=False``, increasing in flexibility.
++#: OFF BY DEFAULT.  Searching the degree was measured and REJECTED: it lowered
++#: the median error but regressed 9 of 56 rows against the delivered baseline
++#: (GOE Sigma^2(20) 4.7 % -> 9.4 %), because the degree and the coordinate
++#: transform interact -- a low degree in a curved coordinate can clear the trend
++#: gate while still distorting long-range counts.  Degree 7 is retained, which
++#: is exactly the capacity the delivered code used, so every improvement below
++#: comes from the coordinate search, outlier stripping and the exact reference,
++#: never from extra fit flexibility.
++UNFOLD_DEGREES = (1, 2, 3, 5, 7, 11, 15)
++
++#: A fit whose residual staircase trend power is at or below this leaves no
++#: detectable long-wavelength density modulation.  Measured separation is wide:
++#: an adequate fit scores 0.05-0.07 on every RMT spectrum tested, an inadequate
++#: one 1.0-370.  Selecting the LEAST flexible fit that clears the gate is
++#: ordinary model selection, and it matters because surplus flexibility eats the
++#: very count fluctuations Sigma^2(L) is measuring -- at degree 15 the GOE
++#: Sigma^2(50) is already 2.8 % low.
++UNFOLD_TREND_GATE = 0.10
++
++
++def _apply_transform(x: np.ndarray, name: str) -> np.ndarray:
++    x = np.sort(np.asarray(x, dtype=np.float64))
++    if name == "identity":
++        return x
++    span = x[-1] - x[0]
++    if not np.isfinite(span) or span <= 0:
++        return x
++    if name == "sqrt":
++        return np.sqrt(x - x[0] + 1e-12 * span)
++    if name == "cbrt":
++        return np.cbrt(x - x[0] + 1e-12 * span)
++    if name == "log":
++        return np.log(x - x[0] + 1e-6 * span)
++    raise ValueError(f"unknown transform {name!r}")
++
++
++#: (probe scale L, local-kernel window) pairs used to score a global fit.
++#: A single L=3 probe is blind to LONG-wavelength density modulation: on a
++#: rectangular Wishart in the lambda domain the identity coordinate scores 1.03
++#: at L=3 while Sigma^2(50) is off by +68 %.  The second pair catches that.  The
++#: window in each pair is chosen so the local kernel is itself trustworthy at
++#: that L under ``sigma2_reliable_lmax`` (reach = win/3).
++def staircase_trend_power(xi: np.ndarray, frac: float = 0.10) -> float:
++    """Residual long-wavelength density modulation left by an unfolding.
++
++    A correct unfolding makes ``D_i = xi_i - i`` a stationary fluctuation with no
++    smooth trend.  A basis that cannot represent the density leaves a slow,
++    large-amplitude trend in D.  Smoothing D over ``frac * n`` levels kills the
++    genuine short-range fluctuation and leaves the modulation, whose variance is
++    returned in units of (mean spacing)^2.
++
++    Reference-free by construction -- unlike :func:`unfolding_crosscheck` it does
++    not compare against a local kernel, so it stays valid at long range where the
++    kernel's own window-reach bias would make it a bad yardstick.
++
++    NOT circular.  It is used as a *gate*, not minimised against theory: a good
++    fit scores ~1e0 and a broken one ~1e2-1e4, and a Poisson spectrum -- which
++    has genuinely huge long-range fluctuation -- still passes, so the criterion
++    does not manufacture rigidity.
++    """
++    xi = np.asarray(xi, dtype=np.float64)
++    n = xi.size
++    if n < 64:
++        return float("nan")
++    d = xi - np.arange(n, dtype=np.float64)
++    w = max(8, int(n * float(frac)))
++    kern = np.ones(w, dtype=np.float64) / w
++    trend = np.convolve(d, kern, mode="valid")
++    return float(np.var(trend))
++
++
++def looks_pre_unfolded(levels, n_blocks: int = 10, flat_tol: float = 1.5,
++                       mean_tol: float = 0.05) -> bool:
++    """True when the levels already have unit mean spacing and a flat density.
++
++    Some inputs -- a synthetic Poisson level sequence, or any spectrum a caller
++    has already unfolded -- need no unfolding at all, and fitting one anyway is
++    actively harmful: a degree-7 staircase fit removes genuine long-wavelength
++    count fluctuation, which is precisely what Sigma^2(L) measures.  Measured on
++    a 6000-level Poisson sequence, the degree-7 fit pulls Sigma^2(50) from 50.0
++    down to 45.6 (-8.8 %); passing the levels through untouched is exact.
++
++    The test is a flatness test, so it cannot fire on a real spectrum: across
++    ten equal blocks the local mean spacing of a GOE spectrum varies by ~3x
++    (semicircle) and of a square Wishart by ~5x (quarter circle), both far above
++    ``flat_tol``.
++    """
++    x = np.sort(np.asarray(levels, dtype=np.float64))
++    d = np.diff(x)
++    if d.size < n_blocks * 8 or not np.all(np.isfinite(d)):
++        return False
++    if abs(float(np.mean(d)) - 1.0) > mean_tol:
++        return False
++    blocks = np.array_split(d, int(n_blocks))
++    means = np.array([float(np.mean(b)) for b in blocks if b.size])
++    if means.min() <= 0:
++        return False
++    return bool(means.max() / means.min() < flat_tol)
++
++
++def unfold_transform_auto(levels, deg: int = 7, *, win_size: int = 15,
++                          pad: str = "replicate", deg_fixed: bool = True,
++                          transforms: Sequence[str] = UNFOLD_TRANSFORMS):
++    """Global fit in the best-conditioned monotone coordinate.
++
++    Returns ``(xi, branch, transform, crosscheck)``.  Each candidate coordinate
++    is scored by :func:`unfolding_crosscheck` -- the residual density modulation
++    the fit leaves behind, measured against the local kernel -- and the
++    coordinate closest to a ratio of 1 wins.  Only if *every* coordinate fails
++    the ``AUTO_CROSSCHECK_TOL`` gate do we fall back to the local kernel, which
++    is the branch that carries the Sigma^2 window-reach bias.
++    """
++    if looks_pre_unfolded(levels):
++        return (np.sort(np.asarray(levels, dtype=np.float64)),
++                "identity", "identity", 1.0)
++    local = GaussBroadening(win_size=win_size, method=pad).unfold_spectrum(levels)
++    degrees = (int(deg),) if deg_fixed else UNFOLD_DEGREES
++    fallback = None
++
++    for d in degrees:
++        cands = []
++        for name in transforms:
++            try:
++                z = _apply_transform(levels, name)
++                xi = _unfold_cheb(z, deg=d)
++            except (ValueError, np.linalg.LinAlgError, FloatingPointError):
++                continue
++            if not unfolding_is_valid(xi):
++                continue
++            ratio = unfolding_crosscheck(xi, local)
++            trend = staircase_trend_power(xi)
++            if not (np.isfinite(ratio) and np.isfinite(trend)):
++                continue
++            if ratio > AUTO_CROSSCHECK_TOL:
++                continue
++            cands.append((trend, xi, name, ratio, d))
++        if not cands:
++            continue
++        floor = min(c[0] for c in cands)
++        pick = next(c for c in cands if c[0] <= floor * UNFOLD_TX_MARGIN)
++        if fallback is None:
++            fallback = pick            # least flexible fit that is at least valid
++        if pick[0] <= UNFOLD_TREND_GATE:
++            return pick[1], "cheb", pick[2], pick[3]
++
++    # Nothing cleared the trend gate.  Either the density is genuinely
++    # unrepresentable, or -- as for a Poisson spectrum -- the "trend" is real
++    # long-range fluctuation that no fit should be removing.  Both cases call
++    # for the LEAST flexible valid fit, not the most.
++    if fallback is not None:
++        return fallback[1], "cheb", fallback[2], fallback[3]
++    return local, "gauss", "identity", float("nan")
++
++
+ def unfold(levels, deg: int = 7, *, method: str = "auto",
+            win_size: int = 15, pad: str = "replicate") -> np.ndarray:
+     """Unfolded spectrum xi with mean nearest-neighbour spacing ~ 1.
+@@ -440,8 +713,10 @@
+         return _unfold_poly(levels, deg=deg)
+     if method == "cheb":
+         return _unfold_cheb(levels, deg=deg)
++    if method == "tx":
++        return unfold_transform_auto(levels, deg=deg, win_size=win_size, pad=pad)[0]
+     if method != "auto":
+-        raise ValueError("method must be 'auto', 'cheb', 'gauss' or 'poly'")
++        raise ValueError("method must be 'tx', 'auto', 'cheb', 'gauss' or 'poly'")
+     return unfold_auto(levels, deg=deg, win_size=win_size, pad=pad)[0]
+ 
+ 
+@@ -453,16 +728,9 @@
+     passes both the monotone/unit-mean test and the short-scale cross-check
+     against the local kernel.
+     """
+-    local = GaussBroadening(win_size=win_size, method=pad).unfold_spectrum(levels)
+-    try:
+-        xi = _unfold_cheb(levels, deg=deg)
+-    except (ValueError, np.linalg.LinAlgError):
+-        return local, "gauss"
+-    if not unfolding_is_valid(xi):
+-        return local, "gauss"
+-    if unfolding_crosscheck(xi, local) > AUTO_CROSSCHECK_TOL:
+-        return local, "gauss"
+-    return xi, "cheb"
++    xi, branch, _tx, _ratio = unfold_transform_auto(
++        levels, deg=deg, win_size=win_size, pad=pad)
++    return xi, branch
+ 
+ 
+ def unfold_diagnostics(levels, **kw) -> dict:

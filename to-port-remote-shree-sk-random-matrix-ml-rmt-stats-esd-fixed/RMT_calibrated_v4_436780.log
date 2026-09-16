@@ -1,0 +1,770 @@
+[RMT] working dir: /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed
+[RMT] python: /home/shivansh/.conda/envs/rmt_ml_env/bin/python
+[RMT] numpy 2.1.2  scipy 1.15.3
+[RMT] BLAS threads: 8
+=== GATE 0: selftest + unit tests ===
+........................................................................ [ 27%]
+........................................................................ [ 54%]
+........................................................................ [ 82%]
+...............................................                          [100%]
+=============================== warnings summary ===============================
+tests/test_sigma2_lmax_calibration.py::test_the_old_gauss_constant_of_15_was_wrong
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_sigma2_lmax_calibration.py:34: RuntimeWarning: sigma2(L=15) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    vals.append(SP.sigma2(None, L, unfolded=xi, method=method, rng=0,
+
+tests/test_sigma2_lmax_calibration.py::test_the_old_gauss_constant_of_15_was_wrong
+tests/test_sigma2_lmax_calibration.py::test_local_kernel_reach_scales_with_its_window
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_sigma2_lmax_calibration.py:34: RuntimeWarning: sigma2(L=10) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    vals.append(SP.sigma2(None, L, unfolded=xi, method=method, rng=0,
+
+tests/test_sigma2_lmax_calibration.py::test_gauss_fails_beyond_its_lmax
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_sigma2_lmax_calibration.py:34: RuntimeWarning: sigma2(L=20.0) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    vals.append(SP.sigma2(None, L, unfolded=xi, method=method, rng=0,
+
+tests/test_sigma2_lmax_calibration.py::test_cheb_beats_gauss_at_long_range
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_sigma2_lmax_calibration.py:34: RuntimeWarning: sigma2(L=50) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    vals.append(SP.sigma2(None, L, unfolded=xi, method=method, rng=0,
+
+tests/test_spacing.py::test_poly_unfolding_fails_on_eigenvalue_domain
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_spacing.py:70: RuntimeWarning: sigma2(L=10) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    err_gauss = abs(SP.sigma2(lam, 10, method="gauss") - th) / th
+
+tests/test_spacing.py::test_gauss_unfolding_is_reparametrisation_invariant
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_spacing.py:83: RuntimeWarning: sigma2(L=10) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    a, b = SP.sigma2(sv, L, method="gauss"), SP.sigma2(lam, L, method="gauss")
+
+tests/test_spacing.py::test_cheb_beats_gauss_at_long_range
+  /home/shivansh/remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/tests/test_spacing.py:117: RuntimeWarning: sigma2(L=50) exceeds the calibrated range of unfolding 'gauss' (L <= 5.0); raise the unfolding degree, switch to method='cheb', or use delta3 for long-range rigidity.
+    assert SP.sigma2(sv, 50, method="gauss") < 0.75 * th
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+263 passed, 31 deselected, 8 warnings in 137.10s (0:02:17)
+=== GATE 0b: estimators vs the EXACT finite-L laws ===
+  GOE eigenvalues (N=1500)
+  Poisson levels (N=6000)
+  Wishart singular values, nu domain (3584x1024)
+  Wishart eigenvalue domain lambda=nu^2/N (3584x1024)
+  Wishart + 20 heavy spikes, nu domain (3584x1024)
+  SQUARE Wishart, nu domain (1024x1024) [Llama q/k/v/o shape]
+  SQUARE Wishart, eigenvalue domain lambda=nu^2/N (1024x1024)
+
+wrote cal/benchmark_results_3way.csv  (70 rows, 6 seeds)
+
+                              median      mean       max
+OLD  vs asymptote             0.0421    2.3348   61.6636
+NEW  vs asymptote             0.0223    0.0300    0.1157
+NEW  vs exact law             0.0089    0.0140    0.0453
+FIXED vs asymptote            0.0223    0.0301    0.1215
+FIXED vs exact law            0.0102    0.0140    0.0477
+=== STAGE 1: ensemble benchmark ===
+==============================================================================
+BLOCK A — Gaussian ensembles (unfolding is estimated, as in production)
+==============================================================================
+
+### GOE  N=1200   beta=1  reps=8  branch=['cheb']  (3s)
+  <r> = 0.5337   theory 0.5307   (+0.6 %)     <s> = 1.0020
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.1311    0.1044    25.7      0.6512    0.6647    -2.0
+     5    0.1713    0.1561     9.8      0.7710    0.7682     0.4
+    10    0.2313    0.2263     2.2      0.9082    0.9086    -0.1
+    20    0.2991    0.2966     0.8      1.0388    1.0491    -1.0
+    50    0.3881    0.3894    -0.3      1.1662    1.2348    -5.6
+
+### GUE  N=1200   beta=2  reps=8  branch=['cheb']  (7s)
+  <r> = 0.5957   theory 0.5996   (-0.7 %)     <s> = 1.0018
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.1151    0.1147     0.4      0.4641    0.4573     1.5
+     5    0.1402    0.1406    -0.2      0.5233    0.5091     2.8
+    10    0.1757    0.1757     0.0      0.5967    0.5793     3.0
+    20    0.2131    0.2108     1.1      0.6684    0.6496     2.9
+    50    0.2607    0.2572     1.4      0.7151    0.7424    -3.7
+
+### GSE  N=600 (Kramers-collapsed)   beta=4  reps=4  branch=['cheb']  (3s)
+  <r> = 0.6704   theory 0.6744   (-0.6 %)     <s> = 1.0011
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.1010    0.1061    -4.9      0.3205    0.3263    -1.8
+     5    0.1158    0.1191    -2.8      0.3438    0.3522    -2.4
+    10    0.1347    0.1366    -1.4      0.3763    0.3873    -2.8
+    20    0.1526    0.1542    -1.0      0.4098    0.4224    -3.0
+    50    0.1747    0.1774    -1.6      0.4300    0.4688    -8.3
+
+### Poisson n=6000   beta=0  reps=8  branch=['cheb']  (7s)
+  <r> = 0.3850   theory 0.3863   (-0.3 %)     <s> = 0.9994
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.2017    0.2000     0.8      3.0249    3.0000     0.8
+     5    0.3335    0.3333     0.1      5.0773    5.0000     1.5
+    10    0.6732    0.6667     1.0     10.0767   10.0000     0.8
+    20    1.3614    1.3333     2.1     19.7690   20.0000    -1.2
+    50    3.3685    3.3333     1.1     47.9325   50.0000    -4.1
+
+==============================================================================
+BLOCK B — circular ensembles (density exactly uniform => exact unfolding)
+         Discrepancies here are estimator or ASYMPTOTIC-FORMULA error only.
+==============================================================================
+
+### COE  n=800   beta=1  reps=4  branch=['exact']  (8s)
+  <r> = 0.5347   theory 0.5307   (+0.7 %)     <s> = 0.9989
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.1300    0.1044    24.6      0.6623    0.6647    -0.4
+     5    0.1697    0.1561     8.7      0.7741    0.7682     0.8
+    10    0.2343    0.2263     3.5      0.9111    0.9086     0.3
+    20    0.3009    0.2966     1.4      0.9988    1.0491    -4.8
+    50    0.3802    0.3894    -2.4      1.2182    1.2348    -1.3
+
+### CUE  n=800   beta=2  reps=4  branch=['exact']  (8s)
+  <r> = 0.5998   theory 0.5996   (+0.0 %)     <s> = 0.9998
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.1135    0.1147    -1.0      0.4692    0.4573     2.6
+     5    0.1402    0.1406    -0.3      0.5218    0.5091     2.5
+    10    0.1770    0.1757     0.7      0.6026    0.5793     4.0
+    20    0.2175    0.2108     3.2      0.6595    0.6496     1.5
+    50    0.2639    0.2572     2.6      0.7635    0.7424     2.8
+
+### CSE  n=400   beta=4  reps=4  branch=['exact']  (8s)
+  <r> = 0.6780   theory 0.6744   (+0.5 %)     <s> = 1.0000
+     L    Delta3    theory    err%      Sigma2    theory    err%
+     3    0.1010    0.1061    -4.8      0.3272    0.3263     0.3
+     5    0.1155    0.1191    -3.0      0.3557    0.3522     1.0
+    10    0.1356    0.1366    -0.8      0.3930    0.3873     1.5
+    20    0.1556    0.1542     0.9      0.4237    0.4224     0.3
+    50    0.1814    0.1774     2.3      0.4683    0.4688    -0.1
+
+HOW TO READ THIS
+  * Block B beta=2 and beta=4 agreeing to ~1-2% while beta=1 Delta_3 is
+    ~+11% at L=5 and ~+26% at L=3 means the CODE is right and the beta=1
+    ASYMPTOTE is wrong at small L. Never test against it below L~20.
+  * Block A tracking Block B means the unfolding is not adding bias.
+  * PASS criterion: |err| < 5% for L >= 10 in every ensemble.
+
+wrote cal/ensemble_benchmark.csv  (77 rows)
+=== STAGE 4: invariance ===
+
+INVARIANCE CONTROLS   shape 1024x1024   mean NN gap = 1.950e-03
+  transpose: max|s(W) - s(W^T)|                  1.155e-14                PASS
+  random sign flips D1 W D2: max|ds|             0.000e+00                PASS
+  row/col permutation: max|ds|                   9.548e-15                PASS
+  global rescale x2.7: |d delta3_L10|            3.580e-15                PASS
+  global rescale x2.7: |d r_statistic|           1.110e-15                PASS
+
+PRECISION
+  fp32 SVD vs fp64 SVD, in units of a spacing    3.070e-05 spacings       PASS
+  bf16 ROUNDING of entries, in units of a spacing   8.467e-02 spacings       INFO
+  -> a bf16 checkpoint and its fp32 cast are DIFFERENT matrices, not
+     the same matrix measured twice. Pick one dtype and never mix.
+
+  OVERALL: PASS
+
+wrote cal/invariance.csv  (7 rows)
+=== STAGE 5b: bulk-fraction sweep ===
+
+bulk_frac=0.6  reps=20  branches={'cheb': 20}  (503s)
+  statistic                   mean        sd   rel sd
+  n_levels               2458.0000    0.0000    0.000
+  r_statistic_mean          0.5313    0.0061    0.012
+  unfold_mean_spacing       1.0000    0.0005    0.000
+  unfold_frac_nonpositive    0.0000    0.0000      nan
+  unfold_n_levels        2458.0000    0.0000    0.000
+  nn_KS_GOE                 0.0150    0.0033    0.217
+  nn_KS_Poisson             0.2136    0.0055    0.026
+  brody_beta                0.9574    0.0400    0.042
+  delta3_L5                 0.1738    0.0033    0.019
+  delta3_L10                0.2370    0.0058    0.025
+  delta3_L50                0.3928    0.0123    0.031
+  sigma2_L5                 0.7780    0.0277    0.036
+  sigma2_L10                0.9047    0.0375    0.041
+  sigma2_L20                1.0478    0.0463    0.044
+
+bulk_frac=0.7  reps=20  branches={'cheb': 20}  (504s)
+  statistic                   mean        sd   rel sd
+  n_levels               2868.0000    0.0000    0.000
+  r_statistic_mean          0.5319    0.0070    0.013
+  unfold_mean_spacing       0.9998    0.0004    0.000
+  unfold_frac_nonpositive    0.0000    0.0000      nan
+  unfold_n_levels        2868.0000    0.0000    0.000
+  nn_KS_GOE                 0.0144    0.0037    0.255
+  nn_KS_Poisson             0.2134    0.0061    0.028
+  brody_beta                0.9618    0.0428    0.044
+  delta3_L5                 0.1736    0.0031    0.018
+  delta3_L10                0.2362    0.0042    0.018
+  delta3_L50                0.3898    0.0105    0.027
+  sigma2_L5                 0.7711    0.0260    0.034
+  sigma2_L10                0.9004    0.0332    0.037
+  sigma2_L20                1.0418    0.0409    0.039
+
+bulk_frac=0.8  reps=20  branches={'cheb': 20}  (505s)
+  statistic                   mean        sd   rel sd
+  n_levels               3278.0000    0.0000    0.000
+  r_statistic_mean          0.5313    0.0068    0.013
+  unfold_mean_spacing       0.9999    0.0003    0.000
+  unfold_frac_nonpositive    0.0000    0.0000      nan
+  unfold_n_levels        3278.0000    0.0000    0.000
+  nn_KS_GOE                 0.0136    0.0045    0.329
+  nn_KS_Poisson             0.2126    0.0056    0.026
+  brody_beta                0.9603    0.0395    0.041
+  delta3_L5                 0.1735    0.0028    0.016
+  delta3_L10                0.2357    0.0046    0.019
+  delta3_L50                0.3896    0.0091    0.023
+  sigma2_L5                 0.7687    0.0235    0.031
+  sigma2_L10                0.8978    0.0321    0.036
+  sigma2_L20                1.0391    0.0380    0.037
+
+bulk_frac=1.0  reps=20  branches={'cheb': 20}  (508s)
+  statistic                   mean        sd   rel sd
+  n_levels               4096.0000    0.0000    0.000
+  r_statistic_mean          0.5309    0.0055    0.010
+  unfold_mean_spacing       1.0010    0.0003    0.000
+  unfold_frac_nonpositive    0.0000    0.0000      nan
+  unfold_n_levels        4096.0000    0.0000    0.000
+  nn_KS_GOE                 0.0122    0.0033    0.267
+  nn_KS_Poisson             0.2127    0.0049    0.023
+  brody_beta                0.9592    0.0330    0.034
+  delta3_L5                 0.1732    0.0028    0.016
+  delta3_L10                0.2362    0.0054    0.023
+  delta3_L50                0.3884    0.0121    0.031
+  sigma2_L5                 0.7748    0.0220    0.028
+  sigma2_L10                0.9117    0.0304    0.033
+  sigma2_L20                1.0688    0.0399    0.037
+
+==============================================================================
+STABILITY ACROSS THE SWEEP  (shift measured in units of the null sd)
+==============================================================================
+  statistic                    min       max  shift/sd  verdict
+  r_statistic_mean          0.5309    0.5319      0.15  STABLE
+  unfold_mean_spacing       0.9998    1.0010      3.01  EDGE-SENSITIVE <-- do not report
+  nn_KS_GOE                 0.0122    0.0150      0.76  STABLE
+  nn_KS_Poisson             0.2126    0.2136      0.18  STABLE
+  brody_beta                0.9574    0.9618      0.11  STABLE
+  delta3_L5                 0.1732    0.1738      0.21  STABLE
+  delta3_L10                0.2357    0.2370      0.26  STABLE
+  delta3_L50                0.3884    0.3928      0.40  STABLE
+  sigma2_L5                 0.7687    0.7780      0.38  STABLE
+  sigma2_L10                0.8978    0.9117      0.42  STABLE
+  sigma2_L20                1.0391    1.0688      0.72  STABLE
+
+wrote cal/bulk_frac_sweep.csv  (4 rows)
+=== STAGE 2: matched-shape null bands ===
+[RMT] bands present: ['1024x4096', '14336x4096', '4096x14336', '4096x4096']
+[RMT] all four shapes already in cal/null_bands.csv — skipping stage 2.
+[RMT] force a rebuild with:  RUN_STAGE2=always sbatch /var/spool/slurmd/job436780/slurm_script
+=== STAGE 3: power table ===
+
+POWER TABLE   shape 4096x4096   null band from 30 replicas
+  values are z-scores against the null band;  |z| > 2 = detected
+
+  planted structure                        r       KSGOE  brody_beta  delta3_L10  sigma2_L10  p_mc(KS)
+  null: iid Gaussian                    +1.4        -0.1        -0.5        +2.2        +1.0     0.358
+  +20 rank-1 spikes (amp 3)             +0.9        -0.8        +1.0        +0.3        +4.4     0.677
+  2 independent blocks                 -28.1       +27.8       -20.9       +27.4       +22.5     0.005
+  95% GOE + 5% Poisson                  -1.9        +3.9        -4.8        +5.9      +138.6     0.005
+  90% GOE + 10% Poisson                 -4.5        +6.5        -6.1       +14.1       +25.1     0.005
+  80% GOE + 20% Poisson                -12.1       +16.5       -13.3       +31.4       +44.5     0.005
+  80% sparse                            -0.7        +1.8        -1.0        -0.2        +1.3     0.030
+  Student-t(3) entries                  +1.7        -1.1        +1.8        -1.3       +50.1     0.741
+
+HOW TO READ THIS
+  * Heavy-tailed entries and sparsity are typically INVISIBLE to every
+    spacing statistic. That is universality, not a bug -- but it means
+    'the bulk is still GOE' is NOT evidence the weights are Gaussian.
+    Say 'the local correlations remain in the beta = 1 universality
+    class', and let the tail-exponent block carry the other claim.
+  * Sigma^2 is usually the only statistic that sees low-rank spikes.
+
+wrote cal/power_table.csv  (8 rows)
+=== STAGE 6: pipeline ===
+=== STAGE 7: z-scores ===
+[RMT] scoring rmt_results/meta-llama_Llama-3.1-8B/meta-llama_Llama-3.1-8B_matrix_metrics.csv
+
+  !! MIXED UNFOLDING BRANCHES ['cheb', 'gauss']: the Sigma^2 column is not homogeneous. Re-run with --unfold_method cheb.
+
+Z-SCORES vs matched-shape null   (35 matrices)
+
+  matrix                                 shape        r_statisti  nn_KS_GOE brody_beta  delta3_L5 delta3_L10 delta3_L50  sigma2_L5 sigma2_L10 sigma2_L20 pt_frac_ra  pt_p_mean
+  model.layers.0.self_attn.q_proj.weight 4096x4096          -1.4       +3.5       -2.6       -1.3       -0.7       +4.2      +23.0      +57.5     +146.1      -56.6      -35.5
+  model.layers.0.self_attn.k_proj.weight 1024x4096          -2.2       +0.5       -1.0       +0.8       +1.2       +0.1       +0.1       +0.6       +1.2      -95.3      -40.3
+  model.layers.0.self_attn.v_proj.weight 1024x4096          +1.1       +1.3       +2.1       -2.4       -1.2       +1.1       +0.7       +1.1       +0.4      -95.4      -40.3
+  model.layers.0.self_attn.o_proj.weight 4096x4096          -0.3       +0.7       -1.0       -0.4       +0.8       +1.4       +1.4       +1.6       +1.8      -21.9      -23.5
+  model.layers.0.mlp.gate_proj.weight    14336x4096         -1.9       +2.3       -2.4       +1.8       +1.5       -1.9       +1.7        nan        nan       -3.3       -7.2
+  model.layers.0.mlp.up_proj.weight      14336x4096         +0.3       +0.2       +0.0       +0.7       +0.6       -2.3       +0.2        nan        nan       -6.9      -12.3
+  model.layers.0.mlp.down_proj.weight    4096x14336         +0.5       -0.6       +0.0       -0.0       +2.2       +0.4       +0.9       +0.9       +1.5       -4.3       -5.9
+  model.layers.8.self_attn.q_proj.weight 4096x4096          +0.0       +0.5       -0.6       +0.6       +0.1       +1.0       -0.1       +0.3       +0.6       -1.3       -3.6
+  model.layers.8.self_attn.k_proj.weight 1024x4096          -1.0       +0.2       -1.4       +0.8       +1.0       +1.7       +1.4       +2.2       +1.3       -2.1       -1.9
+  model.layers.8.self_attn.v_proj.weight 1024x4096          -0.3       -0.7       -0.1       +0.1       +2.3       +2.3       +3.2       +1.7       +2.0       -8.4       -8.8
+  model.layers.8.self_attn.o_proj.weight 4096x4096          +0.1       -0.7       +0.7       -0.8       -1.5       -0.2       -1.4       -0.6       +0.9       -8.3      -12.3
+  model.layers.8.mlp.gate_proj.weight    14336x4096         -1.3       +1.8       -0.2       +1.2       +0.8       +2.2       +8.1      +12.8      +10.8       -1.5       -3.5
+  model.layers.8.mlp.up_proj.weight      14336x4096         +1.9       -1.5       +1.6       -1.6       -1.1       -1.1       -0.2       +0.2       +0.4       -2.0       -4.3
+  model.layers.8.mlp.down_proj.weight    4096x14336         +0.5       -1.7       +1.3       -0.8       -0.8       -1.1       +0.2       +1.0       +0.9      -14.7      -16.7
+  model.layers.16.self_attn.q_proj.weigh 4096x4096          -1.3       +1.9       -0.9       +1.0       +0.7       +2.1       +1.2       +1.6       +1.3       -1.0       -4.0
+  model.layers.16.self_attn.k_proj.weigh 1024x4096          +3.3       +2.9       +4.7       -4.6       -4.4       -2.5       -1.8       -1.8       -1.5       -1.9       -1.8
+  model.layers.16.self_attn.v_proj.weigh 1024x4096          +1.7       -0.4       +1.6       -1.5       -0.3       -0.5       +0.6       -0.5       +0.3       -3.3       -5.0
+  model.layers.16.self_attn.o_proj.weigh 4096x4096          +0.7       -1.3       +1.4       -0.8       -1.5       +0.4       -0.8       +0.5       +0.1      -24.6      -21.7
+  model.layers.16.mlp.gate_proj.weight   14336x4096         +1.3       +0.5       +1.4       -1.4       -0.4       -0.3       +0.2       +0.2       +1.9       -1.6       -2.6
+  model.layers.16.mlp.up_proj.weight     14336x4096         -1.5       +3.8       -1.9       +1.1       +0.7       -0.2       +1.0       +0.8       +0.9       -1.9       -3.4
+  model.layers.16.mlp.down_proj.weight   4096x14336         -0.2       +0.4       +0.0       -0.4       +0.6       +3.2       +1.7       +1.8       +2.2      -15.6      -14.6
+  model.layers.24.self_attn.q_proj.weigh 4096x4096          +0.3       +0.4       -0.2       -0.1       -0.2       +0.4       +0.6       +1.7       +1.2       -1.1       -2.0
+  model.layers.24.self_attn.k_proj.weigh 1024x4096          -1.0       +2.7       -1.6       +1.1       +1.4       +2.2       +3.3       +2.4       +2.6       -3.0       -2.7
+  model.layers.24.self_attn.v_proj.weigh 1024x4096          +1.7       +0.2       +0.7       -1.6       -0.9       -1.5       -0.6       -1.6       -1.3       -2.1       -4.4
+  model.layers.24.self_attn.o_proj.weigh 4096x4096          +0.1       +1.1       -0.7       +1.5       +0.4       -0.2       -0.0       +0.0       -0.8       -4.5       -9.4
+  model.layers.24.mlp.gate_proj.weight   14336x4096         -0.8       +1.8       -1.1       +3.2       +1.8       +1.6       +3.6       +3.5       +4.8       -1.3       -2.4
+  model.layers.24.mlp.up_proj.weight     14336x4096         +1.0       -0.2       +0.4       +0.3       +1.0       +1.6       +2.1       +0.9       +2.4       -1.3       -2.5
+  model.layers.24.mlp.down_proj.weight   4096x14336         +1.1       -1.2       +0.8       +1.0       +0.4       -2.1       -0.6        nan        nan       -4.7       -4.2
+  model.layers.31.self_attn.q_proj.weigh 4096x4096          +0.0       +0.8       -0.5       +1.1       +1.4       +1.5       +1.0       +0.3       +1.6       -1.5       -2.5
+  model.layers.31.self_attn.k_proj.weigh 1024x4096          -1.2       +0.9       -1.1       +1.9       +1.7       -1.1       +0.4       -1.2       -0.9       -6.8       -5.2
+  model.layers.31.self_attn.v_proj.weigh 1024x4096          -2.7       +1.6       -2.0       +0.6       -0.5       -0.7       -0.1       -0.5       -0.2       -6.4       -5.7
+  model.layers.31.self_attn.o_proj.weigh 4096x4096          +0.0       -1.7       +1.1       -1.0       -1.1       -1.3       -1.3       -0.9       -0.2      -14.9      -17.8
+  model.layers.31.mlp.gate_proj.weight   14336x4096         -1.1       -0.1       -0.1       -0.6       -0.6       -0.7       -0.0       +0.5       +0.3       -2.4       -6.7
+  model.layers.31.mlp.up_proj.weight     14336x4096         -0.2       +0.3       +0.6       -1.1       +0.3       +1.8       +2.1       +2.0       +2.8       -2.5       -6.7
+  model.layers.31.mlp.down_proj.weight   4096x14336         -1.6       +1.9       -1.7       +2.1       +1.4       +0.8       +0.5       +1.2       +1.2      -45.4      -25.3
+
+  Bonferroni threshold for 35 matrices x 11 statistics: |z| > 3.83
+
+HOW TO READ THIS
+  * |z| is deviation in units of the pipeline's OWN null spread.
+  * Report z, not 'measured / theory - 1'.
+  * Check unfold_method_used is constant; a mixed column means the
+    Sigma^2 entries are not on the same footing.
+
+wrote cal/zscores.csv  (35 rows)
+  matrices=35  statistics=11  tests=385
+  CORRECT Bonferroni |z| threshold (t, 40 reps): 4.30
+=== STAGE 8: export weights + controls ===
+  wrote weights_npy/model_layers_0_self_attn_q_proj_weight.npy  shape=(4096, 4096)  dtype=float64
+  wrote weights_npy/model_layers_0_self_attn_k_proj_weight.npy  shape=(1024, 4096)  dtype=float64
+  wrote weights_npy/model_layers_0_mlp_down_proj_weight.npy  shape=(4096, 14336)  dtype=float64
+  wrote weights_npy/model_layers_8_self_attn_q_proj_weight.npy  shape=(4096, 4096)  dtype=float64
+  wrote weights_npy/model_layers_8_self_attn_k_proj_weight.npy  shape=(1024, 4096)  dtype=float64
+  wrote weights_npy/model_layers_8_mlp_down_proj_weight.npy  shape=(4096, 14336)  dtype=float64
+  wrote weights_npy/model_layers_16_self_attn_q_proj_weight.npy  shape=(4096, 4096)  dtype=float64
+  wrote weights_npy/model_layers_16_self_attn_k_proj_weight.npy  shape=(1024, 4096)  dtype=float64
+  wrote weights_npy/model_layers_16_mlp_down_proj_weight.npy  shape=(4096, 14336)  dtype=float64
+  wrote weights_npy/model_layers_24_self_attn_q_proj_weight.npy  shape=(4096, 4096)  dtype=float64
+  wrote weights_npy/model_layers_24_self_attn_k_proj_weight.npy  shape=(1024, 4096)  dtype=float64
+  wrote weights_npy/model_layers_24_mlp_down_proj_weight.npy  shape=(4096, 14336)  dtype=float64
+  wrote weights_npy/model_layers_31_self_attn_q_proj_weight.npy  shape=(4096, 4096)  dtype=float64
+  wrote weights_npy/model_layers_31_self_attn_k_proj_weight.npy  shape=(1024, 4096)  dtype=float64
+  wrote weights_npy/model_layers_31_mlp_down_proj_weight.npy  shape=(4096, 14336)  dtype=float64
+
+15 matrices written to weights_npy//
+next: python rmt_null_calibration.py controls --npy weights_npy//<name>.npy --reps 30 --bulk-frac 0.7 --out cal/
+
+matrix: model_layers_0_mlp_down_proj_weight.npy   shape=(4096, 14336)
+  row sd CV 0.0892 (iid expects 0.0059)   col sd CV 0.0347 (iid expects 0.0110)
+  excess kurtosis 3.075 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (1307s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        0.60         -6.37           nan         -0.88          0.03          0.99          1.09         -3.21         -1.20         -3.45         -5.36
+  entry_shuffle              -0.68          0.04           nan          0.16         -0.68          0.82         -0.24         -1.24         -0.39         -1.49         -0.55
+  row_shuffle                 0.64         -7.32           nan         -0.71         -0.01          0.36         -1.33         -4.44         -2.30         -4.20         -6.69
+  col_shuffle                -0.54          0.72           nan         -1.12         -0.36         -0.81         -0.68         -1.95         -1.44         -1.18          0.09
+  gaussian_match             -0.78          1.13           nan          0.77          0.01          0.55         -0.07          1.18          0.83          2.16          0.91
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            variance-profile
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_0_self_attn_k_proj_weight.npy   shape=(1024, 4096)
+  row sd CV 0.3652 (iid expects 0.0110)   col sd CV 0.8280 (iid expects 0.0221)
+  excess kurtosis 15.666 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (28s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -2.57         -3.92           nan          0.28         -1.19          0.73          0.03         -0.38          0.73          2.71          3.56
+  entry_shuffle              -0.55         -0.53           nan         -0.77         -1.37          1.09          1.48          1.99          1.01          0.02          0.50
+  row_shuffle                 0.52          7.83           nan         -0.36          0.08          0.48          1.22          4.35          9.47         14.57         14.67
+  col_shuffle                -0.94          4.52           nan          0.03         -0.34         -1.08         -0.56         -0.83          2.41          1.85          2.13
+  gaussian_match             -0.59          1.88           nan          0.78          0.76         -0.90         -0.35         -1.65         -1.42         -1.62         -1.87
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      structure-beyond-controls
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            consistent-with-random
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_0_self_attn_q_proj_weight.npy   shape=(4096, 4096)
+  row sd CV 0.4058 (iid expects 0.0110)   col sd CV 0.8322 (iid expects 0.0110)
+  excess kurtosis 17.432 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (761s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -1.26         -6.30           nan          3.77         -1.62         -0.36         -0.18         -2.61         -0.24         -0.97         -3.46
+  entry_shuffle               1.66          0.68           nan         -0.41          0.61         -1.45         -0.94         -0.49          0.11         -0.12          0.91
+  row_shuffle                -1.48         11.98           nan          2.19         -0.54          0.64          1.33          5.50          9.60         19.06         40.09
+  col_shuffle                 0.01         -4.44           nan         -0.15         -0.00         -0.70         -0.57         -2.70         -0.99         -2.34         -5.32
+  gaussian_match             -0.45          0.98           nan         -1.01          0.62         -0.59          0.00          1.21          1.31          0.67          0.75
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             variance-profile
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            variance-profile
+    sigma2_L5             consistent-with-random
+    sigma2_L10            consistent-with-random
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_16_mlp_down_proj_weight.npy   shape=(4096, 14336)
+  row sd CV 0.0761 (iid expects 0.0059)   col sd CV 0.0600 (iid expects 0.0110)
+  excess kurtosis 1.202 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (1301s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -0.06         -6.64           nan          0.92          0.65         -1.09          0.40         -1.80         -0.13         -2.30         -5.19
+  entry_shuffle               1.44         -0.68           nan         -1.93          0.47         -1.19         -0.69          0.65         -0.29          0.06          1.08
+  row_shuffle                 0.25         25.83           nan         -0.74          0.20         -0.68         -0.32          2.58          8.89         24.21         43.50
+  col_shuffle                -1.08         -0.48           nan         -0.52         -0.49          0.71          1.04          1.01          0.66          1.14          0.33
+  gaussian_match             -0.78          1.13           nan          0.77          0.01          0.55         -0.07          1.18          0.83          2.16          0.91
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            consistent-with-random
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_16_self_attn_k_proj_weight.npy   shape=(1024, 4096)
+  row sd CV 0.2882 (iid expects 0.0110)   col sd CV 0.0805 (iid expects 0.0221)
+  excess kurtosis 1.549 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (27s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        2.96         -2.57           nan          2.41          3.28         -4.13         -4.00         -4.52         -1.00         -2.37         -2.18
+  entry_shuffle              -1.26          0.02           nan          0.00         -0.69          1.46          0.66         -0.87          0.30         -0.63         -0.34
+  row_shuffle                 0.24         -1.66           nan         -0.64          0.65         -0.71         -0.77          0.01         -1.23          0.30          0.44
+  col_shuffle                -1.25         -2.73           nan          1.69          0.22          0.81          0.12          0.83          0.29          0.09          0.70
+  gaussian_match             -0.59          1.88           nan          0.78          0.76         -0.90         -0.35         -1.65         -1.42         -1.62         -1.87
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      structure-beyond-controls
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             structure-beyond-controls
+    nn_KS_Poisson         structure-beyond-controls
+    delta3_L5             structure-beyond-controls
+    delta3_L10            structure-beyond-controls
+    delta3_L50            structure-beyond-controls
+    sigma2_L5             consistent-with-random
+    sigma2_L10            structure-beyond-controls
+    sigma2_L20            structure-beyond-controls
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_16_self_attn_q_proj_weight.npy   shape=(4096, 4096)
+  row sd CV 0.3248 (iid expects 0.0110)   col sd CV 0.0378 (iid expects 0.0110)
+  excess kurtosis 1.937 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (759s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -1.25         59.33           nan          1.93         -1.43         -0.50          0.43          8.98         26.23         63.91        157.01
+  entry_shuffle               0.13         -0.19           nan         -0.47          0.08         -1.29         -1.36         -0.17         -0.71          0.19         -0.34
+  row_shuffle                -0.43         -6.25           nan          0.92         -0.60          0.19         -0.56          0.85         -0.41          1.08          0.76
+  col_shuffle                -0.04          2.05           nan         -0.07          0.05         -0.02          0.47          0.83          1.26          1.65          0.94
+  gaussian_match             -0.45          0.98           nan         -1.01          0.62         -0.59          0.00          1.21          1.31          0.67          0.75
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            structure-beyond-controls
+    sigma2_L5             structure-beyond-controls
+    sigma2_L10            structure-beyond-controls
+    sigma2_L20            structure-beyond-controls
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_24_mlp_down_proj_weight.npy   shape=(4096, 14336)
+  row sd CV 0.0832 (iid expects 0.0059)   col sd CV 0.0337 (iid expects 0.0110)
+  excess kurtosis 0.350 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (1301s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        1.15         -7.22           nan         -0.96          0.71         -0.67         -0.51         -2.39         -0.72         -3.34         -5.74
+  entry_shuffle               1.99          1.16           nan          0.07          1.32         -0.68         -0.14          0.39          0.22          0.24          1.42
+  row_shuffle                 0.28         -6.20           nan         -0.21         -0.09          1.73          1.82         -2.87         -0.56         -2.64         -6.28
+  col_shuffle                 0.34         -0.08           nan         -0.07          0.57          0.51         -0.46          0.89          0.34          1.46          0.31
+  gaussian_match             -0.78          1.13           nan          0.77          0.01          0.55         -0.07          1.18          0.83          2.16          0.91
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            variance-profile
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_24_self_attn_k_proj_weight.npy   shape=(1024, 4096)
+  row sd CV 0.2639 (iid expects 0.0110)   col sd CV 0.1202 (iid expects 0.0221)
+  excess kurtosis 1.903 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (28s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -1.13         -2.08           nan          3.01         -2.99          1.33          1.54          0.49          3.65          2.85          1.55
+  entry_shuffle               0.69         -2.36           nan         -0.99          0.52         -1.77         -1.73         -2.29         -1.59         -1.76         -2.82
+  row_shuffle                -0.68         -4.14           nan          2.23         -1.51          2.15          2.42          1.49          3.59          3.09          4.04
+  col_shuffle                 0.73         -3.99           nan         -0.23         -0.29         -0.16         -0.87         -1.56          0.24         -0.25         -1.20
+  gaussian_match             -0.59          1.88           nan          0.78          0.76         -0.90         -0.35         -1.65         -1.42         -1.62         -1.87
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   entry-distribution
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             variance-profile
+    nn_KS_Poisson         structure-beyond-controls
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            consistent-with-random
+    sigma2_L5             variance-profile
+    sigma2_L10            variance-profile
+    sigma2_L20            consistent-with-random
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_24_self_attn_q_proj_weight.npy   shape=(4096, 4096)
+  row sd CV 0.2533 (iid expects 0.0110)   col sd CV 0.0476 (iid expects 0.0110)
+  excess kurtosis 0.985 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (759s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        0.41         12.76           nan          1.06         -0.46         -0.34          0.24         19.70         22.32         51.04        108.25
+  entry_shuffle              -1.45          1.23           nan          0.93         -1.04          0.72          1.03          1.60          1.03          0.96          0.70
+  row_shuffle                -0.45          7.22           nan          1.25          0.43          0.62          0.62          1.64          2.37          5.77         12.62
+  col_shuffle                 2.07          0.15           nan         -0.65          1.43         -1.18         -0.84         -0.03         -0.24          0.45          0.79
+  gaussian_match             -0.45          0.98           nan         -1.01          0.62         -0.59          0.00          1.21          1.31          0.67          0.75
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            structure-beyond-controls
+    sigma2_L5             variance-profile
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_31_mlp_down_proj_weight.npy   shape=(4096, 14336)
+  row sd CV 0.0513 (iid expects 0.0059)   col sd CV 0.1847 (iid expects 0.0110)
+  excess kurtosis 1.465 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (1300s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -1.18         -6.95           nan          1.61         -1.96          2.75          0.71         -2.48         -0.78         -2.49         -5.24
+  entry_shuffle               1.34          0.83           nan         -0.58          0.39         -1.79         -0.15          0.59          0.23          0.85          0.95
+  row_shuffle                -0.46          9.68           nan          0.20         -0.49         -1.39         -0.33          1.18          2.78          5.15          8.91
+  col_shuffle                -1.30         12.94           nan          1.34         -2.47          0.98          0.55          0.71          3.51          6.91         11.11
+  gaussian_match             -0.78          1.13           nan          0.77          0.01          0.55         -0.07          1.18          0.83          2.16          0.91
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             structure-beyond-controls
+    delta3_L10            consistent-with-random
+    delta3_L50            structure-beyond-controls
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_31_self_attn_k_proj_weight.npy   shape=(1024, 4096)
+  row sd CV 0.2074 (iid expects 0.0110)   col sd CV 0.1681 (iid expects 0.0221)
+  excess kurtosis 2.671 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (28s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -1.17         -3.26           nan          0.99         -1.35          1.80          1.29         -1.83          1.16          1.16          2.07
+  entry_shuffle              -1.80          0.50           nan          0.10         -0.99          0.28          0.67         -0.92         -0.05         -1.52         -0.84
+  row_shuffle                 1.54         -2.22           nan         -0.05         -0.70         -0.61          0.04         -1.48         -0.47         -1.60         -2.60
+  col_shuffle                -0.88         -4.08           nan         -0.20         -1.14          0.40          0.32         -2.64          0.39         -0.41         -1.49
+  gaussian_match             -0.59          1.88           nan          0.78          0.76         -0.90         -0.35         -1.65         -1.42         -1.62         -1.87
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            consistent-with-random
+    sigma2_L5             consistent-with-random
+    sigma2_L10            consistent-with-random
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_31_self_attn_q_proj_weight.npy   shape=(4096, 4096)
+  row sd CV 0.2792 (iid expects 0.0110)   col sd CV 0.1134 (iid expects 0.0110)
+  excess kurtosis 2.056 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (762s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        0.36         -4.34           nan          0.59          0.10          0.64          0.84         -2.29         -0.17         -2.14         -4.31
+  entry_shuffle               0.46         -2.15           nan         -0.36          0.09         -0.85         -0.66          1.34         -0.25          0.67          0.80
+  row_shuffle                -0.78          3.71           nan         -0.42         -0.64          0.73          0.05          0.21          0.69          2.49          3.75
+  col_shuffle                 1.14         -2.36           nan         -1.02          0.67         -0.96          0.01         -1.72         -0.17         -1.14         -3.05
+  gaussian_match             -0.45          0.98           nan         -1.01          0.62         -0.59          0.00          1.21          1.31          0.67          0.75
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   entry-distribution
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            structure-beyond-controls
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_8_mlp_down_proj_weight.npy   shape=(4096, 14336)
+  row sd CV 0.1099 (iid expects 0.0059)   col sd CV 0.0597 (iid expects 0.0110)
+  excess kurtosis 2.057 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (1297s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        0.45         -7.11           nan         -1.61         -0.09         -0.50         -1.51         -4.42         -1.73         -3.55         -6.74
+  entry_shuffle               0.25          0.35           nan         -0.65          0.11          0.16          0.37          0.36          0.02          0.20          0.82
+  row_shuffle                -1.04         -6.62           nan          1.43         -0.67          1.04          2.10         -1.69          0.32         -2.42         -5.73
+  col_shuffle                 1.76          0.51           nan         -1.62          0.77         -0.32          0.62         -1.14         -0.19          0.13         -0.35
+  gaussian_match             -0.78          1.13           nan          0.77          0.01          0.55         -0.07          1.18          0.83          2.16          0.91
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            structure-beyond-controls
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_8_self_attn_k_proj_weight.npy   shape=(1024, 4096)
+  row sd CV 0.3338 (iid expects 0.0110)   col sd CV 0.0794 (iid expects 0.0221)
+  excess kurtosis 2.295 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (27s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                       -1.20          8.85           nan          0.29         -1.04          1.18          0.81          4.49          6.63         15.39         23.47
+  entry_shuffle               0.83         -1.97           nan         -1.24         -0.29         -0.27          0.20          0.42         -0.90          0.43          0.68
+  row_shuffle                 2.16         15.14           nan         -0.92          0.61         -2.78         -0.84          4.10         13.16         25.03         31.25
+  col_shuffle                 1.62          1.54           nan         -0.39          1.28         -0.91         -0.83          0.94          0.69          0.59          1.99
+  gaussian_match             -0.59          1.88           nan          0.78          0.76         -0.90         -0.35         -1.65         -1.42         -1.62         -1.87
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   variance-profile
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            variance-profile
+    sigma2_L5             variance-profile
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+
+matrix: model_layers_8_self_attn_q_proj_weight.npy   shape=(4096, 4096)
+  row sd CV 0.3323 (iid expects 0.0110)   col sd CV 0.0355 (iid expects 0.0110)
+  excess kurtosis 2.901 (Gaussian = 0)
+  --> HETEROSCEDASTIC: the iid band is NOT the right null here; quote the row/col shuffle instead.
+  null band: 30 reps, branches={'cheb': 30} (760s)
+
+  control           r_statistic_meanunfold_mean_spacingunfold_frac_nonpositive     nn_KS_GOE nn_KS_Poisson     delta3_L5    delta3_L10    delta3_L50     sigma2_L5    sigma2_L10    sigma2_L20
+  real                        0.07         -0.37           nan          0.66         -0.40         -0.01          0.30          1.77          0.92          2.62          6.84
+  entry_shuffle               1.22         -0.99           nan         -1.62          0.76         -1.38         -1.71         -0.32         -1.03         -0.60         -0.30
+  row_shuffle                -1.05          7.06           nan          2.16         -2.08          1.36          1.41          5.44          5.67         11.24         16.63
+  col_shuffle                 0.15          1.57           nan          0.75          0.60          1.25          0.66          1.24          0.71          1.25          0.65
+  gaussian_match             -0.45          0.98           nan         -1.01          0.62         -0.59          0.00          1.21          1.31          0.67          0.75
+
+  VERDICTS (|z| > 2 = detected)
+    r_statistic_mean      consistent-with-random
+    unfold_mean_spacing   consistent-with-random
+    unfold_frac_nonpositiveundetermined
+    nn_KS_GOE             consistent-with-random
+    nn_KS_Poisson         consistent-with-random
+    delta3_L5             consistent-with-random
+    delta3_L10            consistent-with-random
+    delta3_L50            consistent-with-random
+    sigma2_L5             consistent-with-random
+    sigma2_L10            variance-profile
+    sigma2_L20            variance-profile
+
+wrote cal/controls.csv  (5 rows)
+=== DONE at Fri Sep  4 20:57:53 IST 2026 ===
+Report: cal/zscores.csv  cal/controls.csv  cal/power_table.csv
+        cal/null_bands.csv  cal/benchmark_results_3way.csv

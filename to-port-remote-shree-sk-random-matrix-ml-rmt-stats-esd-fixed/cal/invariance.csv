@@ -1,0 +1,8 @@
+check,value,tol,pass
+transpose: max|s(W) - s(W^T)|,1.1546319456101628e-14,1.995408353163318e-10,1
+random sign flips D1 W D2: max|ds|,0.0,1.995408353163318e-10,1
+row/col permutation: max|ds|,9.547918011776346e-15,1.995408353163318e-10,1
+global rescale x2.7: |d delta3_L10|,3.58046925441613e-15,1e-09,1
+global rescale x2.7: |d r_statistic|,1.1102230246251565e-15,1e-12,1
+"fp32 SVD vs fp64 SVD, in units of a spacing",3.070165984816631e-05,0.01,1
+bf16 entry rounding (spacings),0.08467039539147637,,
