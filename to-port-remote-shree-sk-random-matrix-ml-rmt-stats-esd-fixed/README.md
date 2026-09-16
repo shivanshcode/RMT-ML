@@ -398,7 +398,7 @@ __all__ = ["config", "ensembles", "mp", "tail", "scalars", "spacing", "overlap",
 `cal/controls.csv` retains only the last of the **15** matrices the controls stage actually ran
 (`RMT_calibrated_v4_436780.log:349–768`); the other 14 survive only in the log.
 
-**Three gaps between this checkout and the tree that produced the artefacts.** These do not
+**NOTE.** These do not
 invalidate the numbers, but a reader trying to reproduce them should know about them up front.
 
 1. `python check_repo.py` — the repository's own md5 gate — **passes on this checkout (22/22), but
