@@ -20,7 +20,7 @@ spiked Wishart) and run end-to-end on **meta-llama/Llama-3.1-8B**. See
 [Analysis](#analysis-benchmark-and-test-results) for what the numbers actually support — including
 [§A.6](#a6-where-this-may-be-wrong), which lists the places a referee should push.
 
-> **Read this before quoting any number below.** Every accuracy, power and control figure in this
+> **Note** Every accuracy, power and control figure in this
 > repository was measured at Chebyshev unfolding **degree 7** (the `RunConfig` default,
 > `rmt/config.py:86`). The committed Llama-3.1-8B results and the null bands they are scored
 > against were produced at **degree 15** (`run_rmt_calibrated_v4.slurm:110`). The two
