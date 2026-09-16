@@ -83,9 +83,8 @@ conda activate rmt_ml_env
 pip install -e .            # installs the `rmt` package and the `rmt` console script
 ```
 
-The spec is **platform-locked to `linux-64`** (its header says so) and pins Python 3.10.18,
-**numpy 2.1.2 and scipy 1.15.3** — which is exactly what the job logs record
-(`rmt_bands_436776.log:1–3`), so the analysis environment is now reproducible from the repository.
+The spec is **platform-locked to `linux-64`** and pins Python 3.10.18,
+**numpy 2.1.2 and scipy 1.15.3**, so the analysis environment is now reproducible from the repository.
 It also pins torch 2.7.1+cu118 with the `nvidia-*-cu11` runtime, transformers 5.12.1, tokenizers
 0.22.2, huggingface-hub 1.19.0, accelerate 1.14.0, datasets 5.0.0, safetensors 0.5.3,
 sentencepiece 0.2.1, matplotlib 3.10.3, pandas 2.3.3, seaborn 0.13.2, and both optional baselines
