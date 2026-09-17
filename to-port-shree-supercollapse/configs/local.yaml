@@ -1,0 +1,27 @@
+# Personal config. main.py defaults to config_name='local', which the author
+# gitignored — this recreates it with the paper's MLP settings from
+# experiments/mlp.yaml baked in, so a bare `python main.py` is already correct.
+defaults:
+    - mlp
+    - _self_
+
+wandb_mode: offline
+wandb_project: supercollapse
+wandb_tag: mlp
+
+# --- from experiments/mlp.yaml (these DIFFER from configs/mlp.yaml defaults!) ---
+model:
+  N: 5
+
+opt:
+  lr: 0.001
+  readout_lr_mult: 1
+  schedule: linear
+  b1: 0.9
+  b2: 0.95
+  warmup_tokens: 0
+
+# Fitted compute-optimal horizon. These OVERRIDE the static T in configs/mlp.yaml:
+# train.py computes C = 1e15*(num_params/scale)**exponent, then T = C/(6*num_params)
+scale: 1346251.612836
+exponent: 2.040882
