@@ -10,3 +10,10 @@ RMT for Attribution Study and Learning Modes in AI/ML models.
 Then go to rmt-repo
 1. run the rmt sweep.
 
+
+
+## Repo Details
+Base repo (outdated): RMT-ML/remote-sk-random-matrix-ml-esd-fixed/
+Current rmt repo (latest): RMT-ML/to-port-remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/
+Current supercollapse repo with wrapper, hooks, and checkpoint functions (latest): RMT-ML/to-port-shree-supercollapse/
+
