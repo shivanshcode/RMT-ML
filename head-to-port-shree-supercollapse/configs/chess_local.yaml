@@ -1,0 +1,63 @@
+# Chess transformer sweep — the paper's experiments/chess.yaml settings baked in,
+# so `python main.py -cn chess_local model.D=768 seed=0` is already correct.
+#
+# Mirrors configs/local.yaml (which does the same job for the MLP task).
+# Every value below is copied verbatim from experiments/chess.yaml, which is a
+# wandb SWEEP spec (a grid + a `command:` block), not a Hydra config — it cannot
+# be passed to `main.py -cn`. This file is its Hydra translation. The seed grid
+# [0,1,2,3,4] lives in run_chess_sweep.slurm, not here.
+# The only deviation from the authors' settings is wandb_mode: offline, because
+# the compute nodes have no network.
+#
+# CAREFUL: several of these DIFFER from configs/chess.yaml's own defaults, and
+# the differences are not cosmetic:
+#   opt.lr        0.4 -> 0.01     configs/chess.yaml ships 0.4; the paper's
+#                                 sweep uses 0.01. A 40x learning rate will not
+#                                 diverge quietly, it will just give you a
+#                                 different (worse) ladder.
+#   wandb_project picodo -> supercollapse
+#   wandb_mode    online -> offline   (no network on the compute nodes)
+# and these are absent from configs/chess.yaml entirely, coming only from
+# experiments/chess.yaml: embed_init_std, embed_lr_mult, readout_lr_mult,
+# scale, exponent.
+defaults:
+    - chess
+    - _self_
+
+wandb_mode: offline
+wandb_project: supercollapse
+wandb_tag: chess
+
+# Dataset produced by prepare_chess.py (36 shards of Lichess 2025-01):
+#   train.bin  17.33B tokens
+#   test.bin    5.66M tokens   (> T_eval = 2.048M, so eval never wraps)
+# Overridden to the node-local staging copy by run_chess_sweep.slurm.
+ds_path: chess
+
+model:
+  N: 3
+  L: 128
+  V: 64                  # meta.pkl reports vocab_size 55; 64 is the padded size
+  mlp_expansion: 1
+  embed_init_std: 0.1
+
+opt:
+  name: adam
+  B: 512                 # 512 x 128 = 65,536 tokens/step
+  lr: 0.01
+  b1: 0.9
+  b2: 0.95
+  schedule: linear
+  warmup_tokens: 10_000_000
+  embed_lr_mult: 10
+  readout_lr_mult: 1
+  mup: true              # stays true for the ablation too — match_mup_at_D is
+                         # what pins the LRs, not this flag
+
+# Fitted compute-optimal horizon for the chess ladder. train.py computes
+#   C = 1e15 * (num_params/scale)**exponent,  T = C/(6*num_params)
+# These OVERRIDE the static T in configs/chess.yaml. Fitted on the muP ladder
+# and reused for the ablation — exactly as the authors do for the MLP
+# (experiments/mlp_no_mup.yaml carries mlp.yaml's scale/exponent unchanged).
+scale: 855499.217040
+exponent: 2.026780
