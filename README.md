@@ -1284,13 +1284,21 @@ and the latter is generated but not yet wired in (O7).
     removed, so anything citing one of those is out of date.
 
 ---
-
-## License
-
-**No licence file is present in this repository** and `pyproject.toml` declares no `license`
-field, so no licence is granted. The bundled third-party material has its own terms:
-
 - Portions of `rmt/spacing.py` and `rmt/porter_thomas.py` are ports of the reference
   implementation from **Thamm, Staats & Rosenow (2022)**, `src/rmt_utils.py`.
 - The analysed checkpoint, **meta-llama/Llama-3.1-8B**, is covered by the Llama 3.1 Community
   License. No weights are redistributed here.
+---
+## Credits
+
+This project builds on the following work. If you use this repository, please cite them along with this repo.
+
+**Random Matrix Theory methods** (implemented in `to-port-remote-shree-sk-random-matrix-ml-rmt-stats-esd-fixed/` and `remote-sk-random-matrix-ml-esd-fixed/`):
+- M. Thamm, M. Staats, B. Rosenow. *Random matrix analysis of deep neural network weight matrices.* Physical Review E, 2022.
+- C. H. Martin, M. W. Mahoney. *Implicit Self-Regularization in Deep Neural Networks: Evidence from Random Matrix Theory and Implications for Learning.* JMLR, 2021.
+- M. Staats, M. Thamm, B. Rosenow. *Small Singular Values Matter: A Random Matrix Analysis of Transformer Models.* arXiv:2410.17770.
+- M. Gavish, D. L. Donoho. *The Optimal Hard Threshold for Singular Values is 4/√3.* IEEE Trans. Inf. Theory, 2014.
+
+**Supercollapse** (`head-to-port-shree-supercollapse/`):
+- S. Qiu, L. Xiao, A. G. Wilson, J. Pennington, A. Agarwala. *Scaling Collapse Reveals Universal Dynamics in Compute-Optimally Trained Neural Networks.* arXiv:2507.02119.
+- Clone the original code from https://github.com/shikaiqiu/supercollapse, then copy in the files from this folder.
